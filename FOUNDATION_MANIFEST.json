@@ -1,0 +1,27 @@
+{
+  "stage": "S1",
+  "source_document": "docs/APPROVED_REQUIREMENTS.docx",
+  "source_sha256": "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b",
+  "required_files": [
+    "README.md",
+    "PROJECT_STATE.md",
+    ".gitignore",
+    "docs/APPROVED_REQUIREMENTS.docx",
+    "docs/REQUIREMENTS.md",
+    "docs/PROJECT_RULES.md",
+    "docs/DEFINITION_OF_DONE.md",
+    "docs/ROADMAP.md",
+    "docs/DECISION_LOG.md",
+    "docs/DATA_SECURITY.md",
+    "docs/QUALITY_ASSURANCE_PLAN.md",
+    "docs/SESSION_HANDOFF_TEMPLATE.md",
+    "docs/TRACEABILITY_MATRIX.md",
+    "scripts/validate_foundation.py",
+    ".github/PULL_REQUEST_TEMPLATE.md"
+  ],
+  "coverage": {
+    "functional_requirements": "30/30",
+    "acceptance_criteria": "14/14",
+    "approved_decisions": "7/7"
+  }
+}
