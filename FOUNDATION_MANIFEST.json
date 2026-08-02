@@ -27,6 +27,7 @@
     "docs/CLASSIFICATION_CATALOG.md",
     "docs/HISTORICAL_DATA_RULES.md",
     "docs/SEARCH_ANALYTICS_EXPORT.md",
+    "docs/SOURCE_NOTES.md",
     "docs/STAGE_1_VALIDATION_REPORT.md",
     "scripts/reconstruct_requirements.py",
     "scripts/validate_foundation.py",
@@ -37,6 +38,11 @@
     "acceptance_criteria": "14/14",
     "approved_decisions": "7/7",
     "approved_scenarios": "14/14"
+  },
+  "open_decisions": {
+    "Q-001": "before S6",
+    "Q-002": "before S7",
+    "Q-003": "before S7 if settlement closing is requested"
   },
   "implementation_issues": {
     "S2": 1,
