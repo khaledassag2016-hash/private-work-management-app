@@ -3,25 +3,22 @@ name: Foundation integrity
 on:
   pull_request:
     paths:
-      - "docs/source_parts/**"
-      - "docs/source_parts_v2/**"
-      - "scripts/reconstruct_requirements.py"
-      - "scripts/validate_foundation.py"
+      - "docs/**"
+      - "scripts/**"
       - "FOUNDATION_MANIFEST.json"
       - "README.md"
       - "PROJECT_STATE.md"
       - "PROJECT_SUPERVISION_BRIEF.md"
-      - "docs/S1_HOTFIX_REFERENCE_INTEGRITY_REPORT.md"
-      - "docs/STAGE_1_VALIDATION_REPORT.md"
       - ".github/workflows/foundation-integrity.yml"
   push:
     branches: [main]
     paths:
-      - "docs/source_parts/**"
-      - "docs/source_parts_v2/**"
-      - "scripts/reconstruct_requirements.py"
-      - "scripts/validate_foundation.py"
+      - "docs/**"
+      - "scripts/**"
       - "FOUNDATION_MANIFEST.json"
+      - "README.md"
+      - "PROJECT_STATE.md"
+      - "PROJECT_SUPERVISION_BRIEF.md"
       - ".github/workflows/foundation-integrity.yml"
 
 permissions:
@@ -33,7 +30,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout exact revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Compile validators
         run: python -m py_compile scripts/reconstruct_requirements.py scripts/validate_foundation.py
@@ -52,8 +49,11 @@ jobs:
 
           path = Path("docs/APPROVED_REQUIREMENTS.docx")
           data = path.read_bytes()
-          assert len(data) == 63710, len(data)
-          assert hashlib.sha256(data).hexdigest() == "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b"
+          actual_sha = hashlib.sha256(data).hexdigest()
+          if len(data) != 63710:
+              raise SystemExit(f"Unexpected DOCX size: {len(data)}")
+          if actual_sha != "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b":
+              raise SystemExit(f"Unexpected DOCX SHA-256: {actual_sha}")
           print("INDEPENDENT DOCX CHECK: PASS")
           PY
 
