@@ -7,39 +7,71 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-PARTS_DIR = ROOT / "docs" / "source_parts"
-EXPECTED_PART_COUNT = 8
 EXPECTED_SHA256 = "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b"
+EXPECTED_BYTE_SIZE = 63710
+EXPECTED_BASE64_LENGTH = 84948
 DEFAULT_OUTPUT = ROOT / "docs" / "APPROVED_REQUIREMENTS.docx"
 
+# Explicit ordering prevents glob ordering, duplicate files, or obsolete damaged
+# parts from silently changing the authoritative artifact.
+SOURCE_FILES = (
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part02",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part03",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part04",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part05a",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part05b",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part06a",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part06b",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part07a",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part07b",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part08",
+)
 
-def reconstruct(output: Path) -> str:
-    parts = sorted(PARTS_DIR.glob("APPROVED_REQUIREMENTS.docx.b64.part*"))
-    if len(parts) != EXPECTED_PART_COUNT:
+
+def load_authoritative_bytes() -> bytes:
+    missing = [path for path in SOURCE_FILES if not (ROOT / path).is_file()]
+    if missing:
+        raise RuntimeError("Missing authoritative source files: " + ", ".join(missing))
+
+    encoded = "".join(
+        (ROOT / relative_path).read_text(encoding="ascii").strip()
+        for relative_path in SOURCE_FILES
+    )
+    if len(encoded) != EXPECTED_BASE64_LENGTH:
         raise RuntimeError(
-            f"Expected {EXPECTED_PART_COUNT} source parts, found {len(parts)}"
+            "Base64 length mismatch: "
+            f"expected {EXPECTED_BASE64_LENGTH}, got {len(encoded)}"
         )
 
-    encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
     try:
         data = base64.b64decode(encoded, validate=True)
     except Exception as exc:
-        raise RuntimeError(f"Invalid base64 source: {exc}") from exc
+        raise RuntimeError(f"Invalid Base64 source: {exc}") from exc
+
+    if len(data) != EXPECTED_BYTE_SIZE:
+        raise RuntimeError(
+            f"Byte-size mismatch: expected {EXPECTED_BYTE_SIZE}, got {len(data)}"
+        )
 
     actual_sha = hashlib.sha256(data).hexdigest()
     if actual_sha != EXPECTED_SHA256:
         raise RuntimeError(
             f"SHA-256 mismatch: expected {EXPECTED_SHA256}, got {actual_sha}"
         )
+    return data
 
+
+def reconstruct(output: Path) -> str:
+    data = load_authoritative_bytes()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(data)
-    return actual_sha
+    return hashlib.sha256(data).hexdigest()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Reconstruct the authoritative approved requirements DOCX."
+        description="Reconstruct and verify the authoritative approved requirements DOCX."
     )
     parser.add_argument(
         "--output",
@@ -57,6 +89,7 @@ def main() -> int:
 
     print("RECONSTRUCTION: PASS")
     print("Output:", args.output)
+    print("Byte size:", EXPECTED_BYTE_SIZE)
     print("SHA-256:", actual_sha)
     return 0
 
