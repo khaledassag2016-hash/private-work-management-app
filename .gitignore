@@ -27,7 +27,8 @@ work-files/
 *.spv
 
 # Generated authoritative document
-# Rebuild from docs/source_parts using scripts/reconstruct_requirements.py
+# Rebuild from the ordered source list in FOUNDATION_MANIFEST.json
+# using scripts/reconstruct_requirements.py
 docs/APPROVED_REQUIREMENTS.docx
 
 # Dependencies/builds
