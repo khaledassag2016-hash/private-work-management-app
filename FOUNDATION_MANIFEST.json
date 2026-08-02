@@ -21,6 +21,7 @@
     "docs/QUALITY_ASSURANCE_PLAN.md",
     "docs/SESSION_HANDOFF_TEMPLATE.md",
     "docs/TRACEABILITY_MATRIX.md",
+    "docs/ISSUE_INDEX.md",
     "scripts/reconstruct_requirements.py",
     "scripts/validate_foundation.py",
     ".github/PULL_REQUEST_TEMPLATE.md"
@@ -29,5 +30,17 @@
     "functional_requirements": "30/30",
     "acceptance_criteria": "14/14",
     "approved_decisions": "7/7"
+  },
+  "implementation_issues": {
+    "S2": 1,
+    "S3": 2,
+    "S4": 3,
+    "S5": 4,
+    "S6": 5,
+    "S7": 6,
+    "S8": 7,
+    "S9": 8,
+    "S10": 9,
+    "S11": 10
   }
 }
