@@ -1,21 +1,24 @@
 from __future__ import annotations
 
-from pathlib import Path
-import base64
 import hashlib
 import json
+from pathlib import Path
 import re
 import sys
 
+from reconstruct_requirements import (
+    EXPECTED_BYTE_SIZE,
+    EXPECTED_SHA256,
+    SOURCE_FILES,
+    load_authoritative_bytes,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_DOCX_SHA = "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b"
-EXPECTED_DOCX_SIZE = 63710
-EXPECTED_PART_COUNT = 8
-PARTS_GLOB = "APPROVED_REQUIREMENTS.docx.b64.part*"
 
 REQUIRED = [
     "README.md",
     "PROJECT_STATE.md",
+    "PROJECT_SUPERVISION_BRIEF.md",
     ".gitignore",
     "FOUNDATION_MANIFEST.json",
     "docs/REQUIREMENTS.md",
@@ -34,9 +37,11 @@ REQUIRED = [
     "docs/SEARCH_ANALYTICS_EXPORT.md",
     "docs/SOURCE_NOTES.md",
     "docs/STAGE_1_VALIDATION_REPORT.md",
+    "docs/S1_HOTFIX_REFERENCE_INTEGRITY_REPORT.md",
     "scripts/reconstruct_requirements.py",
     "scripts/validate_foundation.py",
     ".github/PULL_REQUEST_TEMPLATE.md",
+    *SOURCE_FILES,
 ]
 
 EXPECTED_ISSUES = {f"S{stage}": stage - 1 for stage in range(2, 12)}
@@ -75,11 +80,6 @@ def expected_stage_map() -> dict[str, str]:
             "FR-028": "S4",
             "FR-029": "S8",
             "FR-030": "S8",
-        }
-    )
-
-    mapping.update(
-        {
             "AC-01": "S4",
             "AC-02": "S6",
             "AC-03": "S5",
@@ -125,174 +125,190 @@ def read_text(relative_path: str) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-errors: list[str] = []
+def main() -> int:
+    errors: list[str] = []
 
-for relative_path in REQUIRED:
-    file_path = ROOT / relative_path
-    if not file_path.exists():
-        errors.append(f"MISSING: {relative_path}")
-    elif file_path.stat().st_size == 0:
-        errors.append(f"EMPTY: {relative_path}")
+    for relative_path in REQUIRED:
+        file_path = ROOT / relative_path
+        if not file_path.exists():
+            errors.append(f"MISSING: {relative_path}")
+        elif file_path.stat().st_size == 0:
+            errors.append(f"EMPTY: {relative_path}")
 
-parts = sorted((ROOT / "docs" / "source_parts").glob(PARTS_GLOB))
-if len(parts) != EXPECTED_PART_COUNT:
-    errors.append(
-        f"SOURCE PART COUNT: expected {EXPECTED_PART_COUNT}, found {len(parts)}"
-    )
-else:
     try:
-        encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
-        reconstructed = base64.b64decode(encoded, validate=True)
-        actual_sha = hashlib.sha256(reconstructed).hexdigest()
-        if len(reconstructed) != EXPECTED_DOCX_SIZE:
+        data = load_authoritative_bytes()
+        if len(data) != EXPECTED_BYTE_SIZE:
             errors.append(
-                f"DOCX size mismatch: expected {EXPECTED_DOCX_SIZE}, got {len(reconstructed)}"
+                f"DOCX size mismatch: expected {EXPECTED_BYTE_SIZE}, got {len(data)}"
             )
-        if actual_sha != EXPECTED_DOCX_SHA:
+        actual_sha = hashlib.sha256(data).hexdigest()
+        if actual_sha != EXPECTED_SHA256:
             errors.append(f"DOCX SHA mismatch: {actual_sha}")
     except Exception as exc:
         errors.append(f"DOCX reconstruction failed: {exc}")
 
-manifest_path = ROOT / "FOUNDATION_MANIFEST.json"
-try:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-except Exception as exc:
-    manifest = {}
-    errors.append(f"MANIFEST invalid JSON: {exc}")
+    manifest_path = ROOT / "FOUNDATION_MANIFEST.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        manifest = {}
+        errors.append(f"MANIFEST invalid JSON: {exc}")
 
-if manifest:
-    source = manifest.get("authoritative_source", {})
-    expected_source = {
-        "logical_path": "docs/APPROVED_REQUIREMENTS.docx",
-        "stored_as": "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01..part08",
-        "reconstruction_script": "scripts/reconstruct_requirements.py",
-        "sha256": EXPECTED_DOCX_SHA,
-        "byte_size": EXPECTED_DOCX_SIZE,
-        "part_count": EXPECTED_PART_COUNT,
+    if manifest:
+        source = manifest.get("authoritative_source", {})
+        expected_source = {
+            "logical_path": "docs/APPROVED_REQUIREMENTS.docx",
+            "storage_format": "ordered_base64_segments",
+            "source_files": list(SOURCE_FILES),
+            "reconstruction_script": "scripts/reconstruct_requirements.py",
+            "sha256": EXPECTED_SHA256,
+            "byte_size": EXPECTED_BYTE_SIZE,
+        }
+        if manifest.get("stage") != "S1":
+            errors.append(f"MANIFEST stage mismatch: {manifest.get('stage')}")
+        if source != expected_source:
+            errors.append("MANIFEST authoritative_source mismatch")
+        if manifest.get("required_files") != REQUIRED:
+            errors.append("MANIFEST required_files differs from validator REQUIRED list")
+        if manifest.get("coverage") != EXPECTED_COVERAGE:
+            errors.append("MANIFEST coverage mismatch")
+        if manifest.get("implementation_issues") != EXPECTED_ISSUES:
+            errors.append("MANIFEST implementation_issues mismatch")
+        if set(manifest.get("open_decisions", {})) != EXPECTED_OPEN_DECISIONS:
+            errors.append("MANIFEST open_decisions mismatch")
+
+    requirements = read_text("docs/REQUIREMENTS.md")
+    traceability = read_text("docs/TRACEABILITY_MATRIX.md")
+
+    for prefix, count, width in [("FR", 30, 3), ("AC", 14, 2), ("P", 7, 2)]:
+        expected = {
+            f"{prefix}-{number:0{width}d}" for number in range(1, count + 1)
+        }
+        in_requirements = set(
+            re.findall(rf"\b{prefix}-\d{{{width}}}\b", requirements)
+        )
+        in_traceability = set(
+            re.findall(rf"\b{prefix}-\d{{{width}}}\b", traceability)
+        )
+        if in_requirements != expected:
+            errors.append(
+                f"{prefix} requirements mismatch: "
+                f"missing={sorted(expected - in_requirements)} "
+                f"extra={sorted(in_requirements - expected)}"
+            )
+        if in_traceability != expected:
+            errors.append(
+                f"{prefix} trace mismatch: "
+                f"missing={sorted(expected - in_traceability)} "
+                f"extra={sorted(in_traceability - expected)}"
+            )
+
+    scenario_text = read_text("docs/SCENARIOS_AND_EXCEPTIONS.md")
+    expected_scenarios = {f"S-{number:02d}" for number in range(1, 15)}
+    in_scenarios = set(re.findall(r"\bS-\d{2}\b", scenario_text))
+    in_trace_scenarios = set(re.findall(r"\bS-\d{2}\b", traceability))
+    if in_scenarios != expected_scenarios:
+        errors.append(
+            "Scenario document mismatch: "
+            f"missing={sorted(expected_scenarios - in_scenarios)} "
+            f"extra={sorted(in_scenarios - expected_scenarios)}"
+        )
+    if in_trace_scenarios != expected_scenarios:
+        errors.append(
+            "Scenario trace mismatch: "
+            f"missing={sorted(expected_scenarios - in_trace_scenarios)} "
+            f"extra={sorted(in_trace_scenarios - expected_scenarios)}"
+        )
+
+    stage_rows = {
+        match.group(1): re.sub(r"\s+", "", match.group(2))
+        for match in re.finditer(
+            r"^\|\s*(FR-\d{3}|AC-\d{2}|P-\d{2}|S-\d{2})\s*\|"
+            r"\s*[^|]+\|\s*([^|]+?)\s*\|",
+            traceability,
+            flags=re.MULTILINE,
+        )
     }
-    if manifest.get("stage") != "S1":
-        errors.append(f"MANIFEST stage mismatch: {manifest.get('stage')}")
-    if source != expected_source:
-        errors.append("MANIFEST authoritative_source mismatch")
-    if manifest.get("required_files") != REQUIRED:
-        errors.append("MANIFEST required_files differs from validator REQUIRED list")
-    if manifest.get("coverage") != EXPECTED_COVERAGE:
-        errors.append("MANIFEST coverage mismatch")
-    if manifest.get("implementation_issues") != EXPECTED_ISSUES:
-        errors.append("MANIFEST implementation_issues mismatch")
-    if set(manifest.get("open_decisions", {})) != EXPECTED_OPEN_DECISIONS:
-        errors.append("MANIFEST open_decisions mismatch")
+    for identifier, expected_stage in expected_stage_map().items():
+        actual_stage = stage_rows.get(identifier)
+        if actual_stage != expected_stage:
+            errors.append(
+                f"TRACE STAGE {identifier}: expected {expected_stage}, got {actual_stage}"
+            )
 
-requirements = read_text("docs/REQUIREMENTS.md")
-traceability = read_text("docs/TRACEABILITY_MATRIX.md")
-
-for prefix, count, width in [("FR", 30, 3), ("AC", 14, 2), ("P", 7, 2)]:
-    expected = {f"{prefix}-{number:0{width}d}" for number in range(1, count + 1)}
-    in_requirements = set(re.findall(rf"\b{prefix}-\d{{{width}}}\b", requirements))
-    in_traceability = set(re.findall(rf"\b{prefix}-\d{{{width}}}\b", traceability))
-    if in_requirements != expected:
-        errors.append(
-            f"{prefix} requirements mismatch: missing={sorted(expected - in_requirements)} "
-            f"extra={sorted(in_requirements - expected)}"
+    issue_index = read_text("docs/ISSUE_INDEX.md")
+    issue_rows = {
+        match.group(1): int(match.group(2))
+        for match in re.finditer(
+            r"^\|\s*(S\d+)\s*\|\s*#(\d+)\s*\|",
+            issue_index,
+            flags=re.MULTILINE,
         )
-    if in_traceability != expected:
+    }
+    if issue_rows != EXPECTED_ISSUES:
+        errors.append(f"ISSUE INDEX mismatch: {issue_rows}")
+
+    decision_log = read_text("docs/DECISION_LOG.md")
+    approved_decisions = set(re.findall(r"\bD-\d{3}\b", decision_log))
+    open_decisions = set(re.findall(r"\bQ-\d{3}\b", decision_log))
+    if approved_decisions != {f"D-{number:03d}" for number in range(1, 6)}:
         errors.append(
-            f"{prefix} trace mismatch: missing={sorted(expected - in_traceability)} "
-            f"extra={sorted(in_traceability - expected)}"
+            f"DECISION LOG approved IDs mismatch: {sorted(approved_decisions)}"
         )
+    if open_decisions != EXPECTED_OPEN_DECISIONS:
+        errors.append(f"DECISION LOG open IDs mismatch: {sorted(open_decisions)}")
 
-scenario_text = read_text("docs/SCENARIOS_AND_EXCEPTIONS.md")
-expected_scenarios = {f"S-{number:02d}" for number in range(1, 15)}
-in_scenarios = set(re.findall(r"\bS-\d{2}\b", scenario_text))
-in_trace_scenarios = set(re.findall(r"\bS-\d{2}\b", traceability))
-if in_scenarios != expected_scenarios:
-    errors.append(
-        f"Scenario document mismatch: missing={sorted(expected_scenarios - in_scenarios)} "
-        f"extra={sorted(in_scenarios - expected_scenarios)}"
-    )
-if in_trace_scenarios != expected_scenarios:
-    errors.append(
-        f"Scenario trace mismatch: missing={sorted(expected_scenarios - in_trace_scenarios)} "
-        f"extra={sorted(in_trace_scenarios - expected_scenarios)}"
-    )
+    source_notes = read_text("docs/SOURCE_NOTES.md")
+    for required_phrase in [
+        "مسودة",
+        "بانتظار الاعتماد",
+        "القسم 16",
+        "لا تُستخدم أي نسخة أقدم",
+    ]:
+        if required_phrase not in source_notes:
+            errors.append(f"SOURCE NOTES missing phrase: {required_phrase}")
 
-stage_rows = {
-    match.group(1): re.sub(r"\s+", "", match.group(2))
-    for match in re.finditer(
-        r"^\|\s*(FR-\d{3}|AC-\d{2}|P-\d{2}|S-\d{2})\s*\|\s*[^|]+\|\s*([^|]+?)\s*\|",
-        traceability,
-        flags=re.MULTILINE,
-    )
-}
-for identifier, expected_stage in expected_stage_map().items():
-    actual_stage = stage_rows.get(identifier)
-    if actual_stage != expected_stage:
-        errors.append(
-            f"TRACE STAGE {identifier}: expected {expected_stage}, got {actual_stage}"
-        )
+    project_rules = read_text("docs/PROJECT_RULES.md")
+    for identifier in sorted(EXPECTED_OPEN_DECISIONS):
+        if identifier not in project_rules:
+            errors.append(
+                f"PROJECT RULES missing unresolved-decision guard: {identifier}"
+            )
 
-issue_index = read_text("docs/ISSUE_INDEX.md")
-issue_rows = {
-    match.group(1): int(match.group(2))
-    for match in re.finditer(
-        r"^\|\s*(S\d+)\s*\|\s*#(\d+)\s*\|", issue_index, flags=re.MULTILINE
-    )
-}
-if issue_rows != EXPECTED_ISSUES:
-    errors.append(f"ISSUE INDEX mismatch: {issue_rows}")
-
-decision_log = read_text("docs/DECISION_LOG.md")
-approved_decisions = set(re.findall(r"\bD-\d{3}\b", decision_log))
-open_decisions = set(re.findall(r"\bQ-\d{3}\b", decision_log))
-if approved_decisions != {f"D-{number:03d}" for number in range(1, 6)}:
-    errors.append(f"DECISION LOG approved IDs mismatch: {sorted(approved_decisions)}")
-if open_decisions != EXPECTED_OPEN_DECISIONS:
-    errors.append(f"DECISION LOG open IDs mismatch: {sorted(open_decisions)}")
-
-source_notes = read_text("docs/SOURCE_NOTES.md")
-for required_phrase in [
-    "مسودة",
-    "بانتظار الاعتماد",
-    "القسم 16",
-    "لا تُستخدم أي نسخة أقدم",
-]:
-    if required_phrase not in source_notes:
-        errors.append(f"SOURCE NOTES missing phrase: {required_phrase}")
-
-project_rules = read_text("docs/PROJECT_RULES.md")
-for identifier in sorted(EXPECTED_OPEN_DECISIONS):
-    if identifier not in project_rules:
-        errors.append(f"PROJECT RULES missing unresolved-decision guard: {identifier}")
-
-text_extensions = {".md", ".py", ".txt", ".yml", ".yaml", ".json"}
-for file_path in ROOT.rglob("*"):
-    if not file_path.is_file() or file_path.suffix.lower() not in text_extensions:
-        continue
-    text = file_path.read_text(encoding="utf-8", errors="ignore")
+    text_extensions = {".md", ".py", ".txt", ".yml", ".yaml", ".json"}
     secret_pattern = (
         r"(?i)(api[_-]?key\s*[=:]\s*[\"']?[A-Za-z0-9_-]{16,}"
         r"|password\s*[=:]\s*[^\s]+"
         r"|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY)"
     )
-    if re.search(secret_pattern, text):
-        errors.append(f"POSSIBLE SECRET: {file_path.relative_to(ROOT)}")
-    if file_path.name != "validate_foundation.py" and re.search(
-        r"\b(TODO|TBD|FIXME)\b", text
-    ):
-        errors.append(f"UNOWNED PLACEHOLDER: {file_path.relative_to(ROOT)}")
+    for file_path in ROOT.rglob("*"):
+        if not file_path.is_file() or file_path.suffix.lower() not in text_extensions:
+            continue
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+        if re.search(secret_pattern, text):
+            errors.append(f"POSSIBLE SECRET: {file_path.relative_to(ROOT)}")
+        if file_path.name != "validate_foundation.py" and re.search(
+            r"\b(TODO|TBD|FIXME)\b", text
+        ):
+            errors.append(f"UNOWNED PLACEHOLDER: {file_path.relative_to(ROOT)}")
 
-if errors:
-    print("FOUNDATION VALIDATION: FAIL")
-    for error in errors:
-        print("-", error)
-    sys.exit(1)
+    if errors:
+        print("FOUNDATION VALIDATION: FAIL")
+        for error in errors:
+            print("-", error)
+        return 1
 
-print("FOUNDATION VALIDATION: PASS")
-print("Coverage: FR 30/30, AC 14/14, P 7/7, scenarios 14/14")
-print("Trace stage assignments: PASS")
-print("Manifest and issue index: PASS")
-print("Open decisions recorded: Q-001, Q-002, Q-003")
-print("Required governance files:", len(REQUIRED), "present and non-empty")
-print("Approved source parts:", EXPECTED_PART_COUNT, "present")
-print("Approved requirements bytes:", EXPECTED_DOCX_SIZE)
-print("Approved requirements SHA-256:", EXPECTED_DOCX_SHA)
+    print("FOUNDATION VALIDATION: PASS")
+    print("Coverage: FR 30/30, AC 14/14, P 7/7, scenarios 14/14")
+    print("Trace stage assignments: PASS")
+    print("Manifest and issue index: PASS")
+    print("Open decisions recorded: Q-001, Q-002, Q-003")
+    print("Required governance and source files:", len(REQUIRED), "present")
+    print("Authoritative source segments:", len(SOURCE_FILES), "verified")
+    print("Approved requirements bytes:", EXPECTED_BYTE_SIZE)
+    print("Approved requirements SHA-256:", EXPECTED_SHA256)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
