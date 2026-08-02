@@ -1,12 +1,17 @@
 {
   "stage": "S1",
-  "source_document": "docs/APPROVED_REQUIREMENTS.docx",
-  "source_sha256": "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b",
+  "authoritative_source": {
+    "logical_path": "docs/APPROVED_REQUIREMENTS.docx",
+    "stored_as": "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01..part08",
+    "reconstruction_script": "scripts/reconstruct_requirements.py",
+    "sha256": "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b",
+    "part_count": 8
+  },
   "required_files": [
     "README.md",
     "PROJECT_STATE.md",
     ".gitignore",
-    "docs/APPROVED_REQUIREMENTS.docx",
+    "FOUNDATION_MANIFEST.json",
     "docs/REQUIREMENTS.md",
     "docs/PROJECT_RULES.md",
     "docs/DEFINITION_OF_DONE.md",
@@ -16,6 +21,7 @@
     "docs/QUALITY_ASSURANCE_PLAN.md",
     "docs/SESSION_HANDOFF_TEMPLATE.md",
     "docs/TRACEABILITY_MATRIX.md",
+    "scripts/reconstruct_requirements.py",
     "scripts/validate_foundation.py",
     ".github/PULL_REQUEST_TEMPLATE.md"
   ],
