@@ -2,15 +2,28 @@
   "stage": "S1",
   "authoritative_source": {
     "logical_path": "docs/APPROVED_REQUIREMENTS.docx",
-    "stored_as": "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01..part08",
+    "storage_format": "ordered_base64_segments",
+    "source_files": [
+      "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01",
+      "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part02",
+      "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part03",
+      "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part04",
+      "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part05a",
+      "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part05b",
+      "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part06a",
+      "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part06b",
+      "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part07a",
+      "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part07b",
+      "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part08"
+    ],
     "reconstruction_script": "scripts/reconstruct_requirements.py",
     "sha256": "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b",
-    "byte_size": 63710,
-    "part_count": 8
+    "byte_size": 63710
   },
   "required_files": [
     "README.md",
     "PROJECT_STATE.md",
+    "PROJECT_SUPERVISION_BRIEF.md",
     ".gitignore",
     "FOUNDATION_MANIFEST.json",
     "docs/REQUIREMENTS.md",
@@ -29,9 +42,21 @@
     "docs/SEARCH_ANALYTICS_EXPORT.md",
     "docs/SOURCE_NOTES.md",
     "docs/STAGE_1_VALIDATION_REPORT.md",
+    "docs/S1_HOTFIX_REFERENCE_INTEGRITY_REPORT.md",
     "scripts/reconstruct_requirements.py",
     "scripts/validate_foundation.py",
-    ".github/PULL_REQUEST_TEMPLATE.md"
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part02",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part03",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part04",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part05a",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part05b",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part06a",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part06b",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part07a",
+    "docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part07b",
+    "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part08"
   ],
   "coverage": {
     "functional_requirements": "30/30",
