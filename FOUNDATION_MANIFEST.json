@@ -5,6 +5,7 @@
     "stored_as": "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01..part08",
     "reconstruction_script": "scripts/reconstruct_requirements.py",
     "sha256": "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b",
+    "byte_size": 63710,
     "part_count": 8
   },
   "required_files": [
@@ -22,6 +23,11 @@
     "docs/SESSION_HANDOFF_TEMPLATE.md",
     "docs/TRACEABILITY_MATRIX.md",
     "docs/ISSUE_INDEX.md",
+    "docs/SCENARIOS_AND_EXCEPTIONS.md",
+    "docs/CLASSIFICATION_CATALOG.md",
+    "docs/HISTORICAL_DATA_RULES.md",
+    "docs/SEARCH_ANALYTICS_EXPORT.md",
+    "docs/STAGE_1_VALIDATION_REPORT.md",
     "scripts/reconstruct_requirements.py",
     "scripts/validate_foundation.py",
     ".github/PULL_REQUEST_TEMPLATE.md"
@@ -29,7 +35,8 @@
   "coverage": {
     "functional_requirements": "30/30",
     "acceptance_criteria": "14/14",
-    "approved_decisions": "7/7"
+    "approved_decisions": "7/7",
+    "approved_scenarios": "14/14"
   },
   "implementation_issues": {
     "S2": 1,
