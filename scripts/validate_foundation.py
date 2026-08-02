@@ -25,6 +25,7 @@ REQUIRED = [
     "docs/QUALITY_ASSURANCE_PLAN.md",
     "docs/SESSION_HANDOFF_TEMPLATE.md",
     "docs/TRACEABILITY_MATRIX.md",
+    "docs/ISSUE_INDEX.md",
     "scripts/reconstruct_requirements.py",
     ".github/PULL_REQUEST_TEMPLATE.md",
 ]
