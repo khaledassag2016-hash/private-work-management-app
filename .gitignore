@@ -26,6 +26,10 @@ work-files/
 *.sav
 *.spv
 
+# Generated authoritative document
+# Rebuild from docs/source_parts using scripts/reconstruct_requirements.py
+docs/APPROVED_REQUIREMENTS.docx
+
 # Dependencies/builds
 node_modules/
 dist/
