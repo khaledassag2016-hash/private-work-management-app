@@ -1,0 +1,59 @@
+{
+  "stage": "S1",
+  "authoritative_source": {
+    "logical_path": "docs/APPROVED_REQUIREMENTS.docx",
+    "stored_as": "docs/source_parts/APPROVED_REQUIREMENTS.docx.b64.part01..part08",
+    "reconstruction_script": "scripts/reconstruct_requirements.py",
+    "sha256": "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b",
+    "byte_size": 63710,
+    "part_count": 8
+  },
+  "required_files": [
+    "README.md",
+    "PROJECT_STATE.md",
+    ".gitignore",
+    "FOUNDATION_MANIFEST.json",
+    "docs/REQUIREMENTS.md",
+    "docs/PROJECT_RULES.md",
+    "docs/DEFINITION_OF_DONE.md",
+    "docs/ROADMAP.md",
+    "docs/DECISION_LOG.md",
+    "docs/DATA_SECURITY.md",
+    "docs/QUALITY_ASSURANCE_PLAN.md",
+    "docs/SESSION_HANDOFF_TEMPLATE.md",
+    "docs/TRACEABILITY_MATRIX.md",
+    "docs/ISSUE_INDEX.md",
+    "docs/SCENARIOS_AND_EXCEPTIONS.md",
+    "docs/CLASSIFICATION_CATALOG.md",
+    "docs/HISTORICAL_DATA_RULES.md",
+    "docs/SEARCH_ANALYTICS_EXPORT.md",
+    "docs/SOURCE_NOTES.md",
+    "docs/STAGE_1_VALIDATION_REPORT.md",
+    "scripts/reconstruct_requirements.py",
+    "scripts/validate_foundation.py",
+    ".github/PULL_REQUEST_TEMPLATE.md"
+  ],
+  "coverage": {
+    "functional_requirements": "30/30",
+    "acceptance_criteria": "14/14",
+    "approved_decisions": "7/7",
+    "approved_scenarios": "14/14"
+  },
+  "open_decisions": {
+    "Q-001": "before S6",
+    "Q-002": "before S7",
+    "Q-003": "before S7 if settlement closing is requested"
+  },
+  "implementation_issues": {
+    "S2": 1,
+    "S3": 2,
+    "S4": 3,
+    "S5": 4,
+    "S6": 5,
+    "S7": 6,
+    "S8": 7,
+    "S9": 8,
+    "S10": 9,
+    "S11": 10
+  }
+}

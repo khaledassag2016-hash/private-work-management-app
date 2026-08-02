@@ -1,0 +1,47 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Real data and backups
+data/
+backups/
+exports/
+*.sqlite
+*.sqlite3
+*.db
+*.bak
+*.dump
+*.sql
+
+# User work files
+client-files/
+work-files/
+*.sav
+*.spv
+
+# Generated authoritative document
+# Rebuild from docs/source_parts using scripts/reconstruct_requirements.py
+docs/APPROVED_REQUIREMENTS.docx
+
+# Dependencies/builds
+node_modules/
+dist/
+build/
+coverage/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
