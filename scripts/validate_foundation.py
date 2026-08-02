@@ -26,6 +26,10 @@ REQUIRED = [
     "docs/SESSION_HANDOFF_TEMPLATE.md",
     "docs/TRACEABILITY_MATRIX.md",
     "docs/ISSUE_INDEX.md",
+    "docs/SCENARIOS_AND_EXCEPTIONS.md",
+    "docs/CLASSIFICATION_CATALOG.md",
+    "docs/HISTORICAL_DATA_RULES.md",
+    "docs/SEARCH_ANALYTICS_EXPORT.md",
     "scripts/reconstruct_requirements.py",
     ".github/PULL_REQUEST_TEMPLATE.md",
 ]
@@ -75,6 +79,22 @@ for prefix, count, width in [("FR", 30, 3), ("AC", 14, 2), ("P", 7, 2)]:
             f"extra={sorted(in_traceability - expected)}"
         )
 
+scenario_path = ROOT / "docs" / "SCENARIOS_AND_EXCEPTIONS.md"
+scenarios = scenario_path.read_text(encoding="utf-8") if scenario_path.exists() else ""
+expected_scenarios = {f"S-{number:02d}" for number in range(1, 15)}
+in_scenarios = set(re.findall(r"\bS-\d{2}\b", scenarios))
+in_trace_scenarios = set(re.findall(r"\bS-\d{2}\b", traceability))
+if in_scenarios != expected_scenarios:
+    errors.append(
+        f"Scenario document mismatch: missing={sorted(expected_scenarios - in_scenarios)} "
+        f"extra={sorted(in_scenarios - expected_scenarios)}"
+    )
+if in_trace_scenarios != expected_scenarios:
+    errors.append(
+        f"Scenario trace mismatch: missing={sorted(expected_scenarios - in_trace_scenarios)} "
+        f"extra={sorted(in_trace_scenarios - expected_scenarios)}"
+    )
+
 text_extensions = {".md", ".py", ".txt", ".yml", ".yaml", ".json"}
 for file_path in ROOT.rglob("*"):
     if not file_path.is_file() or file_path.suffix.lower() not in text_extensions:
@@ -99,7 +119,7 @@ if errors:
     sys.exit(1)
 
 print("FOUNDATION VALIDATION: PASS")
-print("Coverage: FR 30/30, AC 14/14, P 7/7")
+print("Coverage: FR 30/30, AC 14/14, P 7/7, scenarios 14/14")
 print("Required governance files:", len(REQUIRED), "present and non-empty")
 print("Approved source parts:", EXPECTED_PART_COUNT, "present")
 print("Approved requirements SHA-256:", EXPECTED_DOCX_SHA)
