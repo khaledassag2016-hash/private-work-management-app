@@ -19,8 +19,8 @@ PASS
 
 ```text
 FOUNDATION VALIDATION: PASS
-Coverage: FR 30/30, AC 14/14, P 7/7
-Required governance files: 16 present and non-empty
+Coverage: FR 30/30, AC 14/14, P 7/7, scenarios 14/14
+Required governance files: 20 present and non-empty
 Approved source parts: 8 present
 Approved requirements SHA-256: 6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b
 ```
@@ -41,6 +41,8 @@ SOURCE_PARTS: 8
 - المتطلبات الوظيفية: `30/30`.
 - معايير القبول: `14/14`.
 - القرارات المعتمدة: `7/7`.
+- السيناريوهات والاستثناءات: `14/14`.
+- التصنيفات وقواعد التاريخ والبحث والتصدير: محفوظة في كتالوجات تشغيلية مستقلة.
 - مراحل التنفيذ اللاحقة: Issues رقم `#1` إلى `#10`.
 
 ## الأمن والتكلفة
