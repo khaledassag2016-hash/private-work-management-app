@@ -61,19 +61,19 @@ Workers Free يفرض 10ms CPU لكل استدعاء، وتذكر وثائق Clo
 
 ## 8. المصادر الرسمية
 
-- Static Assets: https://developers.cloudflare.com/workers/static-assets/
-- Static Assets billing: https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/
-- Workers pricing: https://developers.cloudflare.com/workers/platform/pricing/
-- Workers limits: https://developers.cloudflare.com/workers/platform/limits/
-- workers.dev: https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
-- D1 pricing: https://developers.cloudflare.com/d1/platform/pricing/
-- D1 limits: https://developers.cloudflare.com/d1/platform/limits/
-- Firebase plans: https://firebase.google.com/docs/projects/billing/firebase-pricing-plans
-- Firebase Email/Password: https://firebase.google.com/docs/auth/web/password-auth
-- Firebase Auth limits: https://firebase.google.com/docs/auth/limits
-- Firebase ID token verification: https://firebase.google.com/docs/auth/admin/verify-id-tokens
-- Supabase pricing: https://supabase.com/pricing
-- Supabase pausing: https://supabase.com/docs/guides/platform/free-project-pausing
-- Appwrite pricing: https://appwrite.io/pricing
-- Appwrite pausing: https://appwrite.io/changelog/entry/2026-02-20-1
-- Apps Script quotas: https://developers.google.com/apps-script/guides/services/quotas
+- Static Assets — https://developers.cloudflare.com/workers/static-assets/
+- Static Assets billing — https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/
+- Workers pricing — https://developers.cloudflare.com/workers/platform/pricing/
+- Workers limits — https://developers.cloudflare.com/workers/platform/limits/
+- workers.dev — https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
+- D1 pricing — https://developers.cloudflare.com/d1/platform/pricing/
+- D1 limits — https://developers.cloudflare.com/d1/platform/limits/
+- Firebase plans — https://firebase.google.com/docs/projects/billing/firebase-pricing-plans
+- Firebase sign-in with email and password — https://firebase.google.com/docs/auth/web/password-auth
+- Firebase Auth limits — https://firebase.google.com/docs/auth/limits
+- Firebase ID token verification — https://firebase.google.com/docs/auth/admin/verify-id-tokens
+- Supabase pricing — https://supabase.com/pricing
+- Supabase pausing — https://supabase.com/docs/guides/platform/free-project-pausing
+- Appwrite pricing — https://appwrite.io/pricing
+- Appwrite pausing — https://appwrite.io/changelog/entry/2026-02-20-1
+- Apps Script quotas — https://developers.google.com/apps-script/guides/services/quotas
