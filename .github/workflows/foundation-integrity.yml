@@ -29,8 +29,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout exact revision
+      - name: Checkout event revision (synthetic merge on pull requests)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Record tested revision
+        run: |
+          echo "Tested event revision: $GITHUB_SHA"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "This is GitHub's synthetic PR merge revision."
+            echo "PR head revision: ${{ github.event.pull_request.head.sha }}"
+            echo "PR base revision: ${{ github.event.pull_request.base.sha }}"
+          else
+            echo "This is the pushed main revision."
+          fi
 
       - name: Compile validators
         run: python -m py_compile scripts/reconstruct_requirements.py scripts/validate_foundation.py
