@@ -2,139 +2,121 @@
 
 - التاريخ: 2026-08-03
 - Pull Request: #17
-- الحالة: **المعمارية معتمدة، والتصحيحات منفذة، وجاهزة للمراجعة الإشرافية المستقلة بشرط نجاح فحوص الرأس الحالي**
+- الحالة: **المعمارية معتمدة وتصحيحات المراجعة المستقلة منفذة**
 - ADR-001: `Accepted`
 - القرار: D-006
 
 ## 1. بوابة المرجع وS1
 
-نجحت البوابة على نسخة GitHub نظيفة:
+نجحت البوابة على synthetic PR merge revision نظيفة:
 
 - `RECONSTRUCTION: PASS`
 - الحجم: `63710` بايت
 - SHA-256: `6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b`
 - `FOUNDATION VALIDATION: PASS`
 - التغطية: FR 30/30، AC 14/14، P 7/7، scenarios 14/14
-- القرارات المسجلة: D-001 إلى D-006
-- القرارات المفتوحة: Q-001 إلى Q-004
+- القرارات: D-001 إلى D-006
+- البنود المفتوحة: Q-001 إلى Q-004
 
 لم يستخدم ملف Word غير المطابق المرفق بالمحادثة.
 
-## 2. القرار المعماري
+## 2. القرار المعماري الدقيق
 
-اعتمد المستخدم صراحة:
+- Cloudflare Workers Static Assets هي استضافة الواجهة الأساسية.
+- Cloudflare Pages بديل احتياطي يحتاج قرارًا لاحقًا.
+- Cloudflare Workers Free للـAPI وD1 Free للبيانات.
+- Firebase Authentication Spark للمصادقة فقط بطريقة Email/Password.
+- حسابان ينشئهما المشرف؛ self-sign-up وحذف الحساب من المستخدم معطلان.
+- Phone/SMS وAnonymous وأي مزود آخر معطلة.
+- نقطة البداية `workers.dev` المجانية؛ لا نطاق مدفوع مطلوب.
 
-- Cloudflare Workers/Static Assets.
-- Cloudflare D1 Free.
-- Firebase Authentication Spark للمصادقة فقط.
+## 3. الأمن وحدود الوصول
 
-مع استمرار منع Zero Trust وBlaze وأي Billing Account أو وسيلة دفع أو إنشاء خدمة فعلية دون موافقة مستقلة.
+- كل API خاص Fail closed ويمر عبر Worker.
+- D1 متاحة من خلال binding داخلي فقط، بلا وصول مباشر من الواجهة.
+- التحقق يشمل RS256 و`kid` وشهادة X.509 المطابقة والتوقيع و`aud/iss/exp/iat/auth_time/sub`.
+- الشهادات تخزن مؤقتًا حسب `Cache-Control: max-age`.
+- `app_users` يفرض مستخدمين نشطين فقط ودورًا نشطًا فريدًا.
+- provisioning لا يستخدم `INSERT OR REPLACE` ولا يستبدل زوج UIDs قائمًا بصمت.
+- `schema.sql` هو المصدر التنفيذي الوحيد للمخطط، ويقرأه `core.py` مباشرة.
 
-## 3. تصحيحات Firebase ID Token
+## 4. نتائج النموذج المحلي
 
-أصبح النموذج المحلي يطبق:
+### Python / SQLite — 11 PASS
 
-- `alg=RS256` فقط.
-- اشتراط `kid` واختيار مفتاح Google العام المطابق له.
-- تخزين المفاتيح مؤقتًا حسب `Cache-Control: max-age`.
-- إعادة جلب المفاتيح عند انتهاء المدة أو ظهور `kid` جديد.
-- التحقق من التوقيع و`aud` و`iss` و`exp` و`iat` و`auth_time` و`sub`.
-- اشتراط `sub` غير فارغ.
-- فشل مغلق عند تعذر الشبكة أو المفتاح أو التحقق أو التفويض.
-- قائمة سماح UID للشخصين فقط.
+- شخصان يستخدمان البيانات في أوقات مختلفة.
+- رفض UID غير مجهز.
+- رفض مستخدم نشط ثالث.
+- رفض دور نشط مكرر.
+- إعادة provisioning بالزوج نفسه idempotent، والزوج المختلف مرفوض دون تغيير الصفوف.
+- رفض stale write.
+- سجل تدقيق append-only.
+- JSON round-trip وSQL export.
+- تحقق FR-027.
+- تطابق مصدر المخطط الواحد وتنفيذ فهارسه ومحفزاته.
 
-المصدر الرسمي: https://firebase.google.com/docs/auth/admin/verify-id-tokens
+### Node / Web Crypto — 12 PASS
 
-## 4. Fail closed وحد D1
-
-- كل مسار API خاص يجب أن يمر عبر Worker وطبقة التحقق قبل أي قراءة أو كتابة.
-- أي فشل يرفض الطلب ولا يوجد fallback أو guest mode.
-- ترتبط D1 بالـWorker من خلال binding داخلي فقط.
-- لا تملك الواجهة بيانات اعتماد D1 ولا يوجد وصول مباشر أو مسار يتجاوز Worker.
-
-## 5. قاعدة الأموال
-
-- تخزن القيم المالية كأعداد صحيحة من الهللات في `INTEGER`.
-- يمنع `REAL/FLOAT/DOUBLE` وfloating point للحسابات المالية.
-- يجب أن تكون القيم والنتائج الوسيطة ضمن `Number.isSafeInteger`.
-- سجل Q-004 لقاعدة تقريب كسور الهللة قبل تنفيذها في S7.
-
-القاعدة: `docs/architecture/FINANCIAL_INTEGER_RULE.md`.
-
-## 6. نتائج النموذج المحلي
-
-### Python / SQLite
-
-- 7 اختبارات: PASS.
-- استخدام الشخصين للبيانات في أوقات مختلفة: PASS.
-- رفض UID ثالث: PASS.
-- رفض stale write: PASS.
-- append-only audit: PASS.
-- JSON round-trip: PASS.
-- SQL export: PASS.
-- FR-027 وعدم تخزين ملفات الأعمال: PASS.
-
-### Node / Web Crypto
-
-- 11 اختبارًا: PASS.
-- رمز صحيح وUID مجهز: PASS.
-- UID غير مجهز: رفض.
-- `kid` مطابق واستخدام المفتاح الصحيح: PASS.
-- cache واحترام `max-age`: PASS.
-- `kid` مفقود أو مجهول: رفض.
-- `auth_time` مفقود أو مستقبلي: رفض.
-- issuer خاطئ: رفض.
-- خوارزمية غير RS256: رفض.
-- `sub` مفقود أو فارغ: رفض.
-- payload معدل: رفض التوقيع.
-- انتهاء أو `iat` مستقبلي أو audience خاطئ: رفض.
-- فشل جلب المفتاح أو غياب `max-age`: رفض Fail closed.
+- token صحيح وUID مجهز.
+- رفض UID غير مجهز.
+- اختيار الشهادة/المفتاح المطابق لـ`kid` واحترام `max-age`.
+- مسار شهادة مؤقتة فعلية من نوع `BEGIN CERTIFICATE` عبر `GooglePublicKeyCache` والتحقق من التوقيع.
+- رفض `kid` المفقود أو المجهول.
+- رفض `auth_time` المفقود أو المستقبلي.
+- رفض issuer خاطئ وخوارزمية غير RS256 و`sub` مفقود أو فارغ.
+- رفض payload معدل، والانتهاء، و`iat` المستقبلي، وaudience الخاطئ.
+- فشل مغلق عند فشل الشبكة أو HTTP أو cache metadata.
 
 ```text
-Python tests: 7 passed
-Node tests: 11 passed
-Total runner tests: 18 passed
+Python tests: 11 passed
+Node tests: 12 passed
+Total runner tests: 23 passed
 S2 LOCAL VALIDATION: PASS
 ```
 
-## 7. نقطة دليل CI
+## 5. نقطة دليل GitHub Actions بعد التصحيحات
 
-نجحت الفحوص على رأس التنفيذ:
+الرأس الذي اختبرته نقطة الدليل:
 
-`61e1bd10bbf5f93dcdaca017ac21950ad1a5613b`
+- PR head: `58100f15087a977d8f5770d49faf3b8b6cc68c5b`
+- Synthetic PR merge revision: `2645ea1a79dcd94c69c665e5fefdf1437cc23048`
+- Base: `9038d02d38929ee4ad6d761ac15634ba383eb1b8`
 
-- `S2 architecture validation` run #25: **SUCCESS**.
-- `Foundation integrity` run #36: **SUCCESS**.
-- إعادة بناء المرجع: PASS.
-- فحص S1 الرجعي: PASS.
-- 7 اختبارات Python و11 اختبار Node: PASS.
-- بوابة ADR `Accepted` وD-006 وFail closed وقاعدة الهللات: PASS.
+النتائج:
 
-### قاعدة الرأس الحاكم
+- `S2 architecture validation` run #52: **SUCCESS**.
+- `Foundation integrity` run #63: **SUCCESS**.
+- checkout والتقرير وصفا المراجعة بدقة بوصفها synthetic merge revision، وعرضا head وbase منفصلين.
+- إعادة البناء وFoundation واختبارات 23 حالة وبوابات القرار: PASS.
 
-إضافة هذا التقرير أو المراجعة الذاتية تنتج commit توثيقيًا جديدًا، لذلك لا يمكن تضمين SHA للملف الذي يحتوي SHA نفسه دون حلقة ذاتية. الرأس الحاكم النهائي هو `head_sha` الظاهر في PR #17، ويجب أن تكون نتيجتا `Foundation integrity` و`S2 architecture validation` المرتبطتان به `SUCCESS`. يوثق وصف PR النهائي SHA وأرقام التشغيل دون تغيير الشجرة.
+### قاعدة الدليل النهائي
 
-## 8. الأمن والخصوصية
+تعديل هذا التقرير والمراجعة الذاتية ينشئ رأسًا وmerge revision جديدين. لذلك يكون الدليل النهائي الحاكم هو أحدث workflowين المرتبطين بـ`head_sha` الظاهر في PR #17 بعد آخر commit؛ ويوثق وصف PR النهائي head وsynthetic merge SHA وأرقام التشغيل دون تعديل الشجرة مجددًا.
 
-- لا بيانات عملاء أو أعمال حقيقية.
-- لا كلمات مرور أو مفاتيح خدمة أو tokens محفوظة.
-- مفاتيح RSA للاختبار تولد في الذاكرة.
-- لا schema لتخزين file أو attachment أو blob.
-- لا خدمة سحابية أنشئت.
-- لا بطاقة أو Billing Account أو فوترة.
+## 6. بوابة CPU قبل S3
+
+حد Workers Free هو 10ms CPU لكل استدعاء. أول بوابة S3 بعد الموافقة المستقلة هي قياس المسار الفعلي للتحقق على Workers Free. إذا تكرر التجاوز أو إنهاء الاستدعاء، يتوقف S3 ويعود القرار إلى الإشراف أو بديل مجاني موثق. يمنع Workers Paid أو Billing أو البطاقة.
+
+## 7. الخصوصية والمحظورات
+
+- لا بيانات حقيقية أو أسرار أو مفاتيح خاصة محفوظة.
+- شهادة ومفتاح X.509 للاختبار يولدان مؤقتًا ويحذفان.
+- لم تنشأ خدمة سحابية.
+- لا Zero Trust ولا Blaze ولا Workers Paid ولا Billing Account.
 - لم يبدأ S3.
+- PR #17 غير مدمجة وIssue #1 مفتوحة.
 
-## 9. أوجه القصور الصريحة
+## 8. القيود الصريحة
 
-- لم يقس CPU الحقيقي للتحقق داخل Worker Free.
-- endpoint Google الحقيقي وتدوير مفاتيحه ممثلان بـmock؛ الاختبار السحابي يحتاج موافقة مستقلة.
-- لم تختبر D1 cloud bindings أو Time Travel أو restore.
-- لم تختبر إعدادات Firebase Console على مشروع فعلي.
-- الخطط المجانية قد تتغير؛ تعاد مراجعتها قبل إنشاء الخدمة والنشر.
-- قاعدة تقريب كسور الهللة غير محسومة ومسجلة Q-004.
+- لم يقس CPU الحقيقي في Worker Free بعد.
+- endpoint Google الحقيقي وتدوير الشهادات الفعلي لم يختبرا سحابيًا.
+- إعداد Firebase Console وتعطيل المزودين لم يختبرا على مشروع فعلي.
+- D1 cloud binding وrestore وTime Travel لم تختبر.
+- الخطط المجانية يعاد التحقق منها قبل أي إنشاء أو نشر.
+- Q-004 للتقريب غير محسوم.
 
-## 10. الحكم
+## 9. الحكم
 
-التوصية اعتمدت، وADR أصبح `Accepted`، وسجل D-006، ونفذت التصحيحات والاختبارات. يبقى الدمج وإغلاق Issue #1 وبدء S3 ممنوعًا حتى المراجعة الإشرافية المستقلة.
+نفذت جميع بنود تعليق المراجعة المستقلة ضمن نفس الفرع ونفس PR. يبقى الدمج وإغلاق Issue #1 وبدء S3 ممنوعًا حتى إعادة المراجعة الإشرافية.
 
 **READY FOR INDEPENDENT SUPERVISORY REVIEW**
