@@ -17,59 +17,16 @@ class ConflictError(RuntimeError):
     """Raised when optimistic concurrency detects a stale client write."""
 
 
+class ProvisioningError(RuntimeError):
+    """Raised when an existing two-user provisioning would be replaced unsafely."""
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-SCHEMA_SQL = """
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS app_users (
-    uid TEXT PRIMARY KEY,
-    role TEXT NOT NULL CHECK (role IN ('person_1', 'person_2')),
-    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
-);
-
-CREATE TABLE IF NOT EXISTS clients (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_by TEXT NOT NULL REFERENCES app_users(uid),
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS work_items (
-    id TEXT PRIMARY KEY,
-    client_id TEXT NOT NULL REFERENCES clients(id),
-    title TEXT NOT NULL,
-    status TEXT NOT NULL,
-    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-    updated_by TEXT NOT NULL REFERENCES app_users(uid),
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_type TEXT NOT NULL,
-    entity_id TEXT NOT NULL,
-    action TEXT NOT NULL,
-    actor_uid TEXT NOT NULL REFERENCES app_users(uid),
-    old_json TEXT,
-    new_json TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-BEFORE UPDATE ON audit_log
-BEGIN
-    SELECT RAISE(ABORT, 'audit_log is append-only');
-END;
-
-CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-BEFORE DELETE ON audit_log
-BEGIN
-    SELECT RAISE(ABORT, 'audit_log is append-only');
-END;
-"""
+SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+SCHEMA_SQL = SCHEMA_PATH.read_text(encoding="utf-8")
 
 
 @dataclass(frozen=True)
@@ -84,7 +41,7 @@ class WorkItem:
 
 
 class ArchitecturePrototype:
-    """A local SQLite proof of the proposed D1-style relational core.
+    """A local SQLite proof of the accepted D1-style relational core.
 
     Authentication tokens are intentionally not implemented here. Tests pass a
     mocked, pre-provisioned UID to prove the exact-two-user allowlist and audit
@@ -103,10 +60,36 @@ class ArchitecturePrototype:
     def provision_users(self, person_1_uid: str, person_2_uid: str) -> None:
         if not person_1_uid or not person_2_uid or person_1_uid == person_2_uid:
             raise ValueError("Two distinct non-empty UIDs are required")
-        with self.connection:
-            self.connection.executemany(
-                "INSERT OR REPLACE INTO app_users(uid, role, active) VALUES (?, ?, 1)",
-                [(person_1_uid, "person_1"), (person_2_uid, "person_2")],
+
+        desired = {
+            "person_1": person_1_uid,
+            "person_2": person_2_uid,
+        }
+        with self.transaction() as conn:
+            existing = {
+                row["role"]: row["uid"]
+                for row in conn.execute(
+                    "SELECT uid, role FROM app_users WHERE active = 1 ORDER BY role"
+                )
+            }
+            inactive_count = conn.execute(
+                "SELECT COUNT(*) FROM app_users WHERE active = 0"
+            ).fetchone()[0]
+
+            if existing or inactive_count:
+                if existing == desired and inactive_count == 0:
+                    return
+                raise ProvisioningError(
+                    "Existing app_users provisioning cannot be replaced; "
+                    "use an explicitly reviewed migration"
+                )
+
+            conn.executemany(
+                "INSERT INTO app_users(uid, role, active) VALUES (?, ?, 1)",
+                [
+                    (person_1_uid, "person_1"),
+                    (person_2_uid, "person_2"),
+                ],
             )
 
     def authorize(self, actor_uid: str) -> None:
