@@ -8,19 +8,20 @@
 
 ## 1. نطاق المقارنة
 
-تغطي هذه المقارنة الاستضافة، التنفيذ الخلفي، قاعدة البيانات، المصادقة، العمل المتزامن أو المتعاقب لشخصين، التصدير والاستعادة، وسلوك الخطة المجانية. لا تشمل بناء شاشات التطبيق أو إنشاء أي خدمة سحابية فعلية.
+تغطي المقارنة استضافة الواجهة، والتنفيذ الخلفي، وقاعدة البيانات، والمصادقة، والعمل لشخصين في أوقات مختلفة، والتصدير والاستعادة، وسلوك الخطة المجانية. لا تشمل إنشاء خدمة سحابية أو بناء شاشات التطبيق.
 
 ## 2. البوابات الإلزامية
 
-أي بديل يفشل بوابة واحدة لا يمكن اعتماده، مهما كانت درجته الإجمالية:
+أي بديل يفشل بوابة واحدة لا يعتمد مهما كانت درجته:
 
 1. لا تكلفة أو اشتراك إلزامي.
-2. لا بطاقة بنكية ولا تفعيل فوترة.
-3. لا فوترة تلقائية عند تجاوز الحصة؛ يجب أن يتوقف الاستخدام أو يفشل بوضوح.
-4. قابلية العمل لشخصين في أوقات مختلفة دون توقف خمول يجعل التطبيق غير متاح.
-5. هوية منفصلة لكل شخص ومنع أي مستخدم ثالث من الوصول إلى بيانات التطبيق.
-6. مسار تصدير واستعادة مفتوح لا يحبس البيانات.
-7. عدم تخزين ملفات الأعمال نفسها داخل التطبيق وفق `FR-027`.
+2. لا بطاقة بنكية ولا Billing Account ولا تفعيل فوترة.
+3. لا overage تلقائي؛ بلوغ الحد ينتج فشلًا واضحًا.
+4. لا توقف خمول يمنع الشخصين من استخدام التطبيق عند الحاجة.
+5. هوية منفصلة وحصر الوصول في شخصين.
+6. مسار تصدير واستعادة مفتوح.
+7. عدم تخزين ملفات الأعمال وفق FR-027.
+8. عدم الاعتماد على نطاق مدفوع للتشغيل الأولي.
 
 ## 3. أوزان التقييم
 
@@ -33,180 +34,118 @@
 | التصدير والنسخ والاستعادة وقابلية النقل | 15% |
 | سهولة الصيانة وخطر تغير الخطة | 10% |
 
-الدرجات من 0 إلى 5، ثم تحسب النتيجة الموزونة من 100. البوابات الإلزامية تسبق النتيجة الرقمية.
-
 ## 4. البدائل
 
-### A — Cloudflare Workers/Pages + D1 + Firebase Authentication Spark
+### A — Cloudflare Workers Static Assets + Workers API + D1 + Firebase Authentication Spark
 
 **التكوين المعتمد:**
 
-- واجهة ثابتة على Cloudflare Workers Static Assets أو Pages.
-- API خاص على Cloudflare Workers Free.
-- قاعدة بيانات Cloudflare D1 Free.
-- Firebase Authentication على Spark للمصادقة فقط.
-- حسابان ينشئهما المشرف، مع تعطيل إنشاء الحسابات وحذفها من المستخدم النهائي.
-- يتحقق Worker من Firebase ID Token وفق الوثائق الرسمية، ثم يطبق قائمة سماح داخل D1 تحتوي UID للشخصين فقط.
-- كل مسار API يعمل Fail closed، ولا يوجد وصول مباشر إلى D1 أو تجاوز للـWorker.
-- تخزن القيم المالية كأعداد صحيحة من الهللات، ويحظر floating point.
+- **Cloudflare Workers Static Assets** للواجهة الأساسية.
+- Cloudflare Workers Free للـAPI.
+- Cloudflare D1 Free لقاعدة البيانات.
+- Firebase Authentication Spark للمصادقة فقط.
+- Email/Password لحسابين ينشئهما المشرف.
+- تعطيل self-sign-up وحذف الحساب من المستخدم وPhone/SMS وAnonymous وأي مزود آخر.
+- التشغيل الأولي على `workers.dev` المجاني؛ لا يشترط نطاق مدفوع.
+- Cloudflare Pages بديل احتياطي فقط يحتاج قرارًا لاحقًا.
+- تحقق Firebase ID Token داخل Worker ثم قائمة سماح لشخصين داخل D1.
+- كل API خاص Fail closed ولا يوجد وصول مباشر إلى D1.
 
 **نقاط القوة:**
 
-- Cloudflare يعلن بدء البناء مجانًا دون بطاقة، وFirebase Spark لا يحتاج معلومات دفع.
-- تجاوز حصص Workers/D1 المجانية يؤدي إلى أخطاء أو توقف العمليات، لا إلى رسوم تلقائية.
-- D1 يستخدم دلالات SQLite ويدعم العلاقات والمفاتيح الأجنبية والتصدير إلى SQL.
-- لا يوجد توقف خمول معلن لـWorkers/D1 أو Firebase Authentication.
-- D1 يوفر Time Travel لمدة 7 أيام على الخطة المجانية، مع بقاء النسخة الخارجية المستقلة مطلوبة.
-- الفصل بين المصادقة والبيانات يقلل الحاجة إلى بناء نظام كلمات مرور خاص.
+- Workers Free وFirebase Spark يحققان شرط عدم البطاقة والفوترة في التكوين المعتمد.
+- طلبات Static Assets مجانية وغير محدودة وفق وثائق Cloudflare الحالية، وتدمج الواجهة والـWorker كوحدة نشر.
+- `workers.dev` يتيح البدء دون شراء نطاق.
+- D1 علائقي بدلالات SQLite ويدعم التصدير إلى SQL.
+- البيانات التشغيلية منفصلة عن مزود الهوية.
+- قيود `app_users` تفرض مستخدمين نشطين فقط ودورًا نشطًا فريدًا.
 
-**القيود والمخاطر:**
+**المخاطر والبوابات:**
 
 - مزودان بدل مزود واحد.
-- يجب قياس تحقق RS256 وجلب مفاتيح Google العامة وذاكرة التخزين المؤقت ضمن حد CPU في Workers Free أثناء S3.
-- حد D1 المجاني 500 MB لكل قاعدة و5 GB للحساب؛ يلزم رصد النمو.
-- Time Travel ليس بديلًا عن نسخة SQL خارج المنصة.
+- Workers Free يفرض 10ms CPU لكل استدعاء، والأعمال الثقيلة مثل المصادقة قد تقع في 10–20ms وفق وثائق Cloudflare.
+- لذلك تبدأ S3 بقياس فعلي؛ إذا تكرر تجاوز الحد يتوقف التنفيذ ويعود إلى بوابة القرار أو بديل مجاني. يمنع Workers Paid والفوترة.
+- حد D1 المجاني 500MB لكل قاعدة، ويلزم رصد النمو والتصدير الدوري.
 
-**حكم البوابات:** PASS، بشرط بقاء الحساب على الخطتين المجانيتين وعدم استخدام Cloudflare Zero Trust Access، وعدم ربط Billing Account أو وسيلة دفع.
+**الحكم:** PASS — معتمد.
 
 ### B — Firebase Spark متكامل: Hosting + Authentication + Firestore
 
-**نقاط القوة:**
+**نقاط القوة:** مزود واحد، Spark دون معلومات دفع، معاملات وكتابات مجمعة، وحصص مناسبة لشخصين.
 
-- مزود واحد، ولا يحتاج Spark إلى معلومات دفع.
-- المصادقة متاحة دون تكلفة لمعظم الطرق.
-- حصص Firestore مناسبة جدًا لمستخدمين اثنين، والتجاوز على Spark يوقف المنتج بدل الفوترة.
-- معاملات Firestore والكتابات المجمعة تدعم الذرية.
+**القيود:** النسخ الاحتياطية المدارة وPITR والتصدير/الاستيراد المدار تتطلب فوترة، والنموذج الوثائقي أقل ملاءمة من SQL للعلاقات المالية والتاريخية، والارتباط بالمزود أعلى.
 
-**القيود:**
-
-- النسخ الاحتياطية المدارة وPITR والاستعادة والاستنساخ تحتاج تفعيل فوترة.
-- خدمة التصدير والاستيراد المدارة تتطلب Blaze؛ لذلك يلزم بناء تصدير JSON خاص بالتطبيق واختبار استعادته.
-- نموذج المستندات أقل ملاءمة من SQL للعلاقات المالية وسجل الحركات والاستعلامات التحليلية المتعددة.
-- الارتباط بخدمات Firebase أعلى.
-
-**حكم البوابات:** PASS مشروط بتصدير تطبيق مستقل، لكنه أدنى من البديل A في قابلية النقل والنموذج العلاقي.
+**الحكم:** PASS مشروط بتصدير تطبيق مستقل؛ بديل مجاني موثق يمكن العودة إلى بوابة القرار لمراجعته إذا فشل حد CPU في البديل A.
 
 ### C — Supabase Free
 
-**نقاط القوة:**
+PostgreSQL ومصادقة وتصدير منطقي جيد، لكن مشاريع Free قليلة النشاط قد تتوقف بعد سبعة أيام، والنسخ الاحتياطية الآلية ليست ضمن Free، كما بقي إثبات عدم طلب البطاقة في كل مسار إنشاء غير كافٍ للمشروع.
 
-- PostgreSQL ومصادقة وواجهات API مدمجة.
-- تصدير منطقي باستخدام `db dump` متاح، وقاعدة البيانات علائقية.
-- سعة 500 MB و50,000 MAU أعلى كثيرًا من حمل شخصين.
-
-**القيود المانعة:**
-
-- مشاريع Free قليلة النشاط قد تتوقف بعد 7 أيام، وهو تعارض مباشر مع ضرورة استخدام الشخصين للتطبيق عند الحاجة دون إجراء إحياء إداري.
-- النسخ الاحتياطية الآلية غير متاحة للخطة المجانية.
-- الوثائق الحالية تثبت أن الخطط المدفوعة تحتاج بطاقة، لكنها لا تقدم نصًا حديثًا صريحًا يضمن أن كل مسار إنشاء Free لا يطلب بطاقة؛ لذلك تبقى بوابة البطاقة غير مثبتة بما يكفي لهذا المشروع.
-
-**حكم البوابات:** FAIL بسبب توقف الخمول، إضافة إلى فجوة إثبات البطاقة.
+**الحكم:** FAIL بسبب الخمول وفجوة إثبات البطاقة.
 
 ### D — Appwrite Cloud Free
 
-**نقاط القوة:**
+منصة موحدة وحدود كافية، لكن المشروع المجاني يتوقف بعد غياب النشاط التطويري وقد يتعرض للحذف بعد توقف طويل، ولا تتضمن Free نسخًا احتياطية.
 
-- خدمات مصادقة وقاعدة بيانات وموقع ووظائف ضمن منصة واحدة.
-- حدود 75,000 MAU و500,000 قراءة و250,000 كتابة شهريًا كافية للحمل المتوقع.
-- تجاوز عمليات القراءة أو الكتابة على Free يسبب الخنق بدل overage مدفوع.
+**الحكم:** FAIL بسبب الخمول وخطر الحذف.
 
-**القيود المانعة:**
+### E — Google Apps Script + Sheets
 
-- المشروع المجاني يتوقف بعد 7 أيام دون نشاط تطويري، ويصبح غير متاح للمستخدمين حتى إعادة تنشيطه.
-- المشاريع المجانية المتوقفة 90 يومًا معرضة للحذف وفق تحديث يونيو 2026.
-- النسخ الاحتياطية ليست ضمن Free.
-- تغيرت حدود الخطة المجانية عدة مرات في 2026، بما يزيد خطر تغير الخطة.
-- لم نجد في صفحة التسعير الحالية نصًا صريحًا يكفي وحده لإثبات عدم طلب بطاقة في مسار التسجيل.
+سهل وتصديره مباشر، لكن خيارات النشر لا تحصر أصلًا بريدين شخصيين بدقة، وهوية المستخدم قد تكون غامضة في بعض أوضاع التنفيذ، وSheets أضعف في المعاملات والعلاقات المالية.
 
-**حكم البوابات:** FAIL بسبب توقف الخمول وخطر الحذف وفجوة إثبات البطاقة.
-
-### E — Google Apps Script + Google Sheets
-
-**نقاط القوة:**
-
-- بيئة بسيطة، تصدير Sheets/Excel مباشر، وLockService يمنع تصادم المقاطع الحرجة.
-- لا تحتاج خادمًا مخصصًا.
-
-**القيود المانعة:**
-
-- خيارات نشر Web App هي: المالك فقط، النطاق، أي مستخدم مسجل، أو أي مستخدم؛ لا توجد سياسة نشر أصلية تحصر الوصول في بريدين شخصيين محددين.
-- هوية المستخدم النشط قد تكون غير متاحة في بعض أوضاع التنفيذ، ما يضعف سجل التدقيق وقائمة السماح.
-- الحصص عرضة للتغيير دون إشعار، والتجاوز يرمي استثناء ويوقف التنفيذ.
-- Sheets ليس قاعدة معاملات علائقية مناسبة لتاريخ مالي طويل واستعلامات وتحليلات متعددة.
-
-**حكم البوابات:** FAIL بسبب غموض الهوية والحصر الدقيق للمستخدمين وسلامة البيانات.
+**الحكم:** FAIL بسبب الهوية وسلامة البيانات.
 
 ## 5. مصفوفة النتيجة
 
 | البديل | التكلفة 25 | الاستمرارية 15 | الأمن 20 | سلامة البيانات 15 | النقل 15 | الصيانة 10 | النتيجة /100 | البوابة |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| A: Cloudflare + D1 + Firebase Auth | 25 | 15 | 18 | 14 | 14 | 8 | **94** | PASS — معتمد |
+| A: Workers Static Assets + D1 + Firebase Auth | 25 | 15 | 18 | 14 | 14 | 8 | **94** | PASS — معتمد |
 | B: Firebase متكامل | 25 | 15 | 18 | 11 | 9 | 9 | **87** | PASS مشروط |
 | C: Supabase Free | 18 | 3 | 17 | 15 | 14 | 8 | 75 | FAIL |
 | D: Appwrite Cloud Free | 16 | 0 | 16 | 12 | 8 | 5 | 57 | FAIL |
 | E: Apps Script + Sheets | 22 | 11 | 6 | 7 | 12 | 7 | 65 | FAIL |
 
-## 6. القرار
+## 6. القرار التفصيلي
 
-اعتمد المستخدم صراحة البديل **A: Cloudflare Workers/Static Assets + D1 + Firebase Authentication Spark** بتاريخ 2026-08-03، مع الشروط التالية:
+اعتمد المستخدم البديل A بالشروط الآتية:
 
-1. لا يستخدم Cloudflare Zero Trust Access.
-2. لا يستخدم Firebase Blaze، ولا يربط أي Billing Account أو وسيلة دفع.
-3. لا تنشأ خدمة سحابية فعلية دون موافقة مستقلة.
-4. ينشأ حسابا Firebase إداريًا فقط، وتعطل عمليات إنشاء الحساب أو حذفه من المستخدم النهائي.
-5. لا يكفي امتلاك حساب Firebase للوصول؛ يجب أن يطابق UID سجلًا نشطًا ضمن `app_users` في D1.
-6. يتحقق Worker من `kid` والمفتاح المطابق وRS256 والتوقيع و`aud/iss/exp/iat/auth_time/sub`، ويخزن المفاتيح وفق `max-age` ويفشل مغلقًا.
-7. لا تعرض D1 مباشرة ولا يسمح أي مسار بتجاوز Worker.
-8. لا تخزن ملفات الأعمال؛ البيانات النصية والمالية فقط.
-9. تخزن القيم المالية كأعداد صحيحة من الهللات ضمن المجال الآمن، ويحظر floating point.
-10. ينفذ تصدير SQL دوري يدويًا إلى تخزين محلي مشفر خارج GitHub، مع اختبار استعادة في S10.
-11. لا يبدأ S3 ولا يدمج PR #17 قبل المراجعة الإشرافية المستقلة ودمج S2.
+1. Workers Static Assets هي الاستضافة الأساسية؛ Pages احتياطية فقط بقرار لاحق.
+2. `workers.dev` هو النطاق الأولي المجاني، ولا يشترط نطاق مدفوع.
+3. Firebase Authentication يستخدم Email/Password فقط لحسابين ينشئهما المشرف.
+4. self-sign-up وحذف الحساب من المستخدم وPhone/SMS وAnonymous وأي مزود آخر معطلة.
+5. لا Zero Trust ولا Blaze ولا Workers Paid ولا Billing Account ولا بطاقة.
+6. D1 داخل Worker binding فقط، وكل API خاص Fail closed.
+7. `app_users` يفرض مستخدمين نشطين فقط ودورًا نشطًا فريدًا.
+8. `schema.sql` هو مصدر المخطط الواحد، ولا يستخدم provisioning عبارة `INSERT OR REPLACE`.
+9. تخزن الأموال كهللات صحيحة ضمن المجال الآمن.
+10. بوابة CPU في S3 مانعة؛ الفشل المتكرر يعيد القرار ولا يجيز الترقية المدفوعة.
 
 ## 7. المصادر الرسمية
 
 ### Cloudflare
 
-- https://www.cloudflare.com/products/workers/
-- https://developers.cloudflare.com/workers/platform/pricing/
-- https://developers.cloudflare.com/workers/platform/limits/
-- https://developers.cloudflare.com/d1/platform/pricing/
-- https://developers.cloudflare.com/d1/platform/limits/
-- https://developers.cloudflare.com/d1/best-practices/import-export-data/
-- https://developers.cloudflare.com/d1/sql-api/foreign-keys/
-- https://developers.cloudflare.com/d1/worker-api/d1-database/
-- https://developers.cloudflare.com/cloudflare-one/setup/
+- Workers Static Assets: https://developers.cloudflare.com/workers/static-assets/
+- Static Assets billing: https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/
+- Workers pricing: https://developers.cloudflare.com/workers/platform/pricing/
+- Workers limits وCPU: https://developers.cloudflare.com/workers/platform/limits/
+- `workers.dev`: https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
+- D1 pricing: https://developers.cloudflare.com/d1/platform/pricing/
+- D1 limits: https://developers.cloudflare.com/d1/platform/limits/
+- D1 export: https://developers.cloudflare.com/d1/best-practices/import-export-data/
 
 ### Firebase
 
-- https://firebase.google.com/docs/projects/billing/firebase-pricing-plans
-- https://firebase.google.com/docs/auth
-- https://firebase.google.com/docs/auth/users
-- https://firebase.google.com/docs/auth/limits
-- https://firebase.google.com/docs/auth/admin/verify-id-tokens
-- https://firebase.google.com/docs/firestore/quotas
-- https://firebase.google.com/docs/firestore/solutions/schedule-export
-- https://firebase.google.com/docs/firestore/manage-data/transactions
+- Pricing plans: https://firebase.google.com/docs/projects/billing/firebase-pricing-plans
+- Email/Password: https://firebase.google.com/docs/auth/web/password-auth
+- User management: https://firebase.google.com/docs/auth/users
+- ID token verification: https://firebase.google.com/docs/auth/admin/verify-id-tokens
+- Authentication limits: https://firebase.google.com/docs/auth/limits
 
-### Supabase
+### البدائل
 
-- https://supabase.com/pricing
-- https://supabase.com/docs/guides/platform/free-project-pausing
-- https://supabase.com/docs/guides/platform/backups
-- https://supabase.com/docs/guides/platform/billing-faq
-
-### Appwrite
-
-- https://appwrite.io/pricing
-- https://appwrite.io/changelog/entry/2026-02-20-1
-- https://appwrite.io/changelog
-- https://appwrite.io/docs/advanced/billing/database-reads-and-writes
-
-### Google Apps Script
-
-- https://developers.google.com/apps-script/manifest/web-app-api-executable
-- https://developers.google.com/apps-script/guides/services/quotas
-- https://developers.google.com/apps-script/reference/lock/lock-service
-
-### ECMAScript
-
-- https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-number.max_safe_integer
+- Supabase pricing: https://supabase.com/pricing
+- Supabase pausing: https://supabase.com/docs/guides/platform/free-project-pausing
+- Appwrite pricing: https://appwrite.io/pricing
+- Appwrite pausing: https://appwrite.io/changelog/entry/2026-02-20-1
+- Apps Script web apps: https://developers.google.com/apps-script/manifest/web-app-api-executable
+- Apps Script quotas: https://developers.google.com/apps-script/guides/services/quotas
