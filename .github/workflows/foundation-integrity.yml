@@ -1,0 +1,74 @@
+name: Foundation integrity
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "scripts/**"
+      - "FOUNDATION_MANIFEST.json"
+      - "README.md"
+      - "PROJECT_STATE.md"
+      - "PROJECT_SUPERVISION_BRIEF.md"
+      - ".github/workflows/foundation-integrity.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/**"
+      - "FOUNDATION_MANIFEST.json"
+      - "README.md"
+      - "PROJECT_STATE.md"
+      - "PROJECT_SUPERVISION_BRIEF.md"
+      - ".github/workflows/foundation-integrity.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Compile validators
+        run: python -m py_compile scripts/reconstruct_requirements.py scripts/validate_foundation.py
+
+      - name: Reconstruct authoritative DOCX
+        run: python scripts/reconstruct_requirements.py
+
+      - name: Validate S1 foundation
+        run: python scripts/validate_foundation.py
+
+      - name: Verify DOCX size and SHA-256 independently
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+
+          path = Path("docs/APPROVED_REQUIREMENTS.docx")
+          data = path.read_bytes()
+          actual_sha = hashlib.sha256(data).hexdigest()
+          if len(data) != 63710:
+              raise SystemExit(f"Unexpected DOCX size: {len(data)}")
+          if actual_sha != "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b":
+              raise SystemExit(f"Unexpected DOCX SHA-256: {actual_sha}")
+          print("INDEPENDENT DOCX CHECK: PASS")
+          PY
+
+      - name: Negative test rejects one-character mutation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/source_parts_v2/APPROVED_REQUIREMENTS.docx.b64.part05a")
+          original = path.read_text(encoding="ascii")
+          replacement = "B" if original[0] != "B" else "C"
+          path.write_text(replacement + original[1:], encoding="ascii")
+          PY
+          if python scripts/reconstruct_requirements.py --output /tmp/mutated.docx; then
+            echo "ERROR: mutated source was incorrectly accepted"
+            exit 1
+          fi
+          echo "NEGATIVE MUTATION TEST: PASS"
