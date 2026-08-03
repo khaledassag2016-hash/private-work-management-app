@@ -1,3 +1,22 @@
 # Worker authentication proof
 
-Pure Web Crypto proof for RS256 signature and Firebase-like claim validation. It uses an in-memory generated test key and does not call Firebase. Cloud key discovery, caching and CPU measurement remain acceptance work for S3.
+هذا النموذج المحلي يثبت مسار التحقق من Firebase ID Token داخل Cloudflare Worker باستخدام Web Crypto دون الاتصال بخدمة سحابية فعلية.
+
+## التحقق الإلزامي
+
+- قبول `alg=RS256` فقط.
+- اشتراط `kid` غير فارغ ومطابقته بمفتاح Google العام ذي المعرّف نفسه.
+- جلب مفاتيح Firebase من endpoint الرسمي وتخزينها مؤقتًا حسب `Cache-Control: max-age`.
+- إعادة الجلب عند انتهاء مدة التخزين، ومحاولة تحديث واحدة عند ظهور `kid` جديد بسبب تدوير المفاتيح.
+- التحقق من التوقيع ثم `aud` و`iss` و`exp` و`iat` و`auth_time` و`sub`.
+- اشتراط أن يكون `sub` غير فارغ، ثم مطابقته بقائمة السماح الخاصة بالشخصين.
+
+## Fail closed
+
+كل مسار API خاص يجب أن يمر عبر `requirePrivateApiAuthorization` قبل أي قراءة أو كتابة. أي خطأ في صيغة الرمز، أو المفتاح، أو الشبكة، أو التوقيع، أو المطالبات، أو قائمة السماح يؤدي إلى الرفض؛ لا يوجد fallback يسمح بالمرور.
+
+تُربط D1 بالـWorker من خلال binding داخلي فقط. لا ينشأ endpoint عام مستقل لقاعدة D1، ولا يوجد مسار API يتجاوز طبقة التحقق والتفويض. الواجهة الثابتة لا تملك بيانات اعتماد D1 ولا تتصل بها مباشرة.
+
+## حدود الإثبات
+
+المفاتيح المستخدمة في الاختبارات مولدة في الذاكرة، واستجابة endpoint الرسمي ممثلة بـmock. لم تُنشأ خدمة Firebase أو Cloudflare. قياس CPU الفعلي في Workers واختبار تدوير مفاتيح Google الحقيقي يؤجلان إلى S3 بعد موافقة مستقلة على إنشاء بيئة سحابية.
