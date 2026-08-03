@@ -57,7 +57,9 @@ jobs:
             echo 'Ambiguous primary hosting phrase remains in governing files'
             exit 1
           fi
-          if git diff --quiet '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' -- docs/DECISION_LOG.md; then
-            echo 'DECISION_LOG.md was not updated after explicit architecture approval'
+          if git show '${{ github.event.pull_request.base.sha }}:docs/DECISION_LOG.md' | grep -Fq -- '| D-006 | 2026-08-03 |'; then
+            echo 'D-006 is already present in the PR base; regression presence checks apply.'
+          elif git diff --quiet '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' -- docs/DECISION_LOG.md; then
+            echo 'DECISION_LOG.md was not updated while introducing D-006'
             exit 1
           fi
