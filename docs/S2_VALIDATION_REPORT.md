@@ -2,106 +2,139 @@
 
 - التاريخ: 2026-08-03
 - Pull Request: #17
-- الحالة: **التوصية مكتملة تقنيًا، والقرار النهائي بانتظار موافقة المستخدم**
+- الحالة: **المعمارية معتمدة، والتصحيحات منفذة، وجاهزة للمراجعة الإشرافية المستقلة بشرط نجاح فحوص الرأس الحالي**
+- ADR-001: `Accepted`
+- القرار: D-006
 
-## 1. بوابة المرجع وS1 قبل S2
+## 1. بوابة المرجع وS1
 
-تم التحقق من نسخة GitHub نظيفة في `Foundation integrity` على مراجعة PR #16 التي أصبحت محتوى `main`:
+نجحت البوابة على نسخة GitHub نظيفة:
 
 - `RECONSTRUCTION: PASS`
 - الحجم: `63710` بايت
 - SHA-256: `6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b`
 - `FOUNDATION VALIDATION: PASS`
-- الفحص المستقل للبصمة والحجم: PASS
-- اختبار تحوير حرف واحد ورفضه: PASS
+- التغطية: FR 30/30، AC 14/14، P 7/7، scenarios 14/14
+- القرارات المسجلة: D-001 إلى D-006
+- القرارات المفتوحة: Q-001 إلى Q-004
 
-لم يستخدم ملف Word المرفق بالمحادثة.
+لم يستخدم ملف Word غير المطابق المرفق بالمحادثة.
 
-## 2. البحث المعماري
+## 2. القرار المعماري
 
-تمت مراجعة مصادر رسمية حديثة فقط لخمس عائلات معمارية:
+اعتمد المستخدم صراحة:
 
-1. Cloudflare Workers/D1 مع Firebase Authentication.
-2. Firebase Spark المتكامل.
-3. Supabase Free.
-4. Appwrite Cloud Free.
-5. Google Apps Script/Sheets.
+- Cloudflare Workers/Static Assets.
+- Cloudflare D1 Free.
+- Firebase Authentication Spark للمصادقة فقط.
 
-تم توثيق البطاقة، الفوترة، الحصص، التجاوز، الخمول، النسخ، التصدير، الاستعادة وخطر تغير الخطة في ملفات S2.
+مع استمرار منع Zero Trust وBlaze وأي Billing Account أو وسيلة دفع أو إنشاء خدمة فعلية دون موافقة مستقلة.
 
-## 3. نتائج النموذج المحلي
+## 3. تصحيحات Firebase ID Token
+
+أصبح النموذج المحلي يطبق:
+
+- `alg=RS256` فقط.
+- اشتراط `kid` واختيار مفتاح Google العام المطابق له.
+- تخزين المفاتيح مؤقتًا حسب `Cache-Control: max-age`.
+- إعادة جلب المفاتيح عند انتهاء المدة أو ظهور `kid` جديد.
+- التحقق من التوقيع و`aud` و`iss` و`exp` و`iat` و`auth_time` و`sub`.
+- اشتراط `sub` غير فارغ.
+- فشل مغلق عند تعذر الشبكة أو المفتاح أو التحقق أو التفويض.
+- قائمة سماح UID للشخصين فقط.
+
+المصدر الرسمي: https://firebase.google.com/docs/auth/admin/verify-id-tokens
+
+## 4. Fail closed وحد D1
+
+- كل مسار API خاص يجب أن يمر عبر Worker وطبقة التحقق قبل أي قراءة أو كتابة.
+- أي فشل يرفض الطلب ولا يوجد fallback أو guest mode.
+- ترتبط D1 بالـWorker من خلال binding داخلي فقط.
+- لا تملك الواجهة بيانات اعتماد D1 ولا يوجد وصول مباشر أو مسار يتجاوز Worker.
+
+## 5. قاعدة الأموال
+
+- تخزن القيم المالية كأعداد صحيحة من الهللات في `INTEGER`.
+- يمنع `REAL/FLOAT/DOUBLE` وfloating point للحسابات المالية.
+- يجب أن تكون القيم والنتائج الوسيطة ضمن `Number.isSafeInteger`.
+- سجل Q-004 لقاعدة تقريب كسور الهللة قبل تنفيذها في S7.
+
+القاعدة: `docs/architecture/FINANCIAL_INTEGER_RULE.md`.
+
+## 6. نتائج النموذج المحلي
 
 ### Python / SQLite
 
 - 7 اختبارات: PASS.
-- إثبات عمل الشخصين في أوقات مختلفة: PASS.
+- استخدام الشخصين للبيانات في أوقات مختلفة: PASS.
 - رفض UID ثالث: PASS.
 - رفض stale write: PASS.
 - append-only audit: PASS.
 - JSON round-trip: PASS.
 - SQL export: PASS.
-- FR-027 وعدم تخزين الملفات: PASS.
+- FR-027 وعدم تخزين ملفات الأعمال: PASS.
 
 ### Node / Web Crypto
 
-- 4 اختبارات: PASS.
-- توقيع RS256 صحيح وUID مجهز: PASS.
-- UID غير مجهز: رفض صحيح.
+- 11 اختبارًا: PASS.
+- رمز صحيح وUID مجهز: PASS.
+- UID غير مجهز: رفض.
+- `kid` مطابق واستخدام المفتاح الصحيح: PASS.
+- cache واحترام `max-age`: PASS.
+- `kid` مفقود أو مجهول: رفض.
+- `auth_time` مفقود أو مستقبلي: رفض.
+- issuer خاطئ: رفض.
+- خوارزمية غير RS256: رفض.
+- `sub` مفقود أو فارغ: رفض.
 - payload معدل: رفض التوقيع.
-- expired token أو audience خاطئ: رفض صحيح.
-
-### النتيجة
+- انتهاء أو `iat` مستقبلي أو audience خاطئ: رفض.
+- فشل جلب المفتاح أو غياب `max-age`: رفض Fail closed.
 
 ```text
 Python tests: 7 passed
-Node tests: 4 passed
-Total runner tests: 11 passed
+Node tests: 11 passed
+Total runner tests: 18 passed
 S2 LOCAL VALIDATION: PASS
 ```
 
-## 4. الاختبارات السلبية
+## 7. نقطة دليل CI
 
-| الاختبار | النتيجة |
-|---|---|
-| دخول UID ثالث | رفض |
-| كتابة متعارضة بإصدار قديم | رفض |
-| تعديل سجل التدقيق | رفض |
-| حذف سجل التدقيق | رفض |
-| تعديل JWT | رفض |
-| JWT منتهي | رفض |
-| JWT audience خاطئ | رفض |
+نجحت الفحوص على رأس التنفيذ:
 
-## 5. فحص الأمن والخصوصية
+`61e1bd10bbf5f93dcdaca017ac21950ad1a5613b`
+
+- `S2 architecture validation` run #25: **SUCCESS**.
+- `Foundation integrity` run #36: **SUCCESS**.
+- إعادة بناء المرجع: PASS.
+- فحص S1 الرجعي: PASS.
+- 7 اختبارات Python و11 اختبار Node: PASS.
+- بوابة ADR `Accepted` وD-006 وFail closed وقاعدة الهللات: PASS.
+
+### قاعدة الرأس الحاكم
+
+إضافة هذا التقرير أو المراجعة الذاتية تنتج commit توثيقيًا جديدًا، لذلك لا يمكن تضمين SHA للملف الذي يحتوي SHA نفسه دون حلقة ذاتية. الرأس الحاكم النهائي هو `head_sha` الظاهر في PR #17، ويجب أن تكون نتيجتا `Foundation integrity` و`S2 architecture validation` المرتبطتان به `SUCCESS`. يوثق وصف PR النهائي SHA وأرقام التشغيل دون تغيير الشجرة.
+
+## 8. الأمن والخصوصية
 
 - لا بيانات عملاء أو أعمال حقيقية.
 - لا كلمات مرور أو مفاتيح خدمة أو tokens محفوظة.
-- مفتاح RSA للاختبار يولد في الذاكرة.
-- schema لا يحتوي file أو attachment أو blob.
-- لا خدمة سحابية أُنشئت ولا بطاقة أو فوترة فُعلت.
+- مفاتيح RSA للاختبار تولد في الذاكرة.
+- لا schema لتخزين file أو attachment أو blob.
+- لا خدمة سحابية أنشئت.
+- لا بطاقة أو Billing Account أو فوترة.
+- لم يبدأ S3.
 
-## 6. CI وفحص الرجعية على PR #17
+## 9. أوجه القصور الصريحة
 
-نجحت الفحوص على رأس الفرع `38e3661b7937a0fbcb7743bcbb2caafe1cf4cabb`:
+- لم يقس CPU الحقيقي للتحقق داخل Worker Free.
+- endpoint Google الحقيقي وتدوير مفاتيحه ممثلان بـmock؛ الاختبار السحابي يحتاج موافقة مستقلة.
+- لم تختبر D1 cloud bindings أو Time Travel أو restore.
+- لم تختبر إعدادات Firebase Console على مشروع فعلي.
+- الخطط المجانية قد تتغير؛ تعاد مراجعتها قبل إنشاء الخدمة والنشر.
+- قاعدة تقريب كسور الهللة غير محسومة ومسجلة Q-004.
 
-- Workflow `S2 architecture validation`، run #4: **SUCCESS**.
-- Workflow `Foundation integrity`، run #15: **SUCCESS**.
-- إعادة بناء المرجع: PASS بالحجم والبصمة المعتمدين.
-- `FOUNDATION VALIDATION: PASS`، والتغطية 30/30 FR و14/14 AC و7/7 P و14/14 سيناريو.
-- اختبارات S2: 7 Python + 4 Node، كلها PASS.
-- بوابة بقاء ADR `Proposed`: PASS.
-- بوابة عدم تعديل `docs/DECISION_LOG.md`: PASS.
+## 10. الحكم
 
-أي commit لاحق قبل قرار المستخدم يعيد تشغيل الفحصين، وتكون النتيجة الأحدث هي الحاكمة.
+التوصية اعتمدت، وADR أصبح `Accepted`، وسجل D-006، ونفذت التصحيحات والاختبارات. يبقى الدمج وإغلاق Issue #1 وبدء S3 ممنوعًا حتى المراجعة الإشرافية المستقلة.
 
-## 7. أوجه القصور الصريحة
-
-- لم يختبر CPU الحقيقي للتحقق من Firebase token داخل Worker Free.
-- لم تختبر قاعدة D1 سحابية أو Time Travel أو restore.
-- لم تختبر شاشة إعداد Firebase لتعطيل إجراءات المستخدم على حساب فعلي.
-- لم يثبت عدم تغير الخطط بعد تاريخ 2026-08-03؛ يلزم إعادة التحقق قبل أي نشر.
-
-## 8. الحكم
-
-التوصية والبدائل والأدلة والنموذج المحلي وCI جاهزة لقرار المستخدم. ADR ما زال `Proposed`، و`docs/DECISION_LOG.md` غير معدل، وPR #17 مسودة وغير مدمجة.
-
-**READY FOR ARCHITECTURE DECISION**
+**READY FOR INDEPENDENT SUPERVISORY REVIEW**
