@@ -28,10 +28,15 @@ jobs:
       - name: Validate S2 local architecture prototype
         run: python scripts/validate_s2.py
 
-      - name: Verify no architecture decision was prematurely accepted
+      - name: Verify approved architecture decision and safeguards
         run: |
-          grep -Fq -- '- الحالة: **Proposed**' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
-          if ! git diff --quiet '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' -- docs/DECISION_LOG.md; then
-            echo 'DECISION_LOG.md changed before explicit architecture approval'
+          grep -Fq -- '- الحالة: **Accepted**' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          grep -Fq -- '| D-006 | 2026-08-03 |' docs/DECISION_LOG.md
+          grep -Fq -- 'Fail closed' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          grep -Fq -- 'عدد صحيح من **الهللات**' docs/architecture/FINANCIAL_INTEGER_RULE.md
+          grep -Fq -- 'Cloudflare Zero Trust' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          grep -Fq -- 'Firebase Blaze' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          if git diff --quiet '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' -- docs/DECISION_LOG.md; then
+            echo 'DECISION_LOG.md was not updated after explicit architecture approval'
             exit 1
           fi
