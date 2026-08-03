@@ -1,154 +1,119 @@
 # S2 — الأمن وقابلية نقل البيانات
 
-## 1. حدود هذه الوثيقة
+## 1. حدود الوثيقة
 
-هذه خطة معمارية وليست تنفيذ S3. النموذج المحلي يستخدم مفاتيح وهوية وهمية فقط ولا ينشئ حساب Firebase أو Worker أو قاعدة D1 حقيقية.
+هذه خطة معمارية واختبار محلي وليست تنفيذ S3. لم ينشأ حساب Firebase أو Worker أو D1 حقيقي، ولم تستخدم بيانات حقيقية.
 
-## 2. تدفق الهوية المعتمد
+## 2. الاستضافة ومسار الطلب
 
-1. ينشئ المشرف حسابين فقط في Firebase Authentication، من Console أو Admin SDK، بعد موافقة مستقلة على إنشاء البيئة.
-2. تعطل إجراءات إنشاء الحساب وحذفه من المستخدم النهائي في إعدادات Firebase Authentication.
-3. يسجل كل شخص دخوله ويحصل على Firebase ID Token.
-4. يرسل المتصفح الرمز إلى Cloudflare Worker عبر HTTPS.
-5. يحقق Worker قبل أي وصول للبيانات من:
-   - أن `alg` يساوي `RS256` فقط.
-   - أن `kid` موجود وغير فارغ.
-   - جلب مفاتيح Google العامة من endpoint Firebase الرسمي.
-   - اختيار المفتاح الذي يطابق `kid` تحديدًا واستخدامه للتحقق من التوقيع.
-   - تخزين المفاتيح مؤقتًا وفق `Cache-Control: max-age` وإعادة جلبها عند انتهاء المدة أو ظهور `kid` جديد.
-   - `aud` و`iss` و`exp` و`iat` و`auth_time` و`sub`، وأن `sub` سلسلة غير فارغة.
-   - وجود `sub` بوصفه UID نشطًا في جدول `app_users` داخل D1.
-6. لا يعني وجود حساب Firebase الإذن بالدخول؛ قائمة D1 هي بوابة التفويض النهائية.
-7. لا يتصل المتصفح بـD1 مباشرة؛ الوصول يكون عبر Worker binding داخلي فقط.
+- الواجهة الأساسية تنشر عبر **Cloudflare Workers Static Assets**.
+- يبدأ التشغيل على نطاق `workers.dev` المجاني؛ شراء نطاق ليس شرطًا.
+- Cloudflare Pages بديل احتياطي فقط يحتاج قرارًا معماريًا لاحقًا.
+- كل مسار API خاص يمر عبر Cloudflare Worker.
+- D1 متاحة للـWorker من خلال binding داخلي فقط، ولا توجد بيانات اعتماد D1 في الواجهة أو مسار وصول مباشر.
+- أي فشل في المصادقة أو التفويض أو قاعدة البيانات يرفض الطلب؛ لا guest mode ولا bypass.
 
-## 3. Fail closed ومنع تجاوز Worker
+## 3. إعداد Firebase Authentication
 
-- كل مسار API خاص يستدعي طبقة المصادقة والتفويض قبل أي قراءة أو كتابة.
-- أي خطأ في الرمز أو الشبكة أو جلب المفاتيح أو `Cache-Control` أو `kid` أو التوقيع أو المطالبات أو قائمة السماح يرفض الطلب.
-- لا توجد هوية ضيف ولا fallback ولا مسار صيانة عام يتجاوز التحقق.
-- لا تعرض D1 عنوان اتصال عامًا، ولا تسلم الواجهة الثابتة بيانات اعتماد D1.
-- أي وظائف إدارية مستقبلية تمر عبر Worker نفسه، مع تفويض أدق وسجل تدقيق.
-- الفشل في خدمة المصادقة أو مفاتيح Google يؤدي إلى توقف آمن للعمليات الخاصة، لا إلى السماح المؤقت.
+1. تمكين **Email/Password** فقط.
+2. إنشاء حسابين فقط بواسطة المشرف.
+3. تعطيل self-sign-up.
+4. تعطيل حذف الحساب من المستخدم النهائي.
+5. تعطيل Phone/SMS وAnonymous وأي مزود آخر.
+6. لا يضاف مزود تسجيل دخول دون قرار لاحق وفحص تكلفة وبطاقة.
+7. Firebase يخزن الهوية فقط، ولا يخزن بيانات العملاء أو الأعمال.
 
-## 4. قائمة السماح الدقيقة
+## 4. تدفق Firebase ID Token
 
-جدول `app_users` يحتوي سجلين نشطين فقط:
+1. يسجل أحد الحسابين دخوله عبر Email/Password ويحصل على ID token.
+2. يرسل الرمز إلى Worker عبر HTTPS.
+3. يقرأ Worker header ويقبل `alg=RS256` فقط ويشترط `kid`.
+4. يجلب Worker شهادات Google X.509 العامة من endpoint الرسمي.
+5. يختار الشهادة المطابقة لـ`kid` ويستخرج SubjectPublicKeyInfo للتحقق من التوقيع.
+6. يخزن الشهادات مؤقتًا حسب `Cache-Control: max-age`، ويعيد الجلب عند الانتهاء أو ظهور `kid` جديد.
+7. يتحقق من `aud` و`iss` و`exp` و`iat` و`auth_time` و`sub`، مع اشتراط `sub` غير فارغ.
+8. يطابق `sub` بسجل نشط في `app_users`.
+9. أي خطأ أو تعذر شبكة أو شهادة أو توقيع أو مطالبة أو UID يرفض الطلب Fail closed.
 
-- UID للشخص الأول مع الدور `person_1`.
-- UID للشخص الثاني مع الدور `person_2`.
+المصدر الرسمي: https://firebase.google.com/docs/auth/admin/verify-id-tokens
 
-أي UID ثالث يرفض افتراضيًا. إلغاء وصول أحد الشخصين يتم بتعطيل السجل، دون حذف تاريخه من سجل التدقيق.
+## 5. فرض شخصين فقط
 
-## 5. التهديدات والضوابط
+المخطط يفرض:
 
-| التهديد | الضابط المعتمد | دليل النموذج المحلي |
+- الأدوار محصورة في `person_1` و`person_2`.
+- لا يزيد عدد المستخدمين النشطين على اثنين.
+- لا يتكرر الدور النشط.
+- التهيئة الأولى تستخدم INSERT ذريًا.
+- لا يستخدم `INSERT OR REPLACE` لأنه قد يحذف الصف ثم يعيد إنشاؤه ويؤثر في العلاقات.
+- إعادة provisioning بالزوج نفسه idempotent؛ أما استبدال UID فيحتاج migration مستقلة ومراجعة.
+
+`prototype/s2_local_architecture/schema.sql` هو مصدر المخطط التنفيذي الوحيد؛ يقرأه `core.py` مباشرة، ويختبر وجود الفهارس والمحفزات وتنفيذها.
+
+## 6. التهديدات والضوابط
+
+| التهديد | الضابط | دليل S2 المحلي |
 |---|---|---|
-| رمز مزور أو معدل | RS256 ومفتاح مطابق لـ`kid` وفحص التوقيع | توقيع صحيح وتوقيع معدل وخوارزمية خاطئة |
-| مفتاح مفقود أو مدور | cache حسب `max-age` وتحديث عند `kid` جديد | اختبار المفتاح المطابق، cache، و`kid` المفقود أو غير المعروف |
-| مطالبات غير صالحة | فحص `aud/iss/exp/iat/auth_time/sub` | اختبارات issuer وauth_time وsub والانتهاء والجمهور |
-| تعذر جلب المفاتيح | Fail closed | اختبار فشل الشبكة وHTTP وغياب max-age |
-| حساب Firebase غير مصرح | UID allowlist داخل D1 | اختبار رفض UID غير مجهز |
-| تجاوز Worker | D1 binding داخلي ولا اتصال مباشر من الواجهة | قاعدة معمارية موثقة؛ الاختبار السحابي مؤجل |
-| تعديل متزامن ضائع | `version` وتحديث شرطي داخل معاملة | اختبار رفض stale write |
-| العبث بسجل التدقيق | سجل append-only ومنع UPDATE/DELETE | اختبارا رفض التعديل والحذف |
-| مستخدمان في أوقات مختلفة | بيانات مركزية وهوية مستقلة | اختبار إنشاء الشخص الأول وتعديل الشخص الثاني لاحقًا |
-| تسرب أسرار | أسرار البيئة خارج GitHub | فحص الملفات لا يحتوي مفاتيح أو كلمات مرور حقيقية |
-| تخزين ملفات العمل | لا جداول ولا أعمدة file/blob/attachment | اختبار schema مستقل لـFR-027 |
-| خطأ دقة مالي | INTEGER هللات ومنع floating point | قاعدة `FINANCIAL_INTEGER_RULE.md` وبوابة CI |
+| رمز مزور أو معدل | RS256 وX.509 وkid والمطالبات | اختبارات التوقيع والمطالبات السلبية |
+| شهادة غير مطابقة | اختيار الشهادة المطابقة لـkid فقط | اختبار cache ومفتاحين واختبار X.509 |
+| فشل endpoint أو cache metadata | Fail closed | اختبارات الشبكة وHTTP وغياب max-age |
+| حساب Firebase ثالث | allowlist وقيود app_users | رفض UID ثالث ورفض مستخدم نشط ثالث |
+| دور نشط مكرر | partial unique index | اختبار duplicate active role |
+| إعادة provisioning مدمرة | منع الاستبدال وINSERT OR REPLACE | اختبار رفض الزوج المختلف |
+| كتابة متعارضة | version وتحديث شرطي | اختبار stale write |
+| العبث بالتدقيق | append-only triggers | رفض UPDATE وDELETE |
+| تخزين ملفات العمل | لا أعمدة file/blob/attachment | اختبار FR-027 |
 
-## 6. قاعدة الأموال
+## 7. بوابة CPU قبل S3
 
-- تخزن كل قيمة مالية بعدد صحيح من الهللات في عمود `INTEGER`.
-- تمنع أنواع `REAL/FLOAT/DOUBLE` للحركات والأسعار والدفعات والتسويات.
-- يجب أن تكون القيم والنتائج الوسيطة ضمن `Number.isSafeInteger`.
-- تحول المدخلات النصية إلى هللات بتحليل حتمي، ولا يعتمد ضرب أعداد عشرية عائمة.
-- تعرض الريالات عند الواجهة والتصدير فقط.
-- لم تعتمد S2 قاعدة تقريب لكسور الهللة؛ سجلت Q-004 قبل تنفيذ الحسابات ذات الكسور في S7.
+حد Workers Free هو 10ms CPU لكل استدعاء. بعد موافقة مستقلة على بيئة مجانية، يجب أن تكون أول خطوة في S3 قياس المسار الكامل للتحقق، مع cache hit وcache miss.
 
-التفاصيل الحاكمة: `docs/architecture/FINANCIAL_INTEGER_RULE.md`.
+إذا تكرر تجاوز الحد أو إنهاء الاستدعاء بصورة قابلة لإعادة الإنتاج، يتوقف S3 وتعود المعمارية إلى بوابة القرار أو بديل مجاني موثق. يمنع Workers Paid أو Billing أو البطاقة.
 
-## 7. سجل التدقيق
+المصدر: https://developers.cloudflare.com/workers/platform/limits/
 
-يجب أن يسجل لكل عملية حساسة:
+## 8. سجل التدقيق
 
-- الكيان والمعرف.
-- نوع العملية.
-- UID الفاعل.
-- الوقت UTC.
-- القيم السابقة والجديدة عند التعديل، والمبالغ بالهللات عند كونها مالية.
-- معرف طلب أو correlation ID في التنفيذ الفعلي.
+يسجل لكل عملية حساسة الكيان والمعرف ونوع العملية وUID والوقت UTC والقيم السابقة والجديدة ومعرف الطلب في التنفيذ الفعلي. النموذج يثبت append-only محليًا، ويعاد اختبار D1 الحقيقي في S3 بعد الموافقات.
 
-النموذج المحلي يثبت append-only على SQLite. توافق triggers والسلوك النهائي على D1 يعاد اختباره في S3 قبل اعتماد أي كود إنتاجي.
+## 9. الأموال
 
-## 8. التصدير والنسخ الاحتياطي
+كل قيمة مالية تخزن كعدد صحيح من الهللات داخل INTEGER ضمن المجال الآمن، ويحظر REAL/FLOAT/DOUBLE وfloating point. قاعدة التقريب غير مفترضة ومسجلة Q-004.
 
-### نسخة SQL حاكمة للبيانات
+## 10. التصدير والنسخ
 
-- تصدير D1 إلى ملف SQL باستخدام `wrangler d1 export`.
-- استعادة الملف إلى قاعدة D1 جديدة أو SQLite متوافقة باستخدام أوامر SQL.
-- يحفظ التصدير خارج GitHub على وسيط محلي مشفر يملكه المستخدمان.
-- لا تحفظ نسخ بيانات فعلية في Actions artifacts أو المستودع.
+### SQL
 
-### تصدير JSON للتطبيق
+- `wrangler d1 export` لإنتاج SQL.
+- الاستعادة إلى D1 جديدة أو SQLite متوافقة.
+- النسخة الفعلية تحفظ خارج GitHub على وسيط محلي مشفر.
 
-ينفذ التطبيق تصديرًا مستقلًا بإصدار schema واضح، يشمل:
+### JSON
 
-- المستخدمين المجهزين بالأدوار والحالة، دون كلمات مرور.
-- العملاء والأعمال والحركات وسجل التدقيق.
-- metadata للتاريخ وإصدار schema.
-- القيم المالية كأعداد صحيحة من الهللات مع تعريف الوحدة.
+- تصدير بإصدار schema واضح يشمل المستخدمين المجهزين دون كلمات مرور، والعملاء والأعمال والحركات والتدقيق.
+- اختبار round-trip محلي.
 
-يستخدم JSON لاختبار round-trip ونقل انتقائي، بينما SQL هو النسخة الكاملة منخفضة المستوى.
+### الهوية عند الانتقال
 
-### الاستعادة
+لا تعد كلمات المرور بيانات أعمال قابلة للتصدير. عند تغيير مزود الهوية تنشأ هويتان جديدتان وتحدث خريطة UID بعملية إدارية موثقة، مع بقاء بيانات SQL/JSON مستقلة.
 
-- اختبار الاستعادة المحلي جزء من S2.
-- اختبار استعادة D1 حقيقي يؤجل إلى S10 وبعد إذن إنشاء الخدمة.
-- Time Travel لمدة 7 أيام آلية تعاف تشغيلية قصيرة فقط، وليست نسخة احتياطية مستقلة.
+## 11. نقاط مؤجلة
 
-### هوية Firebase عند الانتقال
-
-كلمات المرور لا تعامل بوصفها بيانات أعمال قابلة للتصدير. عند الانتقال من Firebase:
-
-1. تنشأ هويتان في مزود المصادقة الجديد.
-2. تحدث خريطة UID في `app_users` بعملية إدارية موثقة.
-3. تبقى سجلات الأعمال والتدقيق في SQL/JSON مستقلة عن مزود الهوية.
-
-## 9. ملكية البيانات والارتباط بالخدمة
-
-- البيانات التشغيلية والمالية تبقى في جداول SQL قابلة للتصدير.
-- لا تستخدم أنواعًا مغلقة أو ملفات ثنائية خاصة بالمزود.
-- migrations تحفظ كملفات SQL في GitHub.
-- طبقة repository تمنع انتشار واجهة D1 في منطق الأعمال.
-- Firebase محصور في المصادقة؛ لا تخزن فيه بيانات العمل.
-
-## 10. نقاط مؤجلة إلى S3/S10
-
-- قياس CPU الفعلي للتحقق من JWT وجلب المفاتيح داخل Worker Free.
-- اختبار endpoint الحقيقي وتدوير مفاتيح Google بعد موافقة إنشاء بيئة.
-- ضبط headers والجلسات وCSRF/CORS وContent Security Policy.
-- اختبار D1 bindings ومنع أي route غير محمي في بيئة فعلية.
-- اختبار D1 triggers والمعاملات تحت التنفيذ الحقيقي.
-- اختبار استعادة SQL إلى D1 جديدة.
-
-## 11. المحظورات المستمرة
-
-- Cloudflare Zero Trust.
-- Firebase Blaze.
-- أي Billing Account أو وسيلة دفع.
-- إنشاء خدمة سحابية فعلية دون موافقة مستقلة.
-- البيانات الحقيقية.
-- بدء S3 قبل دمج S2 بعد المراجعة المستقلة.
+- قياس CPU الحقيقي وبوابة التوقف في S3.
+- إعداد Firebase Console الفعلي وتعطيل المزودين.
+- اختبار D1 bindings والمعاملات والمحفزات سحابيًا.
+- اختبار الاستعادة الفعلية في S10.
+- إعادة التحقق من الخطط قبل أي إنشاء أو نشر.
 
 ## 12. المصادر الرسمية
 
-- Firebase ID Token verification: https://firebase.google.com/docs/auth/admin/verify-id-tokens
-- Firebase user management and disabling end-user actions: https://firebase.google.com/docs/auth/users
-- Firebase Admin user creation: https://firebase.google.com/docs/auth/admin/manage-users
-- Firebase custom claims/access: https://firebase.google.com/docs/auth/admin/custom-claims
-- D1 SQL semantics: https://developers.cloudflare.com/d1/best-practices/query-d1/
+- Workers Static Assets: https://developers.cloudflare.com/workers/static-assets/
+- workers.dev: https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
+- Workers limits: https://developers.cloudflare.com/workers/platform/limits/
+- Firebase Email/Password: https://firebase.google.com/docs/auth/web/password-auth
+- Firebase users: https://firebase.google.com/docs/auth/users
+- Firebase token verification: https://firebase.google.com/docs/auth/admin/verify-id-tokens
+- D1 query semantics: https://developers.cloudflare.com/d1/best-practices/query-d1/
 - D1 foreign keys: https://developers.cloudflare.com/d1/sql-api/foreign-keys/
-- D1 batch transactions: https://developers.cloudflare.com/d1/worker-api/d1-database/
 - D1 import/export: https://developers.cloudflare.com/d1/best-practices/import-export-data/
-- D1 limits and Time Travel: https://developers.cloudflare.com/d1/platform/limits/
-- ECMAScript safe integer: https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-number.max_safe_integer
+- D1 limits: https://developers.cloudflare.com/d1/platform/limits/
