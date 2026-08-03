@@ -1,6 +1,7 @@
 # S2 — تقرير التحقق
 
 - التاريخ: 2026-08-03
+- Pull Request: #17
 - الحالة: **التوصية مكتملة تقنيًا، والقرار النهائي بانتظار موافقة المستخدم**
 
 ## 1. بوابة المرجع وS1 قبل S2
@@ -78,15 +79,19 @@ S2 LOCAL VALIDATION: PASS
 - schema لا يحتوي file أو attachment أو blob.
 - لا خدمة سحابية أُنشئت ولا بطاقة أو فوترة فُعلت.
 
-## 6. فحص الرجعية
+## 6. CI وفحص الرجعية على PR #17
 
-يعمل Workflow الخاص بـ S2 على تشغيل:
+نجحت الفحوص على رأس الفرع `38e3661b7937a0fbcb7743bcbb2caafe1cf4cabb`:
 
-1. إعادة بناء المرجع.
-2. `validate_foundation.py` كاملًا.
-3. اختبارات S2.
+- Workflow `S2 architecture validation`، run #4: **SUCCESS**.
+- Workflow `Foundation integrity`، run #15: **SUCCESS**.
+- إعادة بناء المرجع: PASS بالحجم والبصمة المعتمدين.
+- `FOUNDATION VALIDATION: PASS`، والتغطية 30/30 FR و14/14 AC و7/7 P و14/14 سيناريو.
+- اختبارات S2: 7 Python + 4 Node، كلها PASS.
+- بوابة بقاء ADR `Proposed`: PASS.
+- بوابة عدم تعديل `docs/DECISION_LOG.md`: PASS.
 
-ستثبت نتيجة CI النهائية داخل نفس Pull Request قبل عرضه للإشراف العام. لا تعد المرحلة مقبولة أو قابلة للدمج قبل نجاح ذلك الفحص والمراجعة المستقلة.
+أي commit لاحق قبل قرار المستخدم يعيد تشغيل الفحصين، وتكون النتيجة الأحدث هي الحاكمة.
 
 ## 7. أوجه القصور الصريحة
 
@@ -97,6 +102,6 @@ S2 LOCAL VALIDATION: PASS
 
 ## 8. الحكم
 
-التوصية والبدائل والأدلة والنموذج المحلي جاهزة لقرار المستخدم. ADR ما زال `Proposed`، و`docs/DECISION_LOG.md` غير معدل.
+التوصية والبدائل والأدلة والنموذج المحلي وCI جاهزة لقرار المستخدم. ADR ما زال `Proposed`، و`docs/DECISION_LOG.md` غير معدل، وPR #17 مسودة وغير مدمجة.
 
 **READY FOR ARCHITECTURE DECISION**
