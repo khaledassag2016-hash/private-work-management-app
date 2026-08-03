@@ -107,13 +107,13 @@
 
 ## 12. المصادر الرسمية
 
-- Workers Static Assets: https://developers.cloudflare.com/workers/static-assets/
-- workers.dev: https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
-- Workers limits: https://developers.cloudflare.com/workers/platform/limits/
-- Firebase Email/Password: https://firebase.google.com/docs/auth/web/password-auth
-- Firebase users: https://firebase.google.com/docs/auth/users
-- Firebase token verification: https://firebase.google.com/docs/auth/admin/verify-id-tokens
-- D1 query semantics: https://developers.cloudflare.com/d1/best-practices/query-d1/
-- D1 foreign keys: https://developers.cloudflare.com/d1/sql-api/foreign-keys/
-- D1 import/export: https://developers.cloudflare.com/d1/best-practices/import-export-data/
-- D1 limits: https://developers.cloudflare.com/d1/platform/limits/
+- Workers Static Assets — https://developers.cloudflare.com/workers/static-assets/
+- workers.dev — https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
+- Workers limits — https://developers.cloudflare.com/workers/platform/limits/
+- Firebase sign-in with email and password — https://firebase.google.com/docs/auth/web/password-auth
+- Firebase users — https://firebase.google.com/docs/auth/users
+- Firebase token verification — https://firebase.google.com/docs/auth/admin/verify-id-tokens
+- D1 query semantics — https://developers.cloudflare.com/d1/best-practices/query-d1/
+- D1 foreign keys — https://developers.cloudflare.com/d1/sql-api/foreign-keys/
+- D1 import/export — https://developers.cloudflare.com/d1/best-practices/import-export-data/
+- D1 limits — https://developers.cloudflare.com/d1/platform/limits/
