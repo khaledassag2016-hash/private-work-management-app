@@ -3,7 +3,7 @@
 - تاريخ التحقق: 2026-08-03
 - Issue: #1
 - الفرع: `stage-2/free-architecture-evaluation`
-- حالة القرار: **توصية مقترحة، غير معتمدة**
+- حالة القرار: **معتمد وفق D-006 وADR-001**
 - المرجع الحاكم: ملف Word المعاد بناؤه بالحجم `63710` والبصمة `6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b`
 
 ## 1. نطاق المقارنة
@@ -39,32 +39,34 @@
 
 ### A — Cloudflare Workers/Pages + D1 + Firebase Authentication Spark
 
-**التكوين المقترح:**
+**التكوين المعتمد:**
 
 - واجهة ثابتة على Cloudflare Workers Static Assets أو Pages.
 - API خاص على Cloudflare Workers Free.
 - قاعدة بيانات Cloudflare D1 Free.
 - Firebase Authentication على Spark للمصادقة فقط.
 - حسابان ينشئهما المشرف، مع تعطيل إنشاء الحسابات وحذفها من المستخدم النهائي.
-- يتحقق Worker من توقيع ورمز Firebase، ثم يطبق قائمة سماح داخل D1 تحتوي UID للشخصين فقط.
+- يتحقق Worker من Firebase ID Token وفق الوثائق الرسمية، ثم يطبق قائمة سماح داخل D1 تحتوي UID للشخصين فقط.
+- كل مسار API يعمل Fail closed، ولا يوجد وصول مباشر إلى D1 أو تجاوز للـWorker.
+- تخزن القيم المالية كأعداد صحيحة من الهللات، ويحظر floating point.
 
 **نقاط القوة:**
 
 - Cloudflare يعلن بدء البناء مجانًا دون بطاقة، وFirebase Spark لا يحتاج معلومات دفع.
 - تجاوز حصص Workers/D1 المجانية يؤدي إلى أخطاء أو توقف العمليات، لا إلى رسوم تلقائية.
 - D1 يستخدم دلالات SQLite ويدعم العلاقات والمفاتيح الأجنبية والتصدير إلى SQL.
-- لا يوجد توقف خمول معلن لـ Workers/D1 أو Firebase Authentication.
+- لا يوجد توقف خمول معلن لـWorkers/D1 أو Firebase Authentication.
 - D1 يوفر Time Travel لمدة 7 أيام على الخطة المجانية، مع بقاء النسخة الخارجية المستقلة مطلوبة.
 - الفصل بين المصادقة والبيانات يقلل الحاجة إلى بناء نظام كلمات مرور خاص.
 
 **القيود والمخاطر:**
 
 - مزودان بدل مزود واحد.
-- يجب اختبار تحقق RS256 وجلب مفاتيح Google العامة وذاكرة التخزين المؤقت ضمن حد CPU في Workers Free أثناء S3.
+- يجب قياس تحقق RS256 وجلب مفاتيح Google العامة وذاكرة التخزين المؤقت ضمن حد CPU في Workers Free أثناء S3.
 - حد D1 المجاني 500 MB لكل قاعدة و5 GB للحساب؛ يلزم رصد النمو.
 - Time Travel ليس بديلًا عن نسخة SQL خارج المنصة.
 
-**حكم البوابات:** PASS، بشرط بقاء الحساب على الخطتين المجانيتين وعدم استخدام Cloudflare Zero Trust Access، لأن إعداد Zero Trust يطلب بيانات دفع حتى على خطته المجانية.
+**حكم البوابات:** PASS، بشرط بقاء الحساب على الخطتين المجانيتين وعدم استخدام Cloudflare Zero Trust Access، وعدم ربط Billing Account أو وسيلة دفع.
 
 ### B — Firebase Spark متكامل: Hosting + Authentication + Firestore
 
@@ -138,23 +140,27 @@
 
 | البديل | التكلفة 25 | الاستمرارية 15 | الأمن 20 | سلامة البيانات 15 | النقل 15 | الصيانة 10 | النتيجة /100 | البوابة |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| A: Cloudflare + D1 + Firebase Auth | 25 | 15 | 18 | 14 | 14 | 8 | **94** | PASS |
+| A: Cloudflare + D1 + Firebase Auth | 25 | 15 | 18 | 14 | 14 | 8 | **94** | PASS — معتمد |
 | B: Firebase متكامل | 25 | 15 | 18 | 11 | 9 | 9 | **87** | PASS مشروط |
 | C: Supabase Free | 18 | 3 | 17 | 15 | 14 | 8 | 75 | FAIL |
 | D: Appwrite Cloud Free | 16 | 0 | 16 | 12 | 8 | 5 | 57 | FAIL |
 | E: Apps Script + Sheets | 22 | 11 | 6 | 7 | 12 | 7 | 65 | FAIL |
 
-## 6. التوصية
+## 6. القرار
 
-التوصية المعمارية المقترحة هي **A: Cloudflare Workers/Static Assets + D1 + Firebase Authentication Spark**، مع هذه الشروط غير القابلة للتخفيف:
+اعتمد المستخدم صراحة البديل **A: Cloudflare Workers/Static Assets + D1 + Firebase Authentication Spark** بتاريخ 2026-08-03، مع الشروط التالية:
 
-1. لا يستخدم Cloudflare Zero Trust Access لأنه يطلب بيانات دفع عند الإعداد.
-2. لا يربط أي حساب فوترة في Cloudflare أو Firebase.
-3. ينشأ حسابا Firebase إداريًا فقط، وتعطل عمليات إنشاء الحساب أو حذفه من المستخدم النهائي.
-4. لا يكفي امتلاك حساب Firebase للوصول؛ يجب أن يطابق UID سجلًا نشطًا ضمن `app_users` في D1.
-5. لا تخزن ملفات الأعمال؛ البيانات النصية والمالية فقط.
-6. ينفذ تصدير SQL دوري يدويًا إلى تخزين محلي مشفر خارج GitHub، مع اختبار استعادة في S10.
-7. يظل ADR بحالة `Proposed` حتى موافقة المستخدم الصريحة، ولا يعدل `docs/DECISION_LOG.md` قبلها.
+1. لا يستخدم Cloudflare Zero Trust Access.
+2. لا يستخدم Firebase Blaze، ولا يربط أي Billing Account أو وسيلة دفع.
+3. لا تنشأ خدمة سحابية فعلية دون موافقة مستقلة.
+4. ينشأ حسابا Firebase إداريًا فقط، وتعطل عمليات إنشاء الحساب أو حذفه من المستخدم النهائي.
+5. لا يكفي امتلاك حساب Firebase للوصول؛ يجب أن يطابق UID سجلًا نشطًا ضمن `app_users` في D1.
+6. يتحقق Worker من `kid` والمفتاح المطابق وRS256 والتوقيع و`aud/iss/exp/iat/auth_time/sub`، ويخزن المفاتيح وفق `max-age` ويفشل مغلقًا.
+7. لا تعرض D1 مباشرة ولا يسمح أي مسار بتجاوز Worker.
+8. لا تخزن ملفات الأعمال؛ البيانات النصية والمالية فقط.
+9. تخزن القيم المالية كأعداد صحيحة من الهللات ضمن المجال الآمن، ويحظر floating point.
+10. ينفذ تصدير SQL دوري يدويًا إلى تخزين محلي مشفر خارج GitHub، مع اختبار استعادة في S10.
+11. لا يبدأ S3 ولا يدمج PR #17 قبل المراجعة الإشرافية المستقلة ودمج S2.
 
 ## 7. المصادر الرسمية
 
@@ -176,6 +182,7 @@
 - https://firebase.google.com/docs/auth
 - https://firebase.google.com/docs/auth/users
 - https://firebase.google.com/docs/auth/limits
+- https://firebase.google.com/docs/auth/admin/verify-id-tokens
 - https://firebase.google.com/docs/firestore/quotas
 - https://firebase.google.com/docs/firestore/solutions/schedule-export
 - https://firebase.google.com/docs/firestore/manage-data/transactions
@@ -199,3 +206,7 @@
 - https://developers.google.com/apps-script/manifest/web-app-api-executable
 - https://developers.google.com/apps-script/guides/services/quotas
 - https://developers.google.com/apps-script/reference/lock/lock-service
+
+### ECMAScript
+
+- https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-number.max_safe_integer
