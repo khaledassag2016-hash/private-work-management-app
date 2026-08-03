@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 import { webcrypto } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   AppAuthorizationError,
@@ -31,6 +35,14 @@ function pem(label, bytes) {
   return `-----BEGIN ${label}-----\n${base64}\n-----END ${label}-----\n`;
 }
 
+function privateKeyPemToBytes(privateKeyPem) {
+  const match = privateKeyPem.match(
+    /-----BEGIN PRIVATE KEY-----([\s\S]+?)-----END PRIVATE KEY-----/,
+  );
+  assert.ok(match, "OpenSSL must emit an unencrypted PKCS#8 private key");
+  return Uint8Array.from(Buffer.from(match[1].replace(/\s+/g, ""), "base64"));
+}
+
 async function fixture() {
   const keyPair = await crypto.subtle.generateKey(
     {
@@ -45,6 +57,46 @@ async function fixture() {
   const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const spki = new Uint8Array(await crypto.subtle.exportKey("spki", keyPair.publicKey));
   return { keyPair, publicJwk, publicKeyPem: pem("PUBLIC KEY", spki) };
+}
+
+async function x509Fixture() {
+  const directory = mkdtempSync(join(tmpdir(), "s2-x509-"));
+  const privateKeyPath = join(directory, "private-key.pem");
+  const certificatePath = join(directory, "certificate.pem");
+  try {
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-sha256",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=s2-firebase-x509-test",
+        "-keyout",
+        privateKeyPath,
+        "-out",
+        certificatePath,
+      ],
+      { stdio: "ignore" },
+    );
+    const privateKey = await crypto.subtle.importKey(
+      "pkcs8",
+      privateKeyPemToBytes(readFileSync(privateKeyPath, "utf8")),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const certificatePem = readFileSync(certificatePath, "utf8");
+    assert.match(certificatePem, /-----BEGIN CERTIFICATE-----/);
+    return { privateKey, certificatePem };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 async function signToken({
@@ -148,6 +200,32 @@ test("kid selects the matching cached Google public key and obeys max-age", asyn
   nowMilliseconds += 121_000;
   await keyCache.getPublicKey("rotated-key");
   assert.equal(fetchCount, 2);
+});
+
+test("X.509 certificate path verifies a signed token through GooglePublicKeyCache", async () => {
+  const { privateKey, certificatePem } = await x509Fixture();
+  const token = await signToken({
+    privateKey,
+    headerOverrides: { kid: "x509-test-key" },
+  });
+  let fetchCount = 0;
+  const keyCache = new GooglePublicKeyCache({
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return new Response(
+        JSON.stringify({ "x509-test-key": certificatePem }),
+        { status: 200, headers: { "Cache-Control": "public, max-age=300" } },
+      );
+    },
+  });
+  const payload = await verifyFirebaseIdToken({
+    token,
+    projectId: "demo-project",
+    keyProvider: keyCache,
+    nowSeconds: 2_000_000_000,
+  });
+  assert.equal(payload.sub, "uid-person-1");
+  assert.equal(fetchCount, 1);
 });
 
 test("missing or unknown kid is rejected", async () => {
