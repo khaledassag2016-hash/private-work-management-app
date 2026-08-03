@@ -11,10 +11,17 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout exact revision
+      - name: Checkout synthetic PR merge revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
           fetch-depth: 0
+
+      - name: Record tested merge revision
+        run: |
+          echo "Synthetic PR merge revision: $GITHUB_SHA"
+          echo "PR head revision: ${{ github.event.pull_request.head.sha }}"
+          echo "PR base revision: ${{ github.event.pull_request.base.sha }}"
 
       - name: Compile Python validators
         run: python -m py_compile scripts/reconstruct_requirements.py scripts/validate_foundation.py scripts/validate_s2.py prototype/s2_local_architecture/core.py
@@ -32,10 +39,24 @@ jobs:
         run: |
           grep -Fq -- '- الحالة: **Accepted**' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
           grep -Fq -- '| D-006 | 2026-08-03 |' docs/DECISION_LOG.md
+          grep -Fq -- 'Cloudflare Workers Static Assets' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          grep -Fq -- 'Email/Password' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          grep -Fq -- 'workers.dev' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
           grep -Fq -- 'Fail closed' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          grep -Fq -- '10ms' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
           grep -Fq -- 'عدد صحيح من **الهللات**' docs/architecture/FINANCIAL_INTEGER_RULE.md
           grep -Fq -- 'Cloudflare Zero Trust' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
           grep -Fq -- 'Firebase Blaze' docs/architecture/ADR-001-FREE-ARCHITECTURE.md
+          grep -Fq -- 'app_users_max_two_active_insert' prototype/s2_local_architecture/schema.sql
+          grep -Fq -- 'app_users_one_active_user_per_role' prototype/s2_local_architecture/schema.sql
+          if grep -Fq -- 'INSERT OR REPLACE' prototype/s2_local_architecture/core.py; then
+            echo 'Unsafe INSERT OR REPLACE remains in provisioning code'
+            exit 1
+          fi
+          if grep -Fq -- 'Static Assets أو Pages' docs/architecture/ADR-001-FREE-ARCHITECTURE.md docs/DECISION_LOG.md PROJECT_STATE.md PROJECT_SUPERVISION_BRIEF.md; then
+            echo 'Ambiguous primary hosting phrase remains in governing files'
+            exit 1
+          fi
           if git diff --quiet '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' -- docs/DECISION_LOG.md; then
             echo 'DECISION_LOG.md was not updated after explicit architecture approval'
             exit 1
