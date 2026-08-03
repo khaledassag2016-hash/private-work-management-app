@@ -1,3 +1,6 @@
 # Architecture decision records
 
-ADRs are proposals until the project owner explicitly approves them and the corresponding dated decision is recorded in `docs/DECISION_LOG.md`. S2 uses `ADR-001-FREE-ARCHITECTURE.md` with status `Proposed` at the decision gate.
+- `ADR-001-FREE-ARCHITECTURE.md`: **Accepted** بعد اعتماد المستخدم الصريح وتسجيل D-006.
+- `FINANCIAL_INTEGER_RULE.md`: قاعدة معتمدة لتخزين وحساب الأموال كأعداد صحيحة من الهللات ومنع floating point.
+
+لا يصبح أي ADR لاحق معتمدًا إلا بموافقة المستخدم الصريحة وتسجيل قرار مؤرخ في `docs/DECISION_LOG.md`.
