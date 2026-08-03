@@ -51,7 +51,8 @@ EXPECTED_COVERAGE = {
     "approved_decisions": "7/7",
     "approved_scenarios": "14/14",
 }
-EXPECTED_OPEN_DECISIONS = {"Q-001", "Q-002", "Q-003"}
+EXPECTED_OPEN_DECISIONS = {"Q-001", "Q-002", "Q-003", "Q-004"}
+EXPECTED_RECORDED_DECISIONS = {f"D-{number:03d}" for number in range(1, 7)}
 
 
 def expected_stage_map() -> dict[str, str]:
@@ -251,7 +252,7 @@ def main() -> int:
     decision_log = read_text("docs/DECISION_LOG.md")
     approved_decisions = set(re.findall(r"\bD-\d{3}\b", decision_log))
     open_decisions = set(re.findall(r"\bQ-\d{3}\b", decision_log))
-    if approved_decisions != {f"D-{number:03d}" for number in range(1, 6)}:
+    if approved_decisions != EXPECTED_RECORDED_DECISIONS:
         errors.append(
             f"DECISION LOG approved IDs mismatch: {sorted(approved_decisions)}"
         )
@@ -302,7 +303,8 @@ def main() -> int:
     print("Coverage: FR 30/30, AC 14/14, P 7/7, scenarios 14/14")
     print("Trace stage assignments: PASS")
     print("Manifest and issue index: PASS")
-    print("Open decisions recorded: Q-001, Q-002, Q-003")
+    print("Recorded decisions: D-001 through D-006")
+    print("Open decisions recorded: Q-001, Q-002, Q-003, Q-004")
     print("Required governance and source files:", len(REQUIRED), "present")
     print("Authoritative source segments:", len(SOURCE_FILES), "verified")
     print("Approved requirements bytes:", EXPECTED_BYTE_SIZE)
