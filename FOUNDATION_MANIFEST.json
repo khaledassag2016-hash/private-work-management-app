@@ -67,7 +67,8 @@
   "open_decisions": {
     "Q-001": "before S6",
     "Q-002": "before S7",
-    "Q-003": "before S7 if settlement closing is requested"
+    "Q-003": "before S7 if settlement closing is requested",
+    "Q-004": "before S7 monetary calculations that can produce fractional halalas"
   },
   "implementation_issues": {
     "S2": 1,
