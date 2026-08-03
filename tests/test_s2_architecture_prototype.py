@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import unittest
+from pathlib import Path
 
 from prototype.s2_local_architecture import (
     ArchitecturePrototype,
     AuthorizationError,
     ConflictError,
+    ProvisioningError,
+    SCHEMA_SQL,
 )
 
 
@@ -84,6 +87,75 @@ class S2ArchitecturePrototypeTests(unittest.TestCase):
             for column in columns
         }
         self.assertTrue(forbidden.isdisjoint(all_columns))
+
+    def test_schema_file_is_the_single_executable_source(self) -> None:
+        schema_path = (
+            Path(__file__).resolve().parents[1]
+            / "prototype"
+            / "s2_local_architecture"
+            / "schema.sql"
+        )
+        self.assertEqual(SCHEMA_SQL, schema_path.read_text(encoding="utf-8"))
+        objects = {
+            (row["type"], row["name"])
+            for row in self.app.connection.execute(
+                "SELECT type, name FROM sqlite_master "
+                "WHERE name LIKE 'app_users_%' OR name LIKE 'audit_log_%'"
+            )
+        }
+        self.assertIn(("index", "app_users_one_active_user_per_role"), objects)
+        self.assertIn(("trigger", "app_users_max_two_active_insert"), objects)
+        self.assertIn(("trigger", "app_users_max_two_active_update"), objects)
+        self.assertIn(("trigger", "audit_log_no_update"), objects)
+        self.assertIn(("trigger", "audit_log_no_delete"), objects)
+
+    def test_active_third_user_is_rejected_at_schema_boundary(self) -> None:
+        with self.assertRaisesRegex(
+            sqlite3.IntegrityError, "at most two active users"
+        ):
+            self.app.connection.execute(
+                "INSERT INTO app_users(uid, role, active) VALUES (?, ?, 1)",
+                ("uid-person-3", "person_1"),
+            )
+
+    def test_duplicate_active_role_is_rejected(self) -> None:
+        fresh = ArchitecturePrototype()
+        try:
+            fresh.connection.execute(
+                "INSERT INTO app_users(uid, role, active) VALUES (?, ?, 1)",
+                ("uid-first", "person_1"),
+            )
+            with self.assertRaises(sqlite3.IntegrityError):
+                fresh.connection.execute(
+                    "INSERT INTO app_users(uid, role, active) VALUES (?, ?, 1)",
+                    ("uid-duplicate-role", "person_1"),
+                )
+        finally:
+            fresh.close()
+
+    def test_reprovisioning_is_idempotent_only_for_the_same_pair(self) -> None:
+        self.app.provision_users("uid-person-1", "uid-person-2")
+        active_count = self.app.connection.execute(
+            "SELECT COUNT(*) FROM app_users WHERE active = 1"
+        ).fetchone()[0]
+        self.assertEqual(active_count, 2)
+
+        with self.assertRaises(ProvisioningError):
+            self.app.provision_users("uid-new-person-1", "uid-new-person-2")
+
+        rows = [
+            tuple(row)
+            for row in self.app.connection.execute(
+                "SELECT uid, role, active FROM app_users ORDER BY role"
+            )
+        ]
+        self.assertEqual(
+            rows,
+            [
+                ("uid-person-1", "person_1", 1),
+                ("uid-person-2", "person_2", 1),
+            ],
+        )
 
 
 if __name__ == "__main__":
