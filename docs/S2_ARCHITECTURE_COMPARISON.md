@@ -124,28 +124,28 @@ PostgreSQL ومصادقة وتصدير منطقي جيد، لكن مشاريع F
 
 ### Cloudflare
 
-- Workers Static Assets: https://developers.cloudflare.com/workers/static-assets/
-- Static Assets billing: https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/
-- Workers pricing: https://developers.cloudflare.com/workers/platform/pricing/
-- Workers limits وCPU: https://developers.cloudflare.com/workers/platform/limits/
-- `workers.dev`: https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
-- D1 pricing: https://developers.cloudflare.com/d1/platform/pricing/
-- D1 limits: https://developers.cloudflare.com/d1/platform/limits/
-- D1 export: https://developers.cloudflare.com/d1/best-practices/import-export-data/
+- Workers Static Assets — https://developers.cloudflare.com/workers/static-assets/
+- Static Assets billing — https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/
+- Workers pricing — https://developers.cloudflare.com/workers/platform/pricing/
+- Workers limits وCPU — https://developers.cloudflare.com/workers/platform/limits/
+- `workers.dev` — https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
+- D1 pricing — https://developers.cloudflare.com/d1/platform/pricing/
+- D1 limits — https://developers.cloudflare.com/d1/platform/limits/
+- D1 export — https://developers.cloudflare.com/d1/best-practices/import-export-data/
 
 ### Firebase
 
-- Pricing plans: https://firebase.google.com/docs/projects/billing/firebase-pricing-plans
-- Email/Password: https://firebase.google.com/docs/auth/web/password-auth
-- User management: https://firebase.google.com/docs/auth/users
-- ID token verification: https://firebase.google.com/docs/auth/admin/verify-id-tokens
-- Authentication limits: https://firebase.google.com/docs/auth/limits
+- Pricing plans — https://firebase.google.com/docs/projects/billing/firebase-pricing-plans
+- Sign-in with email and password — https://firebase.google.com/docs/auth/web/password-auth
+- User management — https://firebase.google.com/docs/auth/users
+- ID token verification — https://firebase.google.com/docs/auth/admin/verify-id-tokens
+- Authentication limits — https://firebase.google.com/docs/auth/limits
 
 ### البدائل
 
-- Supabase pricing: https://supabase.com/pricing
-- Supabase pausing: https://supabase.com/docs/guides/platform/free-project-pausing
-- Appwrite pricing: https://appwrite.io/pricing
-- Appwrite pausing: https://appwrite.io/changelog/entry/2026-02-20-1
-- Apps Script web apps: https://developers.google.com/apps-script/manifest/web-app-api-executable
-- Apps Script quotas: https://developers.google.com/apps-script/guides/services/quotas
+- Supabase pricing — https://supabase.com/pricing
+- Supabase pausing — https://supabase.com/docs/guides/platform/free-project-pausing
+- Appwrite pricing — https://appwrite.io/pricing
+- Appwrite pausing — https://appwrite.io/changelog/entry/2026-02-20-1
+- Apps Script web apps — https://developers.google.com/apps-script/manifest/web-app-api-executable
+- Apps Script quotas — https://developers.google.com/apps-script/guides/services/quotas
