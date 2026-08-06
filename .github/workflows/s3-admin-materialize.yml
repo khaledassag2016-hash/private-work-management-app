@@ -7,6 +7,9 @@ on:
     paths:
       - ".tmp/s3-admin-xz.part*"
       - ".github/workflows/s3-admin-materialize.yml"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: write
@@ -109,4 +112,5 @@ jobs:
           git add -A
           git diff --cached --name-status
           git commit -m "S3: record approved B2/B5 tooling and verification"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          TARGET_BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git push origin "HEAD:${TARGET_BRANCH}"
