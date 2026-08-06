@@ -7,6 +7,9 @@ on:
       - phase/s3-b3-b4-b8-security-cleanup
 permissions:
   contents: write
+concurrency:
+  group: s3-phase3-patch-${{ github.repository }}
+  cancel-in-progress: true
 jobs:
   apply:
     runs-on: ubuntu-latest
