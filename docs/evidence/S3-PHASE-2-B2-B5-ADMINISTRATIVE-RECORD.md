@@ -45,6 +45,23 @@
 - `__pycache__`: `0` بعد التنظيف.
 - مواءمة synthetic merge: اختبار كلمة المرور يبني نفس القيمة وقت التشغيل عبر تجميع سلاسل، لتجنب مطابقة فاحص S1 للنص الاختباري بوصفه سرًا؛ لا تغيير في منطق redaction أو نتيجة الاختبار.
 
+## تصحيحات المراجعة الإشرافية المستقلة — PR #21
+
+- وُسمت الملفات التاريخية التالية في بدايتها بوضوح: `HISTORICAL — SUPERSEDED`:
+  - `tools/s3_cpu_gate/docs/BUILD-VALIDATION-BLOCKER.md`
+  - `tools/s3_cpu_gate/docs/TEST-REPORT.md`
+  - `tools/s3_cpu_gate/docs/KNOWN-LIMITATIONS.md`
+- حُفظ محتواها التاريخي دون حذفه، مع بيان أنه لا يمثل الحالة الحالية وأن النتيجة النهائية البديلة هي Run ID `20260805-212829-b3ebbe5f`، وPester `120/120 PASS`، وPSScriptAnalyzer `0 Warning / 0 Error`، وPython `73/73 PASS`، وFinal checks `61/61 PASS`.
+- ثُبتت Actions في `.github/workflows/s3-cpu-gate-static.yml` إلى SHA كاملة:
+  - `actions/checkout@11d5960a326750d5838078e36cf38b85af677262`
+  - `actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065`
+  - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
+- أضيف trigger على `push` إلى فرع `main` باستخدام paths نفسها الموجودة للـPull Request، لتعمل بوابة S3 Static على commit `main` الفعلي بعد الدمج.
+- لم يُعدل أي مصدر تنفيذي ضمن `tools/s3_cpu_gate/src/**` أو `tools/s3_cpu_gate/worker/**`.
+- لم يُعدل أي اختبار ضمن `tools/s3_cpu_gate/tests/**`.
+- لم يُعدل `tools/s3_cpu_gate/src/version-manifest.json`.
+- لم يُعدل منطق B2 أو B5، ولم يُشغل Cloud أو Login أو Billing.
+
 ## الملفات المتغيرة
 
 - `PROJECT_STATE.md`
