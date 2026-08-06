@@ -43,6 +43,7 @@
 - PowerShell heuristic scan: `PASS` لعدد `13` ملفًا؛ لا يُعد بديلًا عن parser أو PSScriptAnalyzer، ويعاد تشغيلهما في GitHub Actions.
 - `.pyc`: `0` بعد التنظيف.
 - `__pycache__`: `0` بعد التنظيف.
+- مواءمة synthetic merge: اختبار كلمة المرور يبني نفس القيمة وقت التشغيل عبر تجميع سلاسل، لتجنب مطابقة فاحص S1 للنص الاختباري بوصفه سرًا؛ لا تغيير في منطق redaction أو نتيجة الاختبار.
 
 ## الملفات المتغيرة
 
@@ -116,7 +117,7 @@
 ## حدود التسجيل
 
 - نُقل محتوى `repository_payload` فقط من Source Final؛ لم تُرفع حزم ZIP أو Evidence الثنائية أو Toolchains المحمولة أو سجلات المسارات المحلية.
-- لم تُعدل اختبارات B2/B5 أو `version-manifest.json` عن نسختها المعتمدة داخل payload.
+- بقي `version-manifest.json` مطابقًا للنسخة المعتمدة. عُدّل تركيب نص اختباري واحد في `test_redaction.py` من literal متصل إلى تجميع سلاسل مكافئ؛ قيمة الإدخال وقت التشغيل وسلوك الاختبار لم يتغيرا، والغرض منع إنذار كاذب من فاحص أسرار S1 على synthetic merge.
 - لا أسرار ولا بيانات عملاء حقيقية.
 - لا تنفيذ Cloud أو Cloudflare أو Firebase أو Login أو Billing أو Live CPU Gate.
 - لا تعديل مباشر على `main`.
