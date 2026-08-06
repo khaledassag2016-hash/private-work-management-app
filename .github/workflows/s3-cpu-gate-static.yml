@@ -1,0 +1,90 @@
+name: S3 CPU Gate Static
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/s3_cpu_gate/**'
+      - 'docs/s3/CPU_GATE_PLAN.md'
+      - '.github/workflows/s3-cpu-gate-static.yml'
+permissions:
+  contents: read
+jobs:
+  synthetic-merge-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout synthetic PR merge revision
+        uses: actions/checkout@v4
+      - name: Read authoritative tool versions
+        id: versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          p='tools/s3_cpu_gate/src/version-manifest.json'
+          d=json.load(open(p,encoding='utf-8'))['tools']
+          out=os.environ['GITHUB_OUTPUT']
+          values={'python':d['python']['version'],'node':d['node']['version'],'npm':d['npm']['version'],'powershell':d['powershell']['version'],'pester':d['pester']['version'],'psscriptanalyzer':d['psscriptanalyzer']['version'],'pwsh_asset':d['powershell']['assets']['linux_x64']['file'],'pwsh_sha':d['powershell']['assets']['linux_x64']['sha256'],'pwsh_base':d['powershell']['releaseBaseUrl']}
+          with open(out,'a',encoding='utf-8') as f:
+            for k,v in values.items(): f.write(f'{k}={v}\n')
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ steps.versions.outputs.python }}'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '${{ steps.versions.outputs.node }}'
+      - name: Install exact npm
+        run: npm install --global npm@${{ steps.versions.outputs.npm }} --no-audit --no-fund
+      - name: Install exact PowerShell
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/pwsh"; mkdir -p "$dest"
+          curl -fsSL "${{ steps.versions.outputs.pwsh_base }}/${{ steps.versions.outputs.pwsh_asset }}" -o "$RUNNER_TEMP/pwsh.tar.gz"
+          echo "${{ steps.versions.outputs.pwsh_sha }}  $RUNNER_TEMP/pwsh.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/pwsh.tar.gz" -C "$dest"; chmod +x "$dest/pwsh"; echo "$dest" >> "$GITHUB_PATH"
+      - name: Install exact PowerShell test modules
+        shell: pwsh
+        run: |
+          $moduleRoot=Join-Path $env:RUNNER_TEMP 'psmodules';New-Item -ItemType Directory -Path $moduleRoot -Force|Out-Null
+          Save-Module Pester -RequiredVersion '${{ steps.versions.outputs.pester }}' -Path $moduleRoot -Repository PSGallery -Force
+          Save-Module PSScriptAnalyzer -RequiredVersion '${{ steps.versions.outputs.psscriptanalyzer }}' -Path $moduleRoot -Repository PSGallery -Force
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "PSModulePath=$moduleRoot$([IO.Path]::PathSeparator)$env:PSModulePath"
+      - name: Verify exact active versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(python -c 'import platform;print(platform.python_version())')" = '${{ steps.versions.outputs.python }}'
+          test "$(node --version)" = 'v${{ steps.versions.outputs.node }}'
+          test "$(npm --version)" = '${{ steps.versions.outputs.npm }}'
+          test "$(pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')" = '${{ steps.versions.outputs.powershell }}'
+      - name: Verify exact PowerShell module versions from manifest
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath 'tools/s3_cpu_gate/src/version-manifest.json' -Raw | ConvertFrom-Json
+          Import-Module Pester -RequiredVersion ([string]$manifest.tools.pester.version) -Force
+          Import-Module PSScriptAnalyzer -RequiredVersion ([string]$manifest.tools.psscriptanalyzer.version) -Force
+          if ((Get-Module Pester).Version.ToString() -ne [string]$manifest.tools.pester.version) { throw 'PESTER_VERSION_MISMATCH' }
+          if ((Get-Module PSScriptAnalyzer).Version.ToString() -ne [string]$manifest.tools.psscriptanalyzer.version) { throw 'PSSCRIPTANALYZER_VERSION_MISMATCH' }
+      - name: Reconstruct authoritative requirements
+        run: python scripts/reconstruct_requirements.py --output docs/APPROVED_REQUIREMENTS.docx
+      - name: Foundation validation
+        run: python scripts/validate_foundation.py
+      - name: S2 validation 23 of 23
+        run: python scripts/validate_s2.py
+      - name: PowerShell parser, Pester, and PSScriptAnalyzer in isolated payload process
+        shell: pwsh
+        run: |
+          tools/s3_cpu_gate/build/Invoke-Phase1PowerShellValidation.ps1 `
+            -Root tools/s3_cpu_gate `
+            -ScopeName payload `
+            -SettingsPath tools/s3_cpu_gate/settings/PSScriptAnalyzerSettings.psd1 `
+            -ReportDirectory phase1-reports/powershell-payload
+      - name: Python tests
+        run: python tools/s3_cpu_gate/validation/run_python_tests.py --source-root tools/s3_cpu_gate --output phase1-reports/python-tests.json
+      - name: Node validation
+        run: node --check tools/s3_cpu_gate/src/worker/src/index.js
+      - name: Secret scan
+        run: python tools/s3_cpu_gate/src/python/secret_scan.py tools/s3_cpu_gate
+      - name: Payload integrity and ZIP safety
+        run: python tools/s3_cpu_gate/build/phase1_integrity.py --root tools/s3_cpu_gate --report phase1-reports/payload-integrity.json --zip-out phase1-reports/payload.zip
