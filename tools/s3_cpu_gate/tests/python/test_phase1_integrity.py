@@ -1,0 +1,82 @@
+from __future__ import annotations
+import json
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).parents[2]
+REQUIRED_TOOLS = {"powershell","pester","psscriptanalyzer","python","node","npm","wrangler","firebaseCli","gcloud"}
+FORBIDDEN = {".".join(x) for x in (("7","6","4"),("24","19","0"),("3","14","2"),("22","16","0"),("3","13","5"))}
+
+
+def load_manifest():
+    return json.loads((ROOT / "src/version-manifest.json").read_text(encoding="utf-8-sig"))
+
+
+def test_version_manifest_is_authoritative():
+    data=load_manifest(); assert data["authoritative"] is True; assert REQUIRED_TOOLS <= set(data["tools"])
+
+
+def test_required_versions_are_exact():
+    tools=load_manifest()["tools"]
+    assert tools["powershell"]["version"]=="7.6.3"
+    assert tools["pester"]["version"]=="6.0.0"
+    assert tools["psscriptanalyzer"]["version"]=="1.25.0"
+    assert tools["python"]["version"]=="3.13.14"
+    assert tools["node"]["version"]=="22.23.1"
+    assert tools["npm"]["version"]=="10.9.2"
+    assert tools["wrangler"]["version"]=="4.118.0"
+    assert tools["firebaseCli"]["version"]=="15.25.1"
+    assert tools["gcloud"]["version"]=="577.0.0"
+
+
+def test_package_manifest_delegates_versions():
+    package=json.loads((ROOT.parent / "package-manifest.json").read_text(encoding="utf-8-sig")) if (ROOT.parent / "package-manifest.json").exists() else None
+    if package is not None:
+        assert package["versionManifest"]=="source/src/version-manifest.json"; assert "tools" not in package
+
+
+def test_executable_files_have_no_rejected_conflicting_versions():
+    suffixes={".ps1",".psm1",".yml",".yaml"}
+    for path in ROOT.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in suffixes: continue
+        text=path.read_text(encoding="utf-8-sig",errors="ignore")
+        assert not (FORBIDDEN & set(re.findall(r"\b\d+\.\d+\.\d+\b",text))), path
+
+
+def test_payload_has_complete_pester_support():
+    required=["tests/pester/TestHelper.ps1","tests/pester/CpuGate.Tests.ps1","src/modules/Common.psm1","src/modules/CpuGate.psm1","src/S3-CpuGate-Orchestrator.ps1"]
+    for rel in required: assert (ROOT/rel).is_file(), rel
+
+
+def test_all_testhelper_dot_sources_resolve():
+    for path in (ROOT/"tests/pester").glob("*.Tests.ps1"):
+        text=path.read_text(encoding="utf-8-sig")
+        if "TestHelper.ps1" in text: assert (path.parent/"TestHelper.ps1").is_file()
+
+
+def test_testhelper_module_imports_resolve():
+    helper=(ROOT/"tests/pester/TestHelper.ps1").read_text(encoding="utf-8-sig")
+    match=re.search(r"foreach\(\$name in @\((.*?)\)\)",helper,re.S); assert match
+    names=re.findall(r"'([^']+)'",match.group(1)); assert names
+    for name in names: assert (ROOT/f"src/modules/{name}.psm1").is_file(), name
+
+
+def test_payload_python_tests_have_runtime_modules():
+    assert (ROOT/"src/python").is_dir(); assert len(list((ROOT/"tests/python").glob("test_*.py"))) >= 7
+
+
+def test_ci_runs_governance_and_regressions():
+    candidates=[ROOT/"src/repository_payload/.github/workflows/s3-cpu-gate-static.yml",(ROOT/"../../.github/workflows/s3-cpu-gate-static.yml").resolve()]
+    workflow=next(p for p in candidates if p.is_file()).read_text(encoding="utf-8")
+    ps=(ROOT/"build/Invoke-Phase1PowerShellValidation.ps1").read_text(encoding="utf-8-sig")
+    combined=workflow+"\n"+ps
+    for token in ("reconstruct_requirements.py","validate_foundation.py","validate_s2.py","Invoke-Pester","Invoke-ScriptAnalyzer","secret_scan.py","phase1_integrity.py","node --check"):
+        assert token in combined, token
+
+
+def test_toolchain_consumers_reference_manifest():
+    validation=(ROOT.parent/"validation/Invoke-LocalValidation.ps1") if (ROOT.parent/"validation/Invoke-LocalValidation.ps1").is_file() else (ROOT/"validation/Invoke-LocalValidation.ps1")
+    paths=[ROOT/"src/Bootstrap.ps1",ROOT/"src/modules/Toolchain.psm1",validation]
+    for path in paths:
+        text=path.read_text(encoding="utf-8-sig")
+        assert ("version-manifest.json" in text) or ("PackageManifest.versionManifest" in text), path
