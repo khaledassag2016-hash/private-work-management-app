@@ -16,6 +16,19 @@ jobs:
         with:
           ref: phase/s3-b3-b4-b8-security-cleanup
           fetch-depth: 0
+      - name: Make applicator idempotent
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path=Path('tools/s3_cpu_gate/build/s3_phase3_apply.py')
+          text=path.read_text(encoding='utf-8')
+          old="r'function Remove-S3CloudflareResource \\{.*?Export-ModuleMember -Function \\*-S3\\*\\s*$'"
+          new="r'function (?:Test-S3CloudflareCleanupOwnership|Remove-S3CloudflareResource) \\{.*?Export-ModuleMember -Function \\*-S3\\*\\s*$'"
+          if old not in text:
+              raise SystemExit('expected replacement pattern not found')
+          path.write_text(text.replace(old,new),encoding='utf-8')
+          PY
       - name: Apply scoped patch
         run: python tools/s3_cpu_gate/build/s3_phase3_apply.py
       - name: Commit scoped implementation
