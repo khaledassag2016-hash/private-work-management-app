@@ -39,7 +39,11 @@ jobs:
             "if ($marker -ne [string]$Context.RunId -or $worker -notmatch '^s3cpu-' -or $d1Name -notmatch '^s3cpu-' -or [string]::IsNullOrWhiteSpace($d1Id) -or [string]::IsNullOrWhiteSpace($accountId)) {":
               "if (-not (Test-S3OwnedResource -Context $Context -Name $worker -Marker $marker) -or -not (Test-S3OwnedResource -Context $Context -Name $d1Name -Marker $marker) -or $worker -notmatch '^s3cpu-' -or $d1Name -notmatch '^s3cpu-' -or [string]::IsNullOrWhiteSpace($d1Id) -or [string]::IsNullOrWhiteSpace($accountId)) {",
             "$context.State.resources.cloudflare = [ordered]@{accountId=$accountId;worker='s3cpu-owned-worker';d1Name='s3cpu-owned-d1';d1Id='11111111-2222-3333-4444-555555555555';marker=$context.RunId}":
-              "$context.State.resources.cloudflare = [ordered]@{accountId=$accountId;worker=\"$($context.RunId)-worker\";d1Name=\"$($context.RunId)-d1\";d1Id='11111111-2222-3333-4444-555555555555';marker=$context.RunId}"
+              "$context.State.resources.cloudflare = [ordered]@{accountId=$accountId;worker=\"$($context.RunId)-worker\";d1Name=\"$($context.RunId)-d1\";d1Id='11111111-2222-3333-4444-555555555555';marker=$context.RunId}",
+            "$response = Invoke-S3GoogleRest -Method GET -Uri \"$base/$collection\" -Token $Token\n        $items = @(Get-S3RequiredArrayProperty -InputObject $response -Name $collection)":
+              "$response = Invoke-S3GoogleRest -Method GET -Uri \"$base/$collection?pageSize=100\" -Token $Token\n        $items = @(Get-S3RequiredArrayProperty -InputObject $response -Name $collection)\n        $nextPageToken = [string](Get-S3MapValue -Map $response -Name 'nextPageToken')\n        if (-not [string]::IsNullOrWhiteSpace($nextPageToken)) { throw \"FIREBASE_PROVIDER_PAGINATION_INCOMPLETE:$collection\" }",
+            "$collection=($Uri -split '/')[-1]":
+              "$collection=((($Uri -split '/')[-1]) -split '\\?')[0]"
           }
           for old,new in replacements.items():
               if old not in text:
