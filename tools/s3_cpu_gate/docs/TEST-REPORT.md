@@ -1,3 +1,17 @@
+# HISTORICAL — SUPERSEDED
+
+> هذا المستند سجل تاريخي محفوظ للرجوع فقط، ولا يمثل الحالة الحالية للحزمة. أي عبارات `BLOCKED` أو `NOT EXECUTED` أدناه تصف بيئة بناء سابقة وقد استُبدلت بالنتيجة النهائية المثبتة هنا.
+
+## النتيجة النهائية البديلة
+
+- Run ID: `20260805-212829-b3ebbe5f`
+- Pester: `120/120 PASS`
+- PSScriptAnalyzer: `0 Warning / 0 Error`
+- Python: `73/73 PASS`
+- Final checks: `61/61 PASS`
+
+---
+
 # TEST-REPORT
 
 - تاريخ التنفيذ: 2026-08-03
