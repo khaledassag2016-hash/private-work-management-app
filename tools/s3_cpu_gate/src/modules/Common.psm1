@@ -1,0 +1,215 @@
+﻿Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$script:S3States = @(
+ '00_PACKAGE_READY','10_LOCAL_PREREQUISITES','20_REPOSITORY_GATE','30_BRANCH_AND_DRAFT_PR',
+ '40_PRE_CLOUD_GATE','50_FIREBASE_PROVISIONED','60_CLOUDFLARE_PROVISIONED',
+ '70_CPU_GATE_EXECUTED','80_RESOURCES_DESTROYED','90_REPORT_READY'
+)
+
+function Get-S3FixedRoot { 'C:\Users\MC\Desktop\1' }
+
+function Protect-S3Text {
+ [CmdletBinding()] param([AllowNull()][string]$Text)
+ if ($null -eq $Text) { return '' }
+ $out = $Text
+ $replacementPatterns = @(
+  '(?is)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
+  '(?i)(Authorization\s*[:=]\s*Bearer\s+)[^\s"'']+',
+  '(?i)(password\s*[:=]\s*)[^,\s}\]]+',
+  '(?i)((?:access|refresh|id|oauth)[_-]?token\s*[:=]\s*)[^,\s}\]]+',
+  '\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b'
+ )
+ foreach ($pattern in $replacementPatterns) {
+  if ($pattern -match '^\(\?i\)\(') { $out = [regex]::Replace($out,$pattern,'$1[REDACTED]') }
+  else { $out = [regex]::Replace($out,$pattern,'[REDACTED]') }
+ }
+ return $out
+}
+
+function Initialize-S3Directory {
+ [CmdletBinding()] param([Parameter(Mandatory)][string]$Root)
+ if ($Root -ne (Get-S3FixedRoot)) { throw "المسار غير معتمد: $Root" }
+ $dirs = 'tools','modules','python','workspace','repository','config','tests','logs','reports','artifacts','temp','backups','docs'
+ New-Item -ItemType Directory -Path $Root -Force | Out-Null
+ foreach ($d in $dirs) { New-Item -ItemType Directory -Path (Join-Path $Root $d) -Force | Out-Null }
+}
+
+function Get-S3RunId { 's3cpu-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([guid]::NewGuid().ToString('N').Substring(0,8)) }
+
+function Get-S3MapValue {
+ [CmdletBinding()] param([AllowNull()]$Map,[Parameter(Mandatory)][string]$Name)
+ if($null -eq $Map){return $null}
+ if($Map -is [Collections.IDictionary]){
+  if($Map.Contains($Name)){return $Map[$Name]}
+  return $null
+ }
+ $property=$Map.PSObject.Properties[$Name]
+ if($null -eq $property){return $null}
+ return $property.Value
+}
+
+function Set-S3MapValue {
+[CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
+ param([Parameter(Mandatory)]$Map,[Parameter(Mandatory)][string]$Name,[AllowNull()]$Value)
+ if(-not $PSCmdlet.ShouldProcess($Name,'Set map value')){return}
+ if($Map -is [Collections.IDictionary]){
+  $Map[$Name]=$Value
+  return
+ }
+ $Map|Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
+function ConvertTo-S3NormalizedState {
+ [CmdletBinding()] param([Parameter(Mandatory)]$State)
+ $resources=Get-S3MapValue -Map $State -Name 'resources'
+ if($null -eq $resources){$resources=[ordered]@{};Set-S3MapValue -Map $State -Name 'resources' -Value $resources}
+ $results=Get-S3MapValue -Map $State -Name 'results'
+ if($null -eq $results){$results=[ordered]@{};Set-S3MapValue -Map $State -Name 'results' -Value $results}
+ foreach($name in @('firebase','cloudflare','branch','draftPr')){
+  if($null -eq (Get-S3MapValue -Map $resources -Name $name)){Set-S3MapValue -Map $resources -Name $name -Value $null}
+ }
+ foreach($name in @('tools','repository','branchPr','firebase','firebaseGuard','cloudflare','cloudflareGuard','cpu','final')){
+  if($null -eq (Get-S3MapValue -Map $results -Name $name)){Set-S3MapValue -Map $results -Name $name -Value $null}
+ }
+ if($null -eq (Get-S3MapValue -Map $State -Name 'failure')){Set-S3MapValue -Map $State -Name 'failure' -Value $null}
+ return $State
+}
+
+function Read-S3State {
+ [CmdletBinding()] param([Parameter(Mandatory)][string]$Root)
+ $path = Join-Path $Root 'state.json'
+ if (-not (Test-Path -LiteralPath $path)) { return $null }
+ try {
+  $state=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json
+  return ConvertTo-S3NormalizedState -State $state
+ }
+ catch { throw 'state.json غير صالح. لا تحذفه؛ ارفع blocker-report.zip.' }
+}
+
+function Write-S3State {
+ [CmdletBinding()] param([Parameter(Mandatory)][string]$Root,[Parameter(Mandatory)]$State)
+ $serialized = $State | ConvertTo-Json -Depth 25
+ if ($serialized -match '(?i)password|refreshToken|idToken|accessToken|apiKey|Authorization') { throw 'رفض حفظ state.json: احتوى حقلًا حساسًا.' }
+ $path = Join-Path $Root 'state.json'; $tmp = "$path.tmp"
+ [IO.File]::WriteAllText($tmp,$serialized,[Text.UTF8Encoding]::new($false))
+ Move-Item -LiteralPath $tmp -Destination $path -Force
+}
+
+function New-S3Context {
+[CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
+ param([ValidateSet('Plan','Simulation','Live')][string]$Mode='Plan',[switch]$Resume)
+ $root=Get-S3FixedRoot
+ if(-not $PSCmdlet.ShouldProcess($root,'Create or resume S3 context')){return}
+ Initialize-S3Directory -Root $root
+ $existing=Read-S3State -Root $root
+ if ($Resume -and $null -ne $existing) {
+  if ($existing.mode -ne $Mode) { throw 'لا يمكن استئناف تشغيل بوضع مختلف.' }
+  return [pscustomobject]@{ Root=$root; Mode=$Mode; RunId=$existing.runId; State=$existing; RuntimeSecrets=[ordered]@{}; IsResumed=$true }
+ }
+ $run=Get-S3RunId
+ $state=[ordered]@{schemaVersion=2;runId=$run;mode=$Mode;currentState='00_PACKAGE_READY';completed=@('00_PACKAGE_READY');startedUtc=[DateTime]::UtcNow.ToString('o');updatedUtc=[DateTime]::UtcNow.ToString('o');resources=[ordered]@{};results=[ordered]@{};failure=$null}
+ Write-S3State -Root $root -State $state
+ [pscustomobject]@{Root=$root;Mode=$Mode;RunId=$run;State=$state;RuntimeSecrets=[ordered]@{};IsResumed=$false}
+}
+
+function Set-S3Checkpoint {
+[CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
+ param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][ValidateSet('00_PACKAGE_READY','10_LOCAL_PREREQUISITES','20_REPOSITORY_GATE','30_BRANCH_AND_DRAFT_PR','40_PRE_CLOUD_GATE','50_FIREBASE_PROVISIONED','60_CLOUDFLARE_PROVISIONED','70_CPU_GATE_EXECUTED','80_RESOURCES_DESTROYED','90_REPORT_READY')][string]$State)
+ if(-not $PSCmdlet.ShouldProcess([string]$Context.RunId,('Set checkpoint to ' + $State))){return}
+ $current=[string]$Context.State.currentState
+ $ci=[array]::IndexOf($script:S3States,$current); $ni=[array]::IndexOf($script:S3States,$State)
+ if ($ni -ne ($ci+1) -and $State -ne $current) { throw "انتقال غير مسموح: $current -> $State" }
+ if ($State -ne $current) { $Context.State.completed += $State }
+ $Context.State.currentState=$State; $Context.State.updatedUtc=[DateTime]::UtcNow.ToString('o')
+ Write-S3State -Root $Context.Root -State $Context.State
+}
+
+function Write-S3Log {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[ValidateSet('INFO','WARN','ERROR')][string]$Level='INFO',[Parameter(Mandatory)][string]$Message)
+ $safe=Protect-S3Text $Message; $line="{0} [{1}] {2}" -f ([DateTime]::UtcNow.ToString('o')),$Level,$safe
+ Add-Content -LiteralPath (Join-Path $Context.Root "logs\$($Context.RunId).log") -Value $line -Encoding UTF8
+}
+
+function Invoke-S3Process {
+ [CmdletBinding()] param(
+  [Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$FilePath,[string[]]$ArgumentList=@(),
+  [int]$TimeoutSeconds=300,[string]$WorkingDirectory=$Context.Root,[switch]$AllowFailure,[hashtable]$Environment=@{},[switch]$SensitiveOutput
+ )
+ $psi=[Diagnostics.ProcessStartInfo]::new();$psi.FileName=$FilePath;$psi.WorkingDirectory=$WorkingDirectory;$psi.UseShellExecute=$false;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.CreateNoWindow=$true
+ foreach($arg in $ArgumentList){[void]$psi.ArgumentList.Add($arg)}
+ foreach($k in $Environment.Keys){$psi.Environment[$k]=[string]$Environment[$k]}
+ $p=[Diagnostics.Process]::new();$p.StartInfo=$psi
+ try {
+  if(-not $p.Start()){throw "تعذر تشغيل $FilePath"}
+  $stdoutTask=$p.StandardOutput.ReadToEndAsync();$stderrTask=$p.StandardError.ReadToEndAsync()
+  if(-not $p.WaitForExit($TimeoutSeconds*1000)){try{$p.Kill($true)}catch{Write-Verbose ("تعذر إنهاء العملية بعد انتهاء المهلة: " + $_.Exception.Message)};throw "انتهت مهلة $FilePath"}
+  $stdoutRaw=$stdoutTask.Result;$stderrRaw=$stderrTask.Result
+  $stdout=$(if($SensitiveOutput){$stdoutRaw}else{Protect-S3Text $stdoutRaw});$stderr=Protect-S3Text $stderrRaw
+  if($p.ExitCode -ne 0 -and -not $AllowFailure){throw "فشل $FilePath برمز $($p.ExitCode): $stderr"}
+  [pscustomobject]@{ExitCode=$p.ExitCode;StdOut=$stdout;StdErr=$stderr}
+ } finally {$p.Dispose()}
+}
+
+function Assert-S3NoSecret {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$Path)
+ $pythonPath=Join-Path $Context.Root 'python\python.exe'
+ if(-not (Test-Path $pythonPath)){
+  $pythonCommand=Get-Command python -ErrorAction SilentlyContinue
+  $pythonPath=if($null -ne $pythonCommand){$pythonCommand.Source}else{$null}
+ }
+ $scanner=Join-Path $Context.Root 'python\secret_scan.py'
+ if($pythonPath -and (Test-Path $scanner)){Invoke-S3Process -Context $Context -FilePath $pythonPath -ArgumentList @($scanner,$Path) -TimeoutSeconds 120 | Out-Null;return}
+ $bad=Get-ChildItem -LiteralPath $Path -Recurse -File -ErrorAction SilentlyContinue | Where-Object{$_.Name -match '^\.env|service.?account|private.?key'}
+ if($bad){throw 'كشف ملفات أسرار ممنوعة.'}
+}
+
+function Test-S3OwnedResource {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][string]$Marker)
+ return ($Name -like "*$($Context.RunId)*" -and $Marker -eq $Context.RunId)
+}
+
+function Test-S3HasOwnedCloudResource {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context)
+ $resources=Get-S3MapValue -Map $Context.State -Name 'resources'
+ foreach($name in @('firebase','cloudflare')){
+  $resource=Get-S3MapValue -Map $resources -Name $name
+  if($null -ne $resource -and [string](Get-S3MapValue -Map $resource -Name 'marker') -eq [string]$Context.RunId){return $true}
+ }
+ return $false
+}
+
+function Write-S3FailureEvidence {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$Reason)
+ $safe=Protect-S3Text $Reason
+ $stateSaved=$false
+ try {
+  Set-S3MapValue -Map $Context.State -Name 'failure' -Value $safe
+  Write-S3State -Root $Context.Root -State $Context.State
+  $stateSaved=$true
+ } catch {
+  $reports=Join-Path $Context.Root 'reports'
+  New-Item -ItemType Directory -Path $reports -Force|Out-Null
+  [ordered]@{
+   runId=[string]$Context.RunId
+   currentState=[string](Get-S3MapValue -Map $Context.State -Name 'currentState')
+   reason=$safe
+   stateSaveError=Protect-S3Text $_.Exception.Message
+  }|ConvertTo-Json -Depth 8|Set-Content (Join-Path $reports 'failure-fallback.json') -Encoding UTF8
+ }
+ try{Write-S3Log -Context $Context -Level ERROR -Message $safe}catch{Write-Verbose ("تعذر كتابة سجل الخطأ: " + $_.Exception.Message)}
+ return [ordered]@{reason=$safe;stateSaved=$stateSaved}
+}
+
+function Clear-S3RuntimeSecret {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context)
+ foreach($key in @($Context.RuntimeSecrets.Keys)){
+  $value=$Context.RuntimeSecrets[$key]
+  if($value -is [byte[]]){[Array]::Clear($value,0,$value.Length)}
+  elseif($value -is [char[]]){[Array]::Clear($value,0,$value.Length)}
+  $Context.RuntimeSecrets[$key]=$null
+ }
+ $Context.RuntimeSecrets.Clear();[GC]::Collect();[GC]::WaitForPendingFinalizers()
+}
+
+Export-ModuleMember -Function *-S3*
