@@ -1,8 +1,7 @@
 name: S3 Phase 3 Patch Applicator
 on:
-  push:
-    branches:
-      - phase/s3-b3-b4-b8-security-cleanup
+  pull_request:
+    branches: [main]
 permissions:
   contents: write
 jobs:
