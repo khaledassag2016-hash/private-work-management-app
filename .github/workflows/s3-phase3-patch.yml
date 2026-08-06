@@ -16,18 +16,32 @@ jobs:
         with:
           ref: phase/s3-b3-b4-b8-security-cleanup
           fetch-depth: 0
-      - name: Make applicator idempotent
+      - name: Harden and make applicator idempotent
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           path=Path('tools/s3_cpu_gate/build/s3_phase3_apply.py')
           text=path.read_text(encoding='utf-8')
-          old="r'function Remove-S3CloudflareResource \\{.*?Export-ModuleMember -Function \\*-S3\\*\\s*$'"
-          new="r'function (?:Test-S3CloudflareCleanupOwnership|Remove-S3CloudflareResource) \\{.*?Export-ModuleMember -Function \\*-S3\\*\\s*$'"
-          if old not in text:
-              raise SystemExit('expected replacement pattern not found')
-          path.write_text(text.replace(old,new),encoding='utf-8')
+          replacements={
+            "r'function Remove-S3CloudflareResource \\{.*?Export-ModuleMember -Function \\*-S3\\*\\s*$'":
+              "r'function (?:Test-S3CloudflareCleanupOwnership|Remove-S3CloudflareResource) \\{.*?Export-ModuleMember -Function \\*-S3\\*\\s*$'",
+            "$workerDelete = [ordered]@{status='NOT_ATTEMPTED'}":
+              "$workerDelete = [ordered]@{status='NOT_ATTEMPTED';exitCode=$null}",
+            "$d1Delete = [ordered]@{status='NOT_ATTEMPTED'}":
+              "$d1Delete = [ordered]@{status='NOT_ATTEMPTED';exitCode=$null}",
+            "$workerDelete = [ordered]@{status='FAILED';reason=Protect-S3Text $_.Exception.Message}":
+              "$workerDelete = [ordered]@{status='FAILED';exitCode=$null;reason=Protect-S3Text $_.Exception.Message}",
+            "$d1Delete = [ordered]@{status='FAILED';reason=Protect-S3Text $_.Exception.Message}":
+              "$d1Delete = [ordered]@{status='FAILED';exitCode=$null;reason=Protect-S3Text $_.Exception.Message}",
+            "$status = if ($workerOk -and $d1Ok -and $proof.status -eq 'PASS') {'DELETED'} elseif ($workerOk -xor $d1Ok) {'PARTIAL'} elseif ($proof.status -eq 'UNKNOWN') {'UNKNOWN'} else {'FAILED'}":
+              "$status = if ($workerDelete.status -ne 'REQUESTED' -or $d1Delete.status -ne 'REQUESTED') {'FAILED'} elseif ($workerOk -and $d1Ok -and $proof.status -eq 'PASS') {'DELETED'} elseif ($proof.status -eq 'UNKNOWN') {'UNKNOWN'} elseif ($proof.workerAbsent -xor $proof.d1Absent) {'PARTIAL'} else {'FAILED'}"
+          }
+          for old,new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'expected applicator fragment not found: {old[:80]}')
+              text=text.replace(old,new)
+          path.write_text(text,encoding='utf-8')
           PY
       - name: Apply scoped patch
         run: python tools/s3_cpu_gate/build/s3_phase3_apply.py
