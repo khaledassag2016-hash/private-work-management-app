@@ -6,6 +6,12 @@ on:
       - 'tools/s3_cpu_gate/**'
       - 'docs/s3/CPU_GATE_PLAN.md'
       - '.github/workflows/s3-cpu-gate-static.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/s3_cpu_gate/**'
+      - 'docs/s3/CPU_GATE_PLAN.md'
+      - '.github/workflows/s3-cpu-gate-static.yml'
 permissions:
   contents: read
 jobs:
@@ -13,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout synthetic PR merge revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Read authoritative tool versions
         id: versions
         shell: bash
@@ -27,10 +33,10 @@ jobs:
           with open(out,'a',encoding='utf-8') as f:
             for k,v in values.items(): f.write(f'{k}={v}\n')
           PY
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '${{ steps.versions.outputs.python }}'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '${{ steps.versions.outputs.node }}'
       - name: Install exact npm
