@@ -1,5 +1,7 @@
 name: S3 Phase 3 Patch Applicator
 on:
+  pull_request:
+    branches: [main]
   push:
     branches:
       - phase/s3-b3-b4-b8-security-cleanup
@@ -9,9 +11,10 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
+      - name: Checkout implementation branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: phase/s3-b3-b4-b8-security-cleanup
           fetch-depth: 0
       - name: Apply scoped patch
         run: python tools/s3_cpu_gate/build/s3_phase3_apply.py
