@@ -44,7 +44,8 @@ jobs:
           root = Path.cwd().resolve()
           parts = sorted((root / ".tmp").glob("s3-admin-xz.part*"))
           if not parts:
-              raise SystemExit("No materialization chunks were found")
+              print("No materialization chunks remain; nothing to do")
+              raise SystemExit(0)
 
           encoded = "".join(p.read_text(encoding="ascii") for p in parts)
           archive = base64.b64decode(encoded, validate=True)
@@ -93,13 +94,13 @@ jobs:
 
           manifest_path.unlink()
           shutil.rmtree(root / ".tmp", ignore_errors=True)
-          (root / ".github/workflows/s3-admin-materialize.yml").unlink(missing_ok=True)
+          (root / ".github/workflows/s3-cpu-gate-static.yml").unlink(missing_ok=True)
           (root / "__temp_should_not_exist__").unlink(missing_ok=True)
 
           if (root / ".tmp").exists():
               raise SystemExit("Temporary staging directory remains")
-          if (root / ".github/workflows/s3-admin-materialize.yml").exists():
-              raise SystemExit("Temporary materializer workflow remains")
+          if (root / ".github/workflows/s3-cpu-gate-static.yml").exists():
+              raise SystemExit("Static workflow must be added separately with workflow permission")
           if (root / "__temp_should_not_exist__").exists():
               raise SystemExit("Temporary probe file remains")
 
