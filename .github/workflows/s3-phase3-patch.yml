@@ -35,11 +35,15 @@ jobs:
             "$d1Delete = [ordered]@{status='FAILED';reason=Protect-S3Text $_.Exception.Message}":
               "$d1Delete = [ordered]@{status='FAILED';exitCode=$null;reason=Protect-S3Text $_.Exception.Message}",
             "$status = if ($workerOk -and $d1Ok -and $proof.status -eq 'PASS') {'DELETED'} elseif ($workerOk -xor $d1Ok) {'PARTIAL'} elseif ($proof.status -eq 'UNKNOWN') {'UNKNOWN'} else {'FAILED'}":
-              "$status = if ($workerDelete.status -ne 'REQUESTED' -or $d1Delete.status -ne 'REQUESTED') {'FAILED'} elseif ($workerOk -and $d1Ok -and $proof.status -eq 'PASS') {'DELETED'} elseif ($proof.status -eq 'UNKNOWN') {'UNKNOWN'} elseif ($proof.workerAbsent -xor $proof.d1Absent) {'PARTIAL'} else {'FAILED'}"
+              "$status = if ($workerDelete.status -ne 'REQUESTED' -or $d1Delete.status -ne 'REQUESTED') {'FAILED'} elseif ($workerOk -and $d1Ok -and $proof.status -eq 'PASS') {'DELETED'} elseif ($proof.status -eq 'UNKNOWN') {'UNKNOWN'} elseif ($proof.workerAbsent -xor $proof.d1Absent) {'PARTIAL'} else {'FAILED'}",
+            "if ($marker -ne [string]$Context.RunId -or $worker -notmatch '^s3cpu-' -or $d1Name -notmatch '^s3cpu-' -or [string]::IsNullOrWhiteSpace($d1Id) -or [string]::IsNullOrWhiteSpace($accountId)) {":
+              "if (-not (Test-S3OwnedResource -Context $Context -Name $worker -Marker $marker) -or -not (Test-S3OwnedResource -Context $Context -Name $d1Name -Marker $marker) -or $worker -notmatch '^s3cpu-' -or $d1Name -notmatch '^s3cpu-' -or [string]::IsNullOrWhiteSpace($d1Id) -or [string]::IsNullOrWhiteSpace($accountId)) {",
+            "$context.State.resources.cloudflare = [ordered]@{accountId=$accountId;worker='s3cpu-owned-worker';d1Name='s3cpu-owned-d1';d1Id='11111111-2222-3333-4444-555555555555';marker=$context.RunId}":
+              "$context.State.resources.cloudflare = [ordered]@{accountId=$accountId;worker=\"$($context.RunId)-worker\";d1Name=\"$($context.RunId)-d1\";d1Id='11111111-2222-3333-4444-555555555555';marker=$context.RunId}"
           }
           for old,new in replacements.items():
               if old not in text:
-                  raise SystemExit(f'expected applicator fragment not found: {old[:80]}')
+                  raise SystemExit(f'expected applicator fragment not found: {old[:100]}')
               text=text.replace(old,new)
           path.write_text(text,encoding='utf-8')
           PY
