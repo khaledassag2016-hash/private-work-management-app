@@ -1,0 +1,21 @@
+name: S3 Phase 3 Patch Preview
+on:
+  push:
+    branches:
+      - phase/s3-b3-b4-b8-security-cleanup
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Apply scoped patch in worktree
+        run: python tools/s3_cpu_gate/build/s3_phase3_apply.py
+      - name: Validate patch shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git status --short
