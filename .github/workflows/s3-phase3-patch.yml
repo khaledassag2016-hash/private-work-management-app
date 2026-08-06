@@ -1,21 +1,27 @@
-name: S3 Phase 3 Patch Preview
+name: S3 Phase 3 Patch Applicator
 on:
   push:
     branches:
       - phase/s3-b3-b4-b8-security-cleanup
 permissions:
-  contents: read
+  contents: write
 jobs:
-  preview:
+  apply:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Apply scoped patch in worktree
+        with:
+          fetch-depth: 0
+      - name: Apply scoped patch
         run: python tools/s3_cpu_gate/build/s3_phase3_apply.py
-      - name: Validate patch shape
+      - name: Commit scoped implementation
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check
-          git status --short
+          git add PROJECT_STATE.md docs/evidence/S3-PHASE-3-B3-B4-B8-IMPLEMENTATION-REPORT.md tools/s3_cpu_gate/src/modules/Firebase.psm1 tools/s3_cpu_gate/src/modules/Cloudflare.psm1 tools/s3_cpu_gate/src/modules/Cleanup.psm1 tools/s3_cpu_gate/src/S3-CpuGate-Orchestrator.ps1 tools/s3_cpu_gate/tests/pester/SecurityCleanup.Tests.ps1 tools/s3_cpu_gate/docs/USER-GUIDE-AR.md tools/s3_cpu_gate/docs/SECURITY-REVIEW.md
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'S3: implement B3/B4/B8 fail-closed security and cleanup'
+          git push origin HEAD:phase/s3-b3-b4-b8-security-cleanup
