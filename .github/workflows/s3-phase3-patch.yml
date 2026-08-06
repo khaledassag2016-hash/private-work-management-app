@@ -1,15 +1,10 @@
 name: S3 Phase 3 Patch Applicator
 on:
-  pull_request:
-    branches: [main]
   push:
     branches:
       - phase/s3-b3-b4-b8-security-cleanup
 permissions:
   contents: write
-concurrency:
-  group: s3-phase3-patch-${{ github.repository }}
-  cancel-in-progress: true
 jobs:
   apply:
     runs-on: ubuntu-latest
@@ -52,6 +47,8 @@ jobs:
               if old not in text:
                   raise SystemExit(f'expected applicator fragment not found: {old[:100]}')
               text=text.replace(old,new)
+          text=text.replace('Assert-S3FirebaseUsers','Assert-S3FirebaseUserSet')
+          text=text.replace('Assert-S3PreexistingGoogleCliSessions','Assert-S3PreexistingGoogleCliSession')
           path.write_text(text,encoding='utf-8')
           PY
       - name: Apply scoped patch
