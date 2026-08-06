@@ -1,0 +1,41 @@
+name: S3 Clean Final Branch Builder
+
+on:
+  push:
+    branches:
+      - phase/s3-b2-b5-administrative-record-20260806
+    paths:
+      - ".github/workflows/s3-clean-final-branch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-clean-branch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout builder branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Create one-commit final branch from latest main
+        shell: bash
+        run: |
+          set -euo pipefail
+          FINAL_BRANCH="phase/s3-b2-b5-administrative-record-final"
+          SOURCE_COMMIT="7e0b6672adc683dbe166e40db97272fb408d01a4"
+          git fetch origin main
+          if git ls-remote --exit-code --heads origin "$FINAL_BRANCH" >/dev/null 2>&1; then
+            echo "Final branch already exists; refusing to overwrite it."
+            exit 1
+          fi
+          git switch --create "$FINAL_BRANCH" origin/main
+          git diff --binary origin/main "$SOURCE_COMMIT" | git apply --index
+          test "$(git diff --cached --name-only | wc -l)" -eq 64
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "S3: record approved B2/B5 tooling and verification"
+          test "$(git rev-list --count origin/main..HEAD)" -eq 1
+          git push origin "HEAD:$FINAL_BRANCH"
