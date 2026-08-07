@@ -52,6 +52,7 @@
     "tests/pester/LiveReadinessRegression.Tests.ps1",
     "tests/pester/OperationalRegression.Tests.ps1",
     "tests/pester/PackagePolicy.Tests.ps1",
+    "tests/pester/RuntimeCliCompatibilityRegression.Tests.ps1",
     "tests/pester/SecurityCleanup.Tests.ps1",
     "tests/pester/StateMachine.Tests.ps1",
     "tests/pester/TestHelper.ps1",
