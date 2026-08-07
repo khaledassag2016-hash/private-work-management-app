@@ -70,7 +70,7 @@
     },
     "gcloud": {
       "version": "577.0.0",
-      "url": "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-windows-x86_64.zip",
+      "url": "https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-577.0.0-windows-x86_64.zip",
       "sha256": "21e68c5e1a88ee4abb484719500c925f814695d8300a7a88db53c70df2d2f142"
     },
     "githubCli": {
