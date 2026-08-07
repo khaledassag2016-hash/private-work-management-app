@@ -104,10 +104,18 @@ function Get-S3OptionalRepeatedArrayProperty {
 function Get-S3RequiredNonNegativeInteger {
     param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string]$Name)
     $value = Get-S3RequiredPropertyValue -InputObject $InputObject -Name $Name
+    if ($value -is [string]) {
+        if ($value -notmatch '^[0-9]+$') { throw "FIREBASE_INTEGER_EXPECTED:$Name" }
+        [int64]$parsed = 0
+        $parsedOk = [int64]::TryParse($value,[Globalization.NumberStyles]::None,[Globalization.CultureInfo]::InvariantCulture,[ref]$parsed)
+        if (-not $parsedOk) { throw "FIREBASE_INTEGER_OUT_OF_RANGE:$Name" }
+        return $parsed
+    }
     $typeCode = [Type]::GetTypeCode($value.GetType())
     if ($typeCode -notin @([TypeCode]::Byte,[TypeCode]::SByte,[TypeCode]::Int16,[TypeCode]::UInt16,[TypeCode]::Int32,[TypeCode]::UInt32,[TypeCode]::Int64,[TypeCode]::UInt64)) {
         throw "FIREBASE_INTEGER_EXPECTED:$Name"
     }
+    if ([decimal]$value -gt [decimal][int64]::MaxValue) { throw "FIREBASE_INTEGER_OUT_OF_RANGE:$Name" }
     $integer = [int64]$value
     if ($integer -lt 0) { throw "FIREBASE_INTEGER_OUT_OF_RANGE:$Name" }
     return $integer
@@ -198,13 +206,21 @@ function Assert-S3FirebaseConfiguration {
 function Get-S3FirebaseUser {
     param([string]$ProjectId,[string]$Token)
     $response = Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:query" -Token $Token -Body @{returnUserInfo=$true;limit=100}
-    $recordsCount = Get-S3RequiredNonNegativeInteger -InputObject $response -Name 'recordsCount'
     $hasUserInfo = Test-S3PropertyPresent -InputObject $response -Name 'userInfo'
+    $users = @()
+    if ($hasUserInfo) {
+        $users = @(Get-S3RequiredArrayProperty -InputObject $response -Name 'userInfo')
+    }
+    $hasRecordsCount = Test-S3PropertyPresent -InputObject $response -Name 'recordsCount'
+    if (-not $hasRecordsCount) {
+        if ($users.Count -eq 0) { return @() }
+        throw 'FIREBASE_RECORDSCOUNT_MISSING'
+    }
+    $recordsCount = Get-S3RequiredNonNegativeInteger -InputObject $response -Name 'recordsCount'
     if (-not $hasUserInfo) {
         if ($recordsCount -eq 0) { return @() }
         throw 'FIREBASE_USERINFO_MISSING'
     }
-    $users = @(Get-S3RequiredArrayProperty -InputObject $response -Name 'userInfo')
     if ($users.Count -ne $recordsCount) { throw 'FIREBASE_USERINFO_COUNT_MISMATCH' }
     return $users
 }
