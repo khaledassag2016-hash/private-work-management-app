@@ -102,7 +102,7 @@ function Get-S3FederatedProviderSnapshot {
     $base = "https://identitytoolkit.googleapis.com/admin/v2/projects/$ProjectId"
     $collections = [ordered]@{}
     foreach ($collection in @('defaultSupportedIdpConfigs','oauthIdpConfigs','inboundSamlConfigs')) {
-        $response = Invoke-S3GoogleRest -Method GET -Uri "$base/$collection?pageSize=100" -Token $Token
+        $response = Invoke-S3GoogleRest -Method GET -Uri "$base/${collection}?pageSize=100" -Token $Token
         $items = @(Get-S3RequiredArrayProperty -InputObject $response -Name $collection)
         $nextPageToken = [string](Get-S3MapValue -Map $response -Name 'nextPageToken')
         if (-not [string]::IsNullOrWhiteSpace($nextPageToken)) { throw "FIREBASE_PROVIDER_PAGINATION_INCOMPLETE:$collection" }
@@ -254,7 +254,7 @@ function Invoke-S3FirebaseProvision {
         $configUri = "https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config"
         $body = @{name="projects/$projectId/config";signIn=@{email=@{enabled=$true;passwordRequired=$true};phoneNumber=@{enabled=$false};anonymous=@{enabled=$false};allowDuplicateEmails=$false};client=@{permissions=@{disabledUserSignup=$true;disabledUserDeletion=$true}}}
         $mask = 'signIn.email.enabled,signIn.email.passwordRequired,signIn.phoneNumber.enabled,signIn.anonymous.enabled,signIn.allowDuplicateEmails,client.permissions.disabledUserSignup,client.permissions.disabledUserDeletion'
-        Invoke-S3GoogleRest -Method PATCH -Uri "$configUri?updateMask=$mask" -Token $accessToken -Body $body | Out-Null
+        Invoke-S3GoogleRest -Method PATCH -Uri "${configUri}?updateMask=$mask" -Token $accessToken -Body $body | Out-Null
         $providerProof = Disable-S3FederatedProvider -ProjectId $projectId -Token $accessToken
         $configuration = Invoke-S3GoogleRest -Method GET -Uri $configUri -Token $accessToken
         $configProof = Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof $providerProof
