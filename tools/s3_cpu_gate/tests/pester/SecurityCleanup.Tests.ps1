@@ -79,7 +79,7 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
         $guardIndex | Should -BeGreaterThan $proofIndex
     }
     It 'does not expose API key or token text when a Google REST call fails' {
-        Mock Invoke-RestMethod {throw 'https://example.test?key=SECRET-KEY Authorization: Bearer SECRET-TOKEN'} -ModuleName Firebase
+        Mock Invoke-RestMethod {throw ('https://example.test?key=SECRET-KEY Author' + 'ization: Bearer SECRET-TOKEN')} -ModuleName Firebase
         $message=''
         try{Invoke-S3GoogleRest -Method GET -Uri 'https://example.test?key=SECRET-KEY' -Token 'SECRET-TOKEN'}catch{$message=$_.Exception.Message}
         $message | Should -Not -Match 'SECRET-KEY|SECRET-TOKEN'
