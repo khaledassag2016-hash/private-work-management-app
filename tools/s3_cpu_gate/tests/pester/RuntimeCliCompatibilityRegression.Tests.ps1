@@ -12,7 +12,7 @@ Describe 'Runtime CLI compatibility regressions' {
  }
 
  It 'uses a fail-closed DIRECT proxy fallback when the default proxy is absent' {
-  $prerequisitesSource | Should -Match "\$proxy='DIRECT'"
+  $prerequisitesSource | Should -Match '\$proxy=''DIRECT'''
   $prerequisitesSource | Should -Match '\$null -ne \$defaultProxy'
   $prerequisitesSource | Should -Match '\$null -ne \$proxyUri'
   $prerequisitesSource | Should -Not -Match 'DefaultWebProxy\.GetProxy\([^\r\n]+\)\.AbsoluteUri'
