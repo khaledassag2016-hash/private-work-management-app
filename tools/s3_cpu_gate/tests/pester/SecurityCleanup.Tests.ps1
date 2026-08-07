@@ -5,7 +5,7 @@ function global:New-S3ProviderResponseForTest {
     return [pscustomobject]@{$Collection=@([pscustomobject]@{name=$Name;enabled=$Enabled})}
 }
 
-function New-S3LiveCleanupContextForTest {
+function global:New-S3LiveCleanupContextForTest {
     $context = Get-TestContext 'Live'
     $accountId = '1234567890abcdef1234567890abcdef'
     $context.State.resources.cloudflare = [ordered]@{accountId=$accountId;worker="$($context.RunId)-worker";d1Name="$($context.RunId)-d1";d1Id='11111111-2222-3333-4444-555555555555';marker=$context.RunId}
@@ -194,7 +194,7 @@ Describe 'B8 owned login and temporary credential cleanup' -Tag 'B8' {
         New-Item -ItemType Directory -Path (Join-Path $TestDrive 'temp\firebase-config') -Force|Out-Null
         Set-Content (Join-Path $TestDrive 'temp\firebase-config\session.json') 'synthetic'
         Invoke-S3Cleanup $c | Out-Null
-        (Get-ChildItem (Join-Path $TestDrive 'temp') -Force).Count | Should -Be 0
+        @(Get-ChildItem (Join-Path $TestDrive 'temp') -Force).Count | Should -Be 0
     }
     It 'does not put token or password canaries in state logs or reports' {
         $c=Get-TestContext
