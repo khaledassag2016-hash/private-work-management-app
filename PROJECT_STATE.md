@@ -15,7 +15,7 @@
 - ADR: `docs/architecture/ADR-001-FREE-ARCHITECTURE.md` بحالة `Accepted`
 - القرار: D-006 مسجل بتاريخ 2026-08-03
 - المرحلة التالية: **S3 — الهوية وقاعدة البيانات وسجل التدقيق، Issue #2**
-- حالة S3: **لم تبدأ. لا يوجد كود هوية أو قاعدة بيانات إنتاج أو سجل تدقيق تشغيلي، ولم تُنشأ خدمة سحابية.**
+- حالة S3: **تم تنفيذ التصحيح الإشرافي الأخير لـB3 recordsCount ProtoJSON على PR #23 ونجحت فحوص التنفيذ المعدل؛ بانتظار نجاح Foundation/S2/S3 على الرأس النهائي الشامل لتحديثات Evidence/PROJECT_STATE. PR غير مدمجة وS3 الرئيسية غير مكتملة ولم يبدأ Live CPU Gate.**
 - بوابة S3 الإدارية B2/B5: **دُمج PR #21 باستخدام Squash عند commit `cdf0f960ec2a6caada03e896fb2d67136fa3f762`، وأُقفلت B2/B5 إداريًا.**
 - شرط التكلفة: صفر تكلفة إلزامية، بلا بطاقة بنكية أو Billing Account
 - البيانات الحقيقية في GitHub: ممنوعة
@@ -138,6 +138,49 @@
 - يتطلب بدء المرحلة الثالثة اعتمادًا إشرافيًا مستقلًا ونطاقًا منفصلًا.
 - لم يُشغل Cloud أو Login أو Billing أو Live CPU Gate.
 
+## المرحلة الداخلية الثالثة — B3/B4/B8
+
+- B2/B5 مقفلتان إداريًا ولم تعدلهما PR #23.
+- الفرع: `phase/s3-b3-b4-b8-security-cleanup`.
+- Pull Request: `#23`، مفتوحة وغير مدمجة وبحالة Draft حتى قرار الإشراف العام.
+- آخر رأس تنفيذ معدل تم التحقق منه قبل تحديثات التوثيق: `6bbfc3d495d090bc62af94e8aee3c3420374bb86`.
+- B3: Firebase provider/configuration/account proof يعمل fail-closed، مع دعم ProtoJSON الصحيح لغياب repeated fields المعروفة عندما تكون فارغة دون تخفيف تحقق الحقول scalar/boolean الإلزامية.
+- B3: غياب provider arrays المعروفة يعامل كقائمة فارغة فقط عند نجاح الاستجابة وعدم وجود pagination غير مكتملة؛ النوع الخاطئ أو `nextPageToken` غير الفارغ أو provider entry غير الصالح يبقى FAIL.
+- B3 `recordsCount`: تقبل السلاسل العشرية الصحيحة ضمن signed int64 مثل `"0"` و`"2"`، كما تقبل القيم الرقمية ذات النوع الصحيح integral ضمن المجال، ولا تقبل السالب أو الكسري أو النص غير الرقمي أو القيمة خارج int64.
+- B3 `recordsCount`: إذا غاب `recordsCount` وغاب `userInfo` أو كان مصفوفة فارغة، يعامل الرد كصفر مستخدمين وفق ProtoJSON default omission؛ وإذا غاب `recordsCount` و`userInfo` غير فارغ يفشل المسار fail-closed.
+- B3 `recordsCount`: عند وجوده يجب أن يطابق عدد عناصر `userInfo` تمامًا؛ وجود عدد موجب مع غياب `userInfo` أو وجود `userInfo` بنوع خاطئ يبقى FAIL.
+- B4: تنظيف Worker وD1 يعمل fail-closed ولا يعتبر الحذف ناجحًا قبل إثبات الغياب والملكية.
+- B8: عند Resume مع موارد Cloudflare مملوكة وRuntimeSecrets فارغة، يسمح فقط باستعادة credential مؤقت من جلسة Wrangler مسجلة مسبقًا `PREEXISTING` عبر `wrangler auth token --json`، مع تحقق صلاحية الجلسة وتطابق Account ID المسجل.
+- B8: لا ينفذ `wrangler login` ولا ينشئ جلسة جديدة، ويظل token في الذاكرة فقط ثم يمسح ضمن cleanup؛ فشل الاستعادة أو تطابق الحساب يمنع إعلان `DELETED`.
+- أزيلت ملفات Patch Applicator المؤقتة وليست ضمن diff الحالية.
+- عُدل Harness الخاص بعدد اختبارات Pester فقط لاستيعاب الاختبارات الجديدة إلى إجمالي `170`، دون تعديل `version-manifest.json`.
+
+### نتائج قبول التصحيح الإشرافي الأخير على SHA `6bbfc3d495d090bc62af94e8aee3c3420374bb86`
+
+- Foundation integrity run `#116`، Run ID `31187054664`: **SUCCESS**.
+- S2 architecture validation run `#111`، Run ID `31187054791`: **SUCCESS**.
+- S3 CPU Gate Static run `#45`، Run ID `31187054694`، job `92894142451`: **SUCCESS**.
+- PowerShell parser: **PASS**.
+- PSScriptAnalyzer: **PASS** بلا Warning/Error مانع.
+- Pester: **170/170 PASS**؛ Failed `0`، Skipped `0`، Inconclusive `0`، NotRun `0`.
+- Python regression: **73/73 PASS**.
+- Node syntax: **PASS**.
+- Secret scan: **PASS**.
+- Payload integrity and ZIP safety: **PASS**.
+- Foundation وS2 regression داخل S3 workflow: **PASS**، وS2 المحلي `23/23 PASS`.
+- اختبارات `recordsCount` الجديدة نجحت وتشمل string int64، numeric integer، default omission، mismatch، malformed، negative، fractional، وout-of-int64.
+- اختبارات B3/B4/B8 السابقة، بما فيها Resume cleanup، استمرت بالنجاح.
+
+### القيود والحالة الإدارية
+
+- جميع السيناريوهات السحابية الجديدة اختبارات mocked فقط؛ لم ينفذ Cloud فعلي.
+- لم ينفذ Cloud أو Login أو Billing أو Live CPU Gate ضمن التصحيح.
+- لم تعدل B2/B5 أو `tools/s3_cpu_gate/src/version-manifest.json`.
+- Issue #2 ما زالت مفتوحة.
+- المرحلة الداخلية الثالثة ليست مقفلة إداريًا قبل المراجعة الإشرافية والدمج والتحقق اللاحق من `main`.
+- تحديث Evidence وPROJECT_STATE يغيّر PR head بعد SHA التنفيذ المتحقق منه؛ لذلك يجب أن تنجح Foundation وS2 وS3 Actions على **الرأس النهائي نفسه** قبل إعادة التسليم.
+- S3 الرئيسية لم تكتمل، ولا يبدأ B1 أو Live CPU Gate ضمن هذه PR.
+
 ## الخطوة التالية
 
-لا تبدأ المرحلة الثالثة حتى يصدر اعتماد إشرافي مستقل وصريح ضمن Issue #2 وعلى فرع وPull Request منفصلين.
+انتظار نجاح Foundation integrity وS2 architecture validation وS3 CPU Gate Static على الرأس النهائي الشامل لتحديثات Evidence/PROJECT_STATE. بعد نجاحها فقط يعاد تسليم PR #23 إلى المراجعة الإشرافية المستقلة بالحالة `READY FOR INDEPENDENT SUPERVISORY REVIEW — NOT MERGED`. لا يبدأ B1 أو Live CPU Gate ولا يدمج PR قبل اعتماد صريح.

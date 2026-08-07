@@ -1,38 +1,42 @@
-# SECURITY-REVIEW
+# SECURITY-REVIEW — B3/B4/B8
 
-## النتيجة
+## الحالة
 
-**DESIGN AND SECRET-SCAN PASS — FINAL DELIVERY CERTIFICATION BLOCKED.**
+`READY FOR INDEPENDENT SUPERVISORY REVIEW — NOT MERGED`
 
-لم تُستخدم حسابات حقيقية، ولم تُنشأ موارد، ولم يُعدّل المستودع. نجح فحص الأسرار على شجرة المصدر. لا يعني ذلك اعتماد الحزمة النهائية؛ ما زالت اختبارات PowerShell والتحليل الساكن الإلزاميان غير منفذين.
+لم ينفذ Cloud أو Login أو Billing أو Live CPU Gate ضمن هذه المرحلة. التنفيذ والاختبارات يستخدمان mocks وSimulation فقط.
 
-## الضوابط الموجودة في التصميم
+## B3 — Firebase fail-closed
 
-- Plan هو الوضع الافتراضي.
-- لا أمر merge أو issue close أو force-push.
-- لا أوامر Billing activation أو paid plans.
-- لا `.env` أو service-account JSON أو private keys أو access/ID/refresh tokens في الملفات.
-- OAuth tokens مصممة للبقاء في الذاكرة والمرور في headers، لا command line.
-- كلمات المرور مصممة للتوليد العشوائي وعدم العرض أو التسجيل.
-- redaction مركزي وفحص أسرار قبل commit وZIP.
-- logs منقحة، والواجهة العربية لا تعرض stack traces خامًا.
-- cleanup داخل `finally` مع ownership check.
-- Worker يفشل مغلقًا؛ لا guest أو fallback أو direct D1.
-- test-only controls يعاد تعطيلها قبل إنهاء البروتوكول.
+- فشل قراءة أي مجموعة من مجموعات مزودي الهوية يوقف التنفيذ.
+- كل PATCH يعاد التحقق منه بقراءة مستقلة للمجموعات الثلاث.
+- لا تسجل `emailPasswordOnly=true` أو `otherProviders=false` قبل اكتمال الإثبات.
+- القيم المفقودة أو null أو غير المنطقية في الإعدادات الإلزامية تفشل.
+- يتحقق المسار من Email/Password وpassword required وتعطيل Phone وAnonymous وduplicate emails وself-sign-up وحذف المستخدم.
+- يثبت أن المشروع فارغ قبل إنشاء المستخدمين، ثم يحتوي حسابين اصطناعيين فقط دون هاتف أو provider links.
 
-## نتائج التحقق المنفذة
+## B4 — Cloudflare cleanup fail-closed
 
-- Python secret scan: **PASS**.
-- منع الملفات الحساسة المعروفة: **PASS**.
-- Worker JavaScript syntax: **PASS**.
-- PowerShell heuristic scan: **PASS**، لكنه ليس بديلًا عن parser أو PSScriptAnalyzer.
-- Pester: **NOT EXECUTED**.
-- PSScriptAnalyzer: **NOT EXECUTED**.
+- يحلل كل Exit Code لحذف Worker وD1 على حدة.
+- يعاد الاستعلام عبر API القراءة الرسمية لإثبات غياب الاسم والمعرف.
+- التحقق محدود بثلاث محاولات قصيرة؛ انتهاء المحاولات أو فشل JSON/API لا ينتج `DELETED`.
+- الحذف الجزئي ينتج `PARTIAL` أو `FAIL` ولا يسمح بالانتقال إلى `80_RESOURCES_DESTROYED`.
+- التقارير تستخدم Account ID منقحًا ولا تتضمن token أو مخرجات CLI الحساسة.
 
-## نقاط المراجعة المستقلة لاحقًا
+## B8 — الجلسات والأسرار المؤقتة
 
-- صلاحيات OAuth الفعلية للحسابات.
-- استجابة Cloudflare Billing Profile المعلّمة Deprecated.
-- اكتمال CPU telemetry وعدم sampling.
-- إثبات حذف الموارد.
-- عدم ظهور أسرار في التقرير النهائي.
+- تسجل حالة Firebase CLI وgcloud وWrangler قبل أي تسجيل دخول.
+- لا توجد أوامر login تلقائية.
+- الجلسات السابقة لا تلمس.
+- الجلسات المملوكة للتشغيل فقط تنظف، وفشل logout أو revoke يجعل cleanup FAIL.
+- إعداد gcloud المؤقت، عند استخدامه، يجب أن يكون داخل `temp` ومعزولًا عبر `CLOUDSDK_CONFIG`.
+- RuntimeSecrets والبيئة المملوكة وملفات SQL والإعدادات المؤقتة تنظف قبل نجاح التقرير.
+
+## المصادر الرسمية لـB8
+
+تاريخ الاطلاع: 2026-08-06.
+
+- Firebase CLI reference: https://firebase.google.com/docs/cli
+- gcloud configurations and `CLOUDSDK_CONFIG`: https://cloud.google.com/sdk/gcloud/reference/topic/configurations
+- gcloud auth revoke: https://cloud.google.com/sdk/gcloud/reference/auth/revoke
+- Wrangler authentication, `auth token`, login and logout: https://developers.cloudflare.com/workers/wrangler/commands/general/

@@ -8,7 +8,9 @@ Enable-S3LocalToolPath -Root $PSScriptRoot
 if($Mode -eq 'Interactive'){$Mode=Select-S3Mode}
 $context=$null;$cleanupResult=$null;$cpu=[ordered]@{status='NOT_EXECUTED';reasons=@('NOT_REACHED')};$hadFailure=$false
 try{
- $context=New-S3Context -Mode $Mode -Resume:$Resume;Write-S3Log -Context $context -Message "بدء التشغيل $($context.RunId) بوضع $Mode"
+ $context=New-S3Context -Mode $Mode -Resume:$Resume
+ Write-S3Log -Context $context -Message "بدء التشغيل $($context.RunId) بوضع $Mode"
+ if($null -eq (Get-S3MapValue -Map $context.State.results -Name 'cliSessions')){[void](Initialize-S3CliSessionInventory -Context $context)}
  if($Mode -eq 'Live' -and $context.IsResumed -and (Test-S3HasOwnedCloudResource -Context $context)){
   throw 'استؤنف تشغيل Live بعد انقطاع مع موارد موجودة لكن الأسرار كانت في الذاكرة فقط. ستنفذ الحزمة التنظيف الآمن؛ أعد التشغيل بعده للحصول على Run ID جديد.'
  }
@@ -38,8 +40,8 @@ try{
  Write-Information -InformationAction Continue ('توقف آمن: '+$failureReason)
 }finally{
  try{
-  if($null -ne $context -and $Mode -ne 'Plan' -and (Test-S3HasOwnedCloudResource -Context $context)){
-   Show-S3Stage 8 9 'التنظيف الإلزامي' 'سيُحذف فقط ما أنشأته الحزمة ويحمل Run ID.'
+  if($null -ne $context -and $Mode -ne 'Plan'){
+   Show-S3Stage 8 9 'التنظيف الإلزامي' 'سيُحذف فقط ما أنشأته الحزمة ويحمل Run ID، وستُحفظ جلسات المستخدم السابقة.'
    $cleanupResult=Invoke-S3Cleanup -Context $context
    if($context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $cleanupResult.status -eq 'PASS'){Set-S3Checkpoint $context '80_RESOURCES_DESTROYED'}
    elseif($cleanupResult.status -ne 'PASS'){$hadFailure=$true}
@@ -59,7 +61,14 @@ try{
   if($null -ne $context){[void](Write-S3FailureEvidence -Context $context -Reason $finalizationReason)}
   Write-Information -InformationAction Continue ('توقف آمن أثناء التنظيف أو التقرير: '+$finalizationReason)
  }finally{
-  if($null -ne $context){try{Clear-S3RuntimeSecret -Context $context}catch{Write-Verbose ("تعذر المسح النهائي لأسرار الذاكرة: " + $_.Exception.Message)}}
+  if($null -ne $context -and $context.RuntimeSecrets.Count -ne 0){
+   try{Clear-S3RuntimeSecret -Context $context}
+   catch{
+    $hadFailure=$true
+    $clearReason=Protect-S3Text $_.Exception.Message
+    [void](Write-S3FailureEvidence -Context $context -Reason $clearReason)
+   }
+  }
  }
 }
 if($hadFailure){exit 1}
