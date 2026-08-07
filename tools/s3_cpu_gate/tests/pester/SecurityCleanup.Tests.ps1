@@ -96,9 +96,9 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
         Mock Invoke-S3GoogleRest {[pscustomobject]@{recordsCount=1;userInfo='not-an-array'}} -ModuleName Firebase
         {Get-S3FirebaseUser -ProjectId p -Token token} | Should -Throw '*ARRAY_EXPECTED*'
     }
-    It 'fails an accounts query response without required recordsCount' {
+    It 'accepts an accounts query response with omitted recordsCount and empty userInfo' {
         Mock Invoke-S3GoogleRest {[pscustomobject]@{userInfo=@()}} -ModuleName Firebase
-        {Get-S3FirebaseUser -ProjectId p -Token token} | Should -Throw '*REQUIRED_VALUE_MISSING:recordsCount*'
+        @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 0
     }
     It 'rejects an incomplete final Firebase configuration' {
         {Assert-S3FirebaseConfiguration -Configuration ([pscustomobject]@{}) -ProviderProof ([ordered]@{verified=$true;enabledCount=0})} | Should -Throw
