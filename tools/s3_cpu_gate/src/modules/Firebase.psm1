@@ -90,7 +90,13 @@ function Get-S3OptionalRepeatedArrayProperty {
     param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string]$Name)
     if ($null -eq $InputObject) { throw "FIREBASE_RESPONSE_NULL:$Name" }
     if (-not (Test-S3PropertyPresent -InputObject $InputObject -Name $Name)) { return }
-    $value = if ($InputObject -is [Collections.IDictionary]) { $InputObject[$Name] } else { $InputObject.PSObject.Properties[$Name].Value }
+    $value = $null
+    if ($InputObject -is [Collections.IDictionary]) {
+        $value = $InputObject[$Name]
+    }
+    else {
+        $value = $InputObject.PSObject.Properties[$Name].Value
+    }
     if ($null -eq $value -or $value -is [string] -or $value -isnot [Collections.IEnumerable]) { throw "FIREBASE_ARRAY_EXPECTED:$Name" }
     foreach ($item in $value) { Write-Output $item }
 }
