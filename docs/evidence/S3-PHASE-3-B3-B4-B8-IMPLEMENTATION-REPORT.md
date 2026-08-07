@@ -2,11 +2,10 @@
 
 - Base SHA: `7a9e4d3610387b48ee390edfe790965b66cd1163`
 - Verified implementation SHA: `e0a5db6c6c912b5b1d21cddc02f1058d64cffd22`
+- Final verified PR Head SHA: `6c5ca1c9c6c3ed04e53c20c2639c9f93ee258fc5`
 - Branch: `phase/s3-b3-b4-b8-security-cleanup`
 - Pull Request: `#23`
 - Status: `READY FOR INDEPENDENT SUPERVISORY REVIEW — NOT MERGED`
-
-> This report records the verified implementation revision. The documentation/state commit that contains this report changes the PR head; that final PR head must also pass the same required GitHub Actions checks before supervisory handoff. Final-head run identifiers are recorded in the PR handoff/body rather than self-referencing this file.
 
 ## Scope
 
@@ -76,7 +75,7 @@ Reviewed again on `2026-08-07`; only official vendor documentation was used for 
 
 Verified implementation head: `e0a5db6c6c912b5b1d21cddc02f1058d64cffd22`.
 
-### GitHub Actions
+### GitHub Actions on implementation revision
 
 - Foundation integrity — run `#98`, Run ID `31181685667`: `SUCCESS`.
   - Job `verify` / Job ID `92876232357`: `SUCCESS`.
@@ -100,6 +99,20 @@ Verified implementation head: `e0a5db6c6c912b5b1d21cddc02f1058d64cffd22`.
 
 All B3/B4/B8 Pester cases passed, and the preexisting regression suite continued to pass.
 
+## Final PR-head verification
+
+Final verified PR Head SHA before this evidence self-update: `6c5ca1c9c6c3ed04e53c20c2639c9f93ee258fc5`.
+
+- Foundation integrity — run `#100`, Run ID `31182010383`: `SUCCESS`.
+  - Job `verify` / Job ID `92877311266`: `SUCCESS`.
+- S2 architecture validation — run `#95`, Run ID `31182010527`: `SUCCESS`.
+  - Job `verify` / Job ID `92877311932`: `SUCCESS`.
+- S3 CPU Gate Static — run `#29`, Run ID `31182010329`: `SUCCESS`.
+  - Job `synthetic-merge-regression` / Job ID `92877311070`: `SUCCESS`.
+  - All workflow steps succeeded, including parser/Pester/PSScriptAnalyzer, Python tests, Node syntax, secret scan, and payload integrity/ZIP safety.
+
+Because writing this evidence file itself produces a new documentation-only commit, the live PR head after this write must be treated as the authoritative review head and checked again before handoff. The PR body records the final live-head verification to avoid an impossible self-referential commit SHA cycle in this file.
+
 ## Execution exclusions
 
 - No Cloud resource was created, modified, or deleted during this phase verification.
@@ -111,4 +124,4 @@ All B3/B4/B8 Pester cases passed, and the preexisting regression suite continued
 - Issue #2 remains open.
 - PR #23 remains unmerged.
 
-This internal phase is technically verified on the implementation revision but is not administratively closed. Independent supervisory review, an unmerged final-head CI pass, and explicit supervisory approval remain required.
+This internal phase is technically verified but is not administratively closed. Independent supervisory review, final live-head CI verification, and explicit supervisory approval remain required.
