@@ -5,6 +5,7 @@
   "integrityAlgorithm": "sha256",
   "files": [
     "README.md",
+    "S3-CPU-Gate-Setup.ps1",
     "requirements-lock.txt",
     "build/Invoke-Phase1PowerShellValidation.ps1",
     "build/Invoke-Phase2FocusedPester.ps1",
@@ -48,6 +49,7 @@
     "tests/pester/CpuGate.Tests.ps1",
     "tests/pester/FirebaseProtoJsonRecordsCount.Tests.ps1",
     "tests/pester/Guards.Tests.ps1",
+    "tests/pester/LiveReadinessRegression.Tests.ps1",
     "tests/pester/OperationalRegression.Tests.ps1",
     "tests/pester/PackagePolicy.Tests.ps1",
     "tests/pester/SecurityCleanup.Tests.ps1",
