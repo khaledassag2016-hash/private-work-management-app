@@ -79,7 +79,9 @@ function Register-S3OwnedCliSession {
         [string]$SecretKey,
         [string]$ConfigPath
     )
-    $entries = @(Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedCliSessions')
+    $storedEntries = Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedCliSessions'
+    $entries = @()
+    if ($null -ne $storedEntries) { $entries = @($storedEntries) }
     $entry = [ordered]@{kind=$Kind;createdByTool=$true;cleaned=$false;secretKey=$SecretKey;configPath=$ConfigPath}
     Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedCliSessions' -Value @($entries + $entry)
     return $entry
@@ -87,8 +89,10 @@ function Register-S3OwnedCliSession {
 
 function Register-S3OwnedEnvironmentVariable {
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$Name)
-    $entries = @(Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedEnvironmentVariables')
-    if (@($entries | Where-Object {$_.name -eq $Name}).Count -gt 0) { return }
+    $storedEntries = Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedEnvironmentVariables'
+    $entries = @()
+    if ($null -ne $storedEntries) { $entries = @($storedEntries) }
+    if (@($entries | Where-Object {(Get-S3MapValue -Map $_ -Name 'name') -eq $Name}).Count -gt 0) { return }
     $original = [Environment]::GetEnvironmentVariable($Name,'Process')
     $entry = [ordered]@{name=$Name;originalWasSet=($null -ne $original);originalValue=$original}
     Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedEnvironmentVariables' -Value @($entries + $entry)
@@ -96,7 +100,9 @@ function Register-S3OwnedEnvironmentVariable {
 
 function Invoke-S3OwnedCliSessionCleanup {
     param([Parameter(Mandatory)]$Context)
-    $entries = @(Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedCliSessions')
+    $storedEntries = Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedCliSessions'
+    $entries = @()
+    if ($null -ne $storedEntries) { $entries = @($storedEntries) }
     if ($entries.Count -eq 0) { return [ordered]@{status='NOT_REQUIRED';cleaned=0;errors=@()} }
     $errors = [Collections.Generic.List[string]]::new()
     $cleaned = 0
@@ -142,7 +148,9 @@ function Invoke-S3OwnedCliSessionCleanup {
 
 function Clear-S3OwnedEnvironmentVariable {
     param([Parameter(Mandatory)]$Context)
-    $entries = @(Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedEnvironmentVariables')
+    $storedEntries = Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'ownedEnvironmentVariables'
+    $entries = @()
+    if ($null -ne $storedEntries) { $entries = @($storedEntries) }
     $errors = [Collections.Generic.List[string]]::new()
     foreach ($entry in $entries) {
         try {
