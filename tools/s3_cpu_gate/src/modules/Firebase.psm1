@@ -34,6 +34,13 @@ function Invoke-S3GoogleRest {
     }
 }
 
+function Test-S3PropertyPresent {
+    param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string]$Name)
+    if ($null -eq $InputObject) { return $false }
+    if ($InputObject -is [Collections.IDictionary]) { return $InputObject.Contains($Name) }
+    return ($null -ne $InputObject.PSObject.Properties[$Name])
+}
+
 function Get-S3RequiredPropertyValue {
     param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string]$Name)
     if ($null -eq $InputObject) { throw "FIREBASE_RESPONSE_NULL:$Name" }
@@ -79,6 +86,27 @@ function Get-S3RequiredArrayProperty {
     foreach ($item in $value) { Write-Output $item }
 }
 
+function Get-S3OptionalRepeatedArrayProperty {
+    param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string]$Name)
+    if ($null -eq $InputObject) { throw "FIREBASE_RESPONSE_NULL:$Name" }
+    if (-not (Test-S3PropertyPresent -InputObject $InputObject -Name $Name)) { return }
+    $value = if ($InputObject -is [Collections.IDictionary]) { $InputObject[$Name] } else { $InputObject.PSObject.Properties[$Name].Value }
+    if ($null -eq $value -or $value -is [string] -or $value -isnot [Collections.IEnumerable]) { throw "FIREBASE_ARRAY_EXPECTED:$Name" }
+    foreach ($item in $value) { Write-Output $item }
+}
+
+function Get-S3RequiredNonNegativeInteger {
+    param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string]$Name)
+    $value = Get-S3RequiredPropertyValue -InputObject $InputObject -Name $Name
+    $typeCode = [Type]::GetTypeCode($value.GetType())
+    if ($typeCode -notin @([TypeCode]::Byte,[TypeCode]::SByte,[TypeCode]::Int16,[TypeCode]::UInt16,[TypeCode]::Int32,[TypeCode]::UInt32,[TypeCode]::Int64,[TypeCode]::UInt64)) {
+        throw "FIREBASE_INTEGER_EXPECTED:$Name"
+    }
+    $integer = [int64]$value
+    if ($integer -lt 0) { throw "FIREBASE_INTEGER_OUT_OF_RANGE:$Name" }
+    return $integer
+}
+
 function Assert-S3ExactBoolean {
     param([AllowNull()][object]$Value,[Parameter(Mandatory)][bool]$Expected,[Parameter(Mandatory)][string]$Name)
     if ($Value -isnot [bool] -or [bool]$Value -ne $Expected) {
@@ -103,7 +131,7 @@ function Get-S3FederatedProviderSnapshot {
     $collections = [ordered]@{}
     foreach ($collection in @('defaultSupportedIdpConfigs','oauthIdpConfigs','inboundSamlConfigs')) {
         $response = Invoke-S3GoogleRest -Method GET -Uri "$base/${collection}?pageSize=100" -Token $Token
-        $items = @(Get-S3RequiredArrayProperty -InputObject $response -Name $collection)
+        $items = @(Get-S3OptionalRepeatedArrayProperty -InputObject $response -Name $collection)
         $nextPageToken = [string](Get-S3MapValue -Map $response -Name 'nextPageToken')
         if (-not [string]::IsNullOrWhiteSpace($nextPageToken)) { throw "FIREBASE_PROVIDER_PAGINATION_INCOMPLETE:$collection" }
         $normalized = [Collections.Generic.List[object]]::new()
@@ -164,7 +192,15 @@ function Assert-S3FirebaseConfiguration {
 function Get-S3FirebaseUser {
     param([string]$ProjectId,[string]$Token)
     $response = Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:query" -Token $Token -Body @{returnUserInfo=$true;limit=100}
-    return @(Get-S3RequiredArrayProperty -InputObject $response -Name 'userInfo')
+    $recordsCount = Get-S3RequiredNonNegativeInteger -InputObject $response -Name 'recordsCount'
+    $hasUserInfo = Test-S3PropertyPresent -InputObject $response -Name 'userInfo'
+    if (-not $hasUserInfo) {
+        if ($recordsCount -eq 0) { return @() }
+        throw 'FIREBASE_USERINFO_MISSING'
+    }
+    $users = @(Get-S3RequiredArrayProperty -InputObject $response -Name 'userInfo')
+    if ($users.Count -ne $recordsCount) { throw 'FIREBASE_USERINFO_COUNT_MISMATCH' }
+    return $users
 }
 
 function Assert-S3FirebaseUserSet {
