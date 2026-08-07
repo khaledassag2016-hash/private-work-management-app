@@ -36,9 +36,27 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
         } -ModuleName Firebase
         {Disable-S3FederatedProvider -ProjectId p -Token token} | Should -Throw '*STILL_ENABLED*'
     }
-    It 'fails a missing provider collection property' {
+    It 'treats omitted known provider repeated fields as empty lists' {
         Mock Invoke-S3GoogleRest {[pscustomobject]@{}} -ModuleName Firebase
-        {Disable-S3FederatedProvider -ProjectId p -Token token} | Should -Throw '*REQUIRED_VALUE_MISSING*'
+        $proof=Disable-S3FederatedProvider -ProjectId p -Token token
+        $proof.verified | Should -BeTrue
+        $proof.enabledCount | Should -Be 0
+        $proof.collections.defaultSupportedIdpConfigs | Should -Be 0
+        $proof.collections.oauthIdpConfigs | Should -Be 0
+        $proof.collections.inboundSamlConfigs | Should -Be 0
+    }
+    It 'still fails omitted provider lists when nextPageToken proves incomplete pagination' {
+        Mock Invoke-S3GoogleRest {[pscustomobject]@{nextPageToken='next-page'}} -ModuleName Firebase
+        {Disable-S3FederatedProvider -ProjectId p -Token token} | Should -Throw '*PAGINATION_INCOMPLETE*'
+    }
+    It 'fails a provider repeated field with the wrong type' {
+        Mock Invoke-S3GoogleRest {
+            param($Uri)
+            $collection=((($Uri -split '/')[-1]) -split '\?')[0]
+            if($collection -eq 'oauthIdpConfigs'){return [pscustomobject]@{oauthIdpConfigs='not-an-array'}}
+            return [pscustomobject]@{}
+        } -ModuleName Firebase
+        {Disable-S3FederatedProvider -ProjectId p -Token token} | Should -Throw '*ARRAY_EXPECTED*'
     }
     It 'fails a provider enabled value with an unknown type' {
         Mock Invoke-S3GoogleRest {
@@ -61,6 +79,26 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
         $proof=Disable-S3FederatedProvider -ProjectId p -Token token
         $proof.verified | Should -BeTrue
         $proof.enabledCount | Should -Be 0
+    }
+    It 'accepts recordsCount zero with omitted userInfo as an empty user set' {
+        Mock Invoke-S3GoogleRest {[pscustomobject]@{recordsCount=0}} -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 0
+    }
+    It 'fails recordsCount greater than zero when userInfo is omitted' {
+        Mock Invoke-S3GoogleRest {[pscustomobject]@{recordsCount=1}} -ModuleName Firebase
+        {Get-S3FirebaseUser -ProjectId p -Token token} | Should -Throw '*USERINFO_MISSING*'
+    }
+    It 'fails when recordsCount does not match userInfo count' {
+        Mock Invoke-S3GoogleRest {[pscustomobject]@{recordsCount=2;userInfo=@([pscustomobject]@{localId='one'})}} -ModuleName Firebase
+        {Get-S3FirebaseUser -ProjectId p -Token token} | Should -Throw '*COUNT_MISMATCH*'
+    }
+    It 'fails userInfo with the wrong repeated-field type' {
+        Mock Invoke-S3GoogleRest {[pscustomobject]@{recordsCount=1;userInfo='not-an-array'}} -ModuleName Firebase
+        {Get-S3FirebaseUser -ProjectId p -Token token} | Should -Throw '*ARRAY_EXPECTED*'
+    }
+    It 'fails an accounts query response without required recordsCount' {
+        Mock Invoke-S3GoogleRest {[pscustomobject]@{userInfo=@()}} -ModuleName Firebase
+        {Get-S3FirebaseUser -ProjectId p -Token token} | Should -Throw '*REQUIRED_VALUE_MISSING:recordsCount*'
     }
     It 'rejects an incomplete final Firebase configuration' {
         {Assert-S3FirebaseConfiguration -Configuration ([pscustomobject]@{}) -ProviderProof ([ordered]@{verified=$true;enabledCount=0})} | Should -Throw
@@ -237,5 +275,63 @@ Describe 'B8 owned login and temporary credential cleanup' -Tag 'B8' {
         $record=Initialize-S3CliSessionInventory $c
         $record.cloudflare.status | Should -Be 'PREEXISTING'
         ($c.State.results.cliSessions | ConvertTo-Json -Depth 10) | Should -Not -Match 'TOKEN-CANARY|synthetic@example.invalid'
+    }
+    It 'recovers a preexisting Wrangler credential on Resume, deletes owned resources, and clears the secret' {
+        $c=Get-TestContext 'Live'
+        $accountId='1234567890abcdef1234567890abcdef'
+        $c.IsResumed=$true
+        $c.State.resources.cloudflare=[ordered]@{accountId=$accountId;worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id='11111111-2222-3333-4444-555555555555';marker=$c.RunId}
+        $c.State.results.cliSessions=[ordered]@{cloudflare=[ordered]@{status='PREEXISTING';preExisting=$true}}
+        Mock Invoke-S3Process {
+            param($FilePath,$ArgumentList)
+            if($FilePath -eq 'wrangler' -and $ArgumentList[0] -eq 'auth'){return [pscustomobject]@{ExitCode=0;StdOut='{"token":"resume-session-token"}';StdErr=''}}
+            return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{status='active'}}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@([pscustomobject]@{id=$accountId});pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        Mock Wait-S3CloudflareResourceAbsence {[ordered]@{status='PASS';attempts=1;workerAbsent=$true;d1Absent=$true}} -ModuleName Cloudflare
+        $result=Invoke-S3Cleanup $c
+        $result.status | Should -Be 'PASS'
+        $result.cloudflare.status | Should -Be 'DELETED'
+        $c.RuntimeSecrets.Count | Should -Be 0
+        Should -Invoke Invoke-S3Process -ModuleName Cloudflare -Times 1 -Exactly -ParameterFilter {$FilePath -eq 'wrangler' -and $ArgumentList[0] -eq 'auth' -and $ArgumentList[1] -eq 'token' -and $ArgumentList[2] -eq '--json'}
+        Should -Invoke Invoke-S3Process -ModuleName Cloudflare -Times 2 -Exactly -ParameterFilter {$FilePath -eq 'wrangler' -and $ArgumentList[0] -in @('delete','d1')}
+    }
+    It 'fails Resume cleanup without a preexisting Wrangler session and never starts login or deletion' {
+        $c=Get-TestContext 'Live'
+        $accountId='1234567890abcdef1234567890abcdef'
+        $c.IsResumed=$true
+        $c.State.resources.cloudflare=[ordered]@{accountId=$accountId;worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id='11111111-2222-3333-4444-555555555555';marker=$c.RunId}
+        $c.State.results.cliSessions=[ordered]@{cloudflare=[ordered]@{status='PREEXISTING';preExisting=$true}}
+        Mock Invoke-S3Process {
+            param($ArgumentList)
+            if($ArgumentList[0] -eq 'auth'){return [pscustomobject]@{ExitCode=1;StdOut='';StdErr='no session'}}
+            return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}
+        } -ModuleName Cloudflare
+        $result=Invoke-S3Cleanup $c
+        $result.status | Should -Be 'FAIL'
+        $result.cloudflare.status | Should -Not -Be 'DELETED'
+        $c.RuntimeSecrets.Count | Should -Be 0
+        Should -Invoke Invoke-S3Process -ModuleName Cloudflare -Times 1 -Exactly -ParameterFilter {$ArgumentList[0] -eq 'auth' -and $ArgumentList[1] -eq 'token'}
+        Should -Invoke Invoke-S3Process -ModuleName Cloudflare -Times 0 -Exactly -ParameterFilter {$ArgumentList[0] -eq 'login' -or $ArgumentList[0] -in @('delete','d1')}
+    }
+    It 'fails Resume cleanup when the recovered Wrangler account does not match the recorded resource' {
+        $c=Get-TestContext 'Live'
+        $accountId='1234567890abcdef1234567890abcdef'
+        $c.IsResumed=$true
+        $c.State.resources.cloudflare=[ordered]@{accountId=$accountId;worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id='11111111-2222-3333-4444-555555555555';marker=$c.RunId}
+        $c.State.results.cliSessions=[ordered]@{cloudflare=[ordered]@{status='PREEXISTING';preExisting=$true}}
+        Mock Invoke-S3Process {
+            param($ArgumentList)
+            if($ArgumentList[0] -eq 'auth'){return [pscustomobject]@{ExitCode=0;StdOut='{"token":"resume-session-token"}';StdErr=''}}
+            return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{status='active'}}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@([pscustomobject]@{id='ffffffffffffffffffffffffffffffff'});pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        $result=Invoke-S3Cleanup $c
+        $result.status | Should -Be 'FAIL'
+        $result.cloudflare.status | Should -Not -Be 'DELETED'
+        $c.RuntimeSecrets.Count | Should -Be 0
+        Should -Invoke Invoke-S3Process -ModuleName Cloudflare -Times 0 -Exactly -ParameterFilter {$ArgumentList[0] -in @('delete','d1','login')}
     }
 }
