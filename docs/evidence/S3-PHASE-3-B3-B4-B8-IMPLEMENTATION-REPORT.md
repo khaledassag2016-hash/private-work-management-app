@@ -1,127 +1,103 @@
 # S3 Phase 3 — B3/B4/B8 Implementation Report
 
 - Base SHA: `7a9e4d3610387b48ee390edfe790965b66cd1163`
-- Verified implementation SHA: `e0a5db6c6c912b5b1d21cddc02f1058d64cffd22`
-- Final verified PR Head SHA: `6c5ca1c9c6c3ed04e53c20c2639c9f93ee258fc5`
+- Remediated implementation SHA verified before this evidence update: `33b3c42e325258d0a62a7f0596a52e6475382f48`
 - Branch: `phase/s3-b3-b4-b8-security-cleanup`
 - Pull Request: `#23`
-- Status: `READY FOR INDEPENDENT SUPERVISORY REVIEW — NOT MERGED`
+- Status: `AWAITING FINAL LIVE-HEAD CI AFTER EVIDENCE/STATE UPDATE — NOT MERGED`
 
 ## Scope
 
-- B3: Firebase fail-closed provider and account proof.
-- B4: Cloudflare deletion and absence proof fail-closed.
-- B8: preexisting-session preservation and owned temporary-session cleanup.
-- Validation harness adjustment required only to recognize the new B3/B4/B8 Pester total (`150` instead of the pre-change baseline `120`).
+This report covers only S3 internal scope B3/B4/B8 in PR #23.
 
-## Changed files
+- B3: Firebase fail-closed provider/configuration/account proof.
+- B4: Cloudflare owned-resource deletion and absence proof fail-closed.
+- B8: preservation of preexisting sessions, cleanup of tool-owned temporary credentials, and safe cleanup after Resume.
+- B2/B5 and `tools/s3_cpu_gate/src/version-manifest.json` are unchanged.
 
-- `tools/s3_cpu_gate/src/modules/Firebase.psm1`
-- `tools/s3_cpu_gate/src/modules/Cloudflare.psm1`
-- `tools/s3_cpu_gate/src/modules/Cleanup.psm1`
-- `tools/s3_cpu_gate/src/S3-CpuGate-Orchestrator.ps1`
-- `tools/s3_cpu_gate/tests/pester/SecurityCleanup.Tests.ps1`
-- `tools/s3_cpu_gate/build/Invoke-Phase1PowerShellValidation.ps1`
-- `tools/s3_cpu_gate/docs/USER-GUIDE-AR.md`
-- `tools/s3_cpu_gate/docs/SECURITY-REVIEW.md`
-- `PROJECT_STATE.md`
-- `docs/evidence/S3-PHASE-3-B3-B4-B8-IMPLEMENTATION-REPORT.md`
+## Independent supervisory review blockers remediated
 
-Temporary patch-applicator files used only to apply the scoped change were removed before final verification and are not part of the PR diff.
+### B3 — ProtoJSON omitted empty repeated fields
 
-## B3 — Firebase fail-closed
+The Firebase parsing path now distinguishes an omitted known repeated field from a malformed present field.
 
-- Provider collection reads and disable PATCH operations fail closed.
-- The three provider collections are reread independently after changes.
-- Required boolean configuration values must exist and match exact expected values.
-- Provider pagination is bounded to a single requested page of 100 and fails closed when `nextPageToken` proves the read incomplete.
-- The project-empty proof precedes synthetic account creation.
-- Only the two expected synthetic users, with no phone numbers or provider links, satisfy the proof.
-- Guard flags are written only after proof completion.
-- Google REST failures do not disclose API keys or bearer-token text.
+- A successful provider-list response may omit `defaultSupportedIdpConfigs`, `oauthIdpConfigs`, or `inboundSamlConfigs`; omission is treated as an empty list.
+- A non-empty `nextPageToken` still fails closed as incomplete pagination.
+- A present repeated field with a wrong type still fails closed.
+- Provider entries still require a non-empty `name` and an exact Boolean `enabled`; scalar/Boolean validation was not relaxed.
+- `accounts:query` now requires a valid non-negative integral `recordsCount`.
+- `recordsCount=0` with omitted `userInfo` is accepted as zero users.
+- `recordsCount>0` with omitted `userInfo` fails closed.
+- Present `userInfo` must be an array and its count must exactly match `recordsCount`.
+- API failures and invalid responses remain fail-closed.
 
-## B4 — Cloudflare cleanup fail-closed
+### B4/B8 — cleanup after Resume
 
-- Worker and D1 deletion commands are evaluated separately by exit code.
-- Resource ownership is checked against the run marker and owned resource names before deletion.
-- Absence is rechecked through the official Workers and D1 list APIs with bounded retries.
-- Command failure, API/JSON failure, ownership mismatch, unknown verification, or a remaining resource cannot produce `DELETED`.
-- Partial cleanup is explicit and prevents checkpoint `80_RESOURCES_DESTROYED`.
-- Destruction reports redact the Cloudflare Account ID.
+Resume cleanup can now recover only the credential of a previously recorded Wrangler session when owned Cloudflare resources remain and runtime secrets were lost across process restart.
 
-## B8 — owned sessions and temporary credentials
+- Recovery is allowed only in `Live` mode on a resumed context with an owned Cloudflare resource.
+- The recorded CLI inventory must say the Cloudflare session was `PREEXISTING`.
+- Credential recovery uses only the existing official `wrangler auth token --json` path already implemented by `Get-S3CloudflareToken`.
+- No `wrangler login` path was added or invoked; no new session is created.
+- The recovered token is verified, the available accounts are read, and the recorded resource Account ID must be present and match exactly.
+- The token and Account ID are stored only in `RuntimeSecrets` for the cleanup operation and are cleared by the existing runtime-secret cleanup.
+- Worker and D1 deletion, bounded absence verification, ownership checks, and fail-closed status handling remain unchanged.
+- Failure to recover/verify the existing credential or match the account produces cleanup failure and cannot produce `DELETED`.
 
-- CLI session inventory runs before cloud stages.
-- No automatic Firebase, gcloud, or Wrangler login is performed.
-- Preexisting sessions are preserved.
-- Only sessions registered as tool-owned are eligible for token-specific Firebase logout or isolated gcloud revocation.
-- Missing optional owned-session/environment metadata is handled as an empty set under strict mode.
-- Cleanup failure makes the overall cleanup fail.
-- Runtime secrets, owned process environment values, isolated temporary configuration, SQL files, and the temporary directory are cleared.
-- Secret-canary tests are compatible with the repository secret scanner without weakening the scanner.
+## New regression coverage
 
-## Official sources reviewed
+The PowerShell suite increased from the previous `150` tests to `160` tests.
 
-Reviewed again on `2026-08-07`; only official vendor documentation was used for B8 and cleanup verification behavior:
+Added coverage includes:
 
-- Firebase CLI reference: https://firebase.google.com/docs/cli
-- gcloud configuration isolation: https://cloud.google.com/sdk/gcloud/reference/topic/configurations
-- gcloud auth revoke: https://cloud.google.com/sdk/gcloud/reference/auth/revoke
-- Wrangler authentication and general commands: https://developers.cloudflare.com/workers/wrangler/commands/general/
-- Cloudflare Workers list API: https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/list/
-- Cloudflare D1 list API: https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/list/
+- omitted provider repeated fields accepted as empty;
+- omitted provider repeated field plus `nextPageToken` rejected;
+- wrong provider repeated-field type rejected;
+- `recordsCount=0` plus omitted `userInfo` accepted;
+- `recordsCount>0` plus omitted `userInfo` rejected;
+- `recordsCount`/`userInfo` count mismatch rejected;
+- wrong `userInfo` type and missing required `recordsCount` rejected;
+- Resume with owned Worker/D1, empty RuntimeSecrets, and valid preexisting Wrangler session recovers a temporary credential, deletes both resources under mocks, proves absence, and clears the secret;
+- Resume with unavailable preexisting Wrangler credential fails without login or deletion;
+- Resume with account mismatch fails without deletion.
 
-## Verified implementation validation
+## Verified implementation validation — SHA `33b3c42e325258d0a62a7f0596a52e6475382f48`
 
-Verified implementation head: `e0a5db6c6c912b5b1d21cddc02f1058d64cffd22`.
+GitHub Actions completed successfully on the remediated implementation head before this documentation update:
 
-### GitHub Actions on implementation revision
+- Foundation integrity `#106` — Run ID `31184465297` — job `verify` / `92885452536`: `SUCCESS`.
+- S2 architecture validation `#101` — Run ID `31184465223` — job `verify` / `92885452044`: `SUCCESS`.
+- S3 CPU Gate Static `#35` — Run ID `31184465272` — job `synthetic-merge-regression` / `92885452741`: `SUCCESS`.
 
-- Foundation integrity — run `#98`, Run ID `31181685667`: `SUCCESS`.
-  - Job `verify` / Job ID `92876232357`: `SUCCESS`.
-- S2 architecture validation — run `#93`, Run ID `31181686046`: `SUCCESS`.
-  - Job `verify` / Job ID `92876233539`: `SUCCESS`.
-- S3 CPU Gate Static — run `#27`, Run ID `31181685737`: `SUCCESS`.
-  - Job `synthetic-merge-regression` / Job ID `92876233795`: `SUCCESS`.
+S3 CPU Gate Static acceptance results:
 
-### S3 CPU Gate Static acceptance results
-
-- PowerShell parser: `PASS`.
-- PSScriptAnalyzer: `PASS` with no blocking Warning/Error.
-- Pester pre-change baseline: `120/120 PASS`.
-- Pester final total: `150/150 PASS`; failed `0`, skipped `0`, inconclusive `0`, not run `0`.
-- Python regression: `73/73 PASS`.
-- Node syntax validation: `PASS`.
-- Foundation regression inside S3 workflow: `PASS`.
-- S2 regression inside S3 workflow: `23/23 PASS`.
-- Secret scan: `PASS`.
+- authoritative DOCX reconstruction and SHA-256 verification: `PASS`;
+- Foundation regression: `PASS`;
+- S2 regression: `23/23 PASS`;
+- PowerShell parser: `PASS`;
+- PSScriptAnalyzer: `PASS` with no blocking Warning/Error;
+- Pester: `160/160 PASS`, failed `0`, skipped `0`, inconclusive `0`, not run `0`;
+- Python regression: `73/73 PASS`;
+- Node syntax: `PASS`;
+- Secret scan: `PASS`;
 - Payload integrity and ZIP safety: `PASS`.
 
-All B3/B4/B8 Pester cases passed, and the preexisting regression suite continued to pass.
-
-## Final PR-head verification
-
-Final verified PR Head SHA before this evidence self-update: `6c5ca1c9c6c3ed04e53c20c2639c9f93ee258fc5`.
-
-- Foundation integrity — run `#100`, Run ID `31182010383`: `SUCCESS`.
-  - Job `verify` / Job ID `92877311266`: `SUCCESS`.
-- S2 architecture validation — run `#95`, Run ID `31182010527`: `SUCCESS`.
-  - Job `verify` / Job ID `92877311932`: `SUCCESS`.
-- S3 CPU Gate Static — run `#29`, Run ID `31182010329`: `SUCCESS`.
-  - Job `synthetic-merge-regression` / Job ID `92877311070`: `SUCCESS`.
-  - All workflow steps succeeded, including parser/Pester/PSScriptAnalyzer, Python tests, Node syntax, secret scan, and payload integrity/ZIP safety.
-
-Because writing this evidence file itself produces a new documentation-only commit, the live PR head after this write must be treated as the authoritative review head and checked again before handoff. The PR body records the final live-head verification to avoid an impossible self-referential commit SHA cycle in this file.
+All B3/B4/B8 tests, including the new independent-review regressions, passed together with the existing regression suite.
 
 ## Execution exclusions
 
-- No Cloud resource was created, modified, or deleted during this phase verification.
-- No Firebase, gcloud, or Wrangler login was executed.
-- No Billing or payment method was enabled or accessed for write operations.
+No Cloud resource, Firebase project, Worker, D1 database, real account, login flow, billing operation, or Live CPU Gate was executed while applying or verifying these fixes. All new cloud-cleanup scenarios were mocked tests only.
+
+- No Cloud write was executed.
+- No Firebase/gcloud/Wrangler login was executed.
+- No Billing or payment method was enabled or modified.
 - No Live CPU Gate was executed.
-- B2/B5 were not changed.
-- `tools/s3_cpu_gate/src/version-manifest.json` was not changed.
+- No real customer data or real credential was added.
+- B2/B5 were not modified.
+- `tools/s3_cpu_gate/src/version-manifest.json` was not modified.
 - Issue #2 remains open.
 - PR #23 remains unmerged.
 
-This internal phase is technically verified but is not administratively closed. Independent supervisory review, final live-head CI verification, and explicit supervisory approval remain required.
+## Final-live-head rule
+
+This evidence update and the accompanying `PROJECT_STATE.md` update change the PR head after the verified implementation SHA. Therefore the handoff is not valid until Foundation, S2, and S3 Actions all succeed again on the same final documentation-inclusive HEAD. The final live HEAD and its final workflow Run IDs will be recorded in the PR body after those Actions complete, without creating another commit.
