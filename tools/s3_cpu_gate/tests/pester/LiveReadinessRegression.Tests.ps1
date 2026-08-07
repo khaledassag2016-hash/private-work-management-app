@@ -7,11 +7,11 @@ Describe 'Live readiness regression guards' {
         Mock Confirm-S3Arabic { $true } -ModuleName Repository
         Mock Assert-S3NoSecret {} -ModuleName Repository
         Mock Invoke-S3Process {
-            param($Context,$FilePath,$ArgumentList)
-            $args = @($ArgumentList)
-            if ($args -contains 'pr') { return [pscustomobject]@{ ExitCode = 0; StdOut = '[]'; StdErr = '' } }
-            if ($args -contains 'show-ref') { return [pscustomobject]@{ ExitCode = 1; StdOut = ''; StdErr = '' } }
-            if ($args -contains 'status') { return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' } }
+            param($ArgumentList)
+            $arguments = @($ArgumentList)
+            if ($arguments -contains 'pr') { return [pscustomobject]@{ ExitCode = 0; StdOut = '[]'; StdErr = '' } }
+            if ($arguments -contains 'show-ref') { return [pscustomobject]@{ ExitCode = 1; StdOut = ''; StdErr = '' } }
+            if ($arguments -contains 'status') { return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' } }
             return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' }
         } -ModuleName Repository
         $result = Invoke-S3BranchAndDraftPr $context
