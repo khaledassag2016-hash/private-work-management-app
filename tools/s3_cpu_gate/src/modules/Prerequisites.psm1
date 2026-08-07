@@ -20,7 +20,7 @@ function Invoke-S3Prerequisite {
  $driveName=[IO.Path]::GetPathRoot($Context.Root).TrimEnd(':\');$drive=Get-PSDrive -Name $driveName;if($drive.Free -lt 3GB){throw 'مساحة القرص أقل من 3 GB.'}
  try{$response=Invoke-WebRequest 'https://api.github.com/meta' -TimeoutSec 20 -UseBasicParsing;if($response.StatusCode -ne 200){throw 'bad'}}catch{throw 'تعذر الاتصال الآمن بالإنترنت.'}
  $toolNames=@('pwsh','git','gh','node','npm','firebase','wrangler','gcloud','python');$tools=@($toolNames|ForEach-Object{Get-S3ToolInfo $_});$missing=@($tools|Where-Object{-not $_.available});if($missing.Count -gt 0){throw ('أدوات مفقودة بعد التهيئة: '+(($missing.name)-join ', '))}
- $proxy=[Net.WebRequest]::DefaultWebProxy.GetProxy([uri]'https://api.github.com').AbsoluteUri;$browser=$null -ne (Get-Command 'explorer.exe' -ErrorAction SilentlyContinue)
+ $proxy='DIRECT';$defaultProxy=[Net.WebRequest]::DefaultWebProxy;if($null -ne $defaultProxy){$proxyUri=$defaultProxy.GetProxy([uri]'https://api.github.com');if($null -ne $proxyUri){$proxy=$proxyUri.AbsoluteUri}};$browser=$null -ne (Get-Command 'explorer.exe' -ErrorAction SilentlyContinue)
  $local=[DateTimeOffset]::Now;$utc=[DateTimeOffset]::UtcNow;$clockSkew=[math]::Abs(($local.UtcDateTime-$utc.UtcDateTime).TotalSeconds);if($clockSkew -gt 120){throw 'وقت الجهاز غير متسق؛ صححه قبل المصادقة.'}
  $result=[ordered]@{windows=$true;path=$true;internet=$true;diskFreeGB=[math]::Round($drive.Free/1GB,2);transcription=$false;proxy=$proxy;browser=$browser;localTime=$local.ToString('o');utcTime=$utc.ToString('o');clockSkewSeconds=$clockSkew;tools=$tools}
  $result|ConvertTo-Json -Depth 8|Set-Content (Join-Path $Context.Root 'reports\01-local-prerequisites.json') -Encoding UTF8
