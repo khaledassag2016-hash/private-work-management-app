@@ -224,3 +224,13 @@
 - لم تُدمج B1، ولم تُغلق Issue #2، وS3 الرئيسية غير مكتملة.
 - لم يبدأ Live CPU Gate، ولم ينفذ Cloud أو Login أو Billing.
 - B2/B3/B4/B5/B8 تبقى مقفلة دون إعادة فتح، ولا يبدأ أي جزء لاحق تلقائيًا.
+
+## تصحيح إشرافي لـB1 — path traversal fail-closed
+
+- عولج مانع المراجعة على الرأس السابق `702d07b246f72fcd26f9882e117d1d22e2962184` داخل نفس PR #25 ونفس الفرع.
+- عند فشل `validate(root)` لا يستدعى `make_zip()` ولا ينشأ ZIP، ويكتب التقرير حالة **FAIL** ويخرج non-zero.
+- `make_zip()` يتحقق من كل manifest entry قبل فتح ZIP أو قراءة أي ملف، ويرفض POSIX absolute وWindows drive paths وbackslash و`..`، ويتحقق من containment للمسار resolved داخل root.
+- Regression النهائي: Python `79/79 PASS`، ويشمل `../outside.txt` وabsolute paths وvalid package.
+- implementation HEAD الذي اجتاز Actions: `9c9ca5355044175ee9d524c2906977415e386c64`.
+- Actions: Foundation #124 / `31196109150`، S2 #117 / `31196108026`، S3 CPU Gate Static #51 / `31196108144`، جميعها **SUCCESS**، job `92924603577`.
+- تحديث Evidence وPROJECT_STATE الحالي يغيّر HEAD؛ تسجل نتائج Actions على الرأس النهائي الأخير في وصف PR لتجنب دورة self-reference.
