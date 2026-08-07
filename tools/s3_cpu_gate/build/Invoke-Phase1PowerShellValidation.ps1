@@ -130,9 +130,10 @@ $config.TestResult.Enabled = $true
 $config.TestResult.OutputFormat = 'NUnitXml'
 $config.TestResult.OutputPath = $pesterResultPath
 $result = Invoke-Pester -Configuration $config
+$expectedPesterCount = 176
 $pesterStatus = if (
-    $result.TotalCount -gt 0 -and
-    $result.PassedCount -eq $result.TotalCount -and
+    $result.TotalCount -eq $expectedPesterCount -and
+    $result.PassedCount -eq $expectedPesterCount -and
     $result.FailedCount -eq 0 -and
     $result.SkippedCount -eq 0 -and
     $result.NotRunCount -eq 0

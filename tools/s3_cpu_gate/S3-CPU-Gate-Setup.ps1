@@ -18,8 +18,7 @@ $allowedFiles = @(
 $allowedTrees = @(
     @{ Source = 'src\modules'; Target = 'modules' },
     @{ Source = 'src\python'; Target = 'python' },
-    @{ Source = 'src\worker'; Target = 'worker' },
-    @{ Source = '.'; Target = 'workspace\repository_payload\tools\s3_cpu_gate' }
+    @{ Source = 'src\worker'; Target = 'worker' }
 )
 
 function Assert-S3SafePath {
@@ -77,6 +76,24 @@ function Copy-S3TreeToStage {
     }
 }
 
+function Copy-S3ManifestPayloadToStage {
+    $manifestPath = Join-Path $sourceRoot 'package-manifest.json'
+    $packageManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $manifestFiles = @($packageManifest.files | ForEach-Object { [string]$_ })
+    if ($manifestFiles.Count -eq 0) { throw 'PACKAGE_MANIFEST_EMPTY' }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($relativePath in $manifestFiles) {
+        Assert-S3SafePath -RelativePath $relativePath
+        if (-not $seen.Add($relativePath)) { throw "PACKAGE_MANIFEST_DUPLICATE: $relativePath" }
+        $sourceFile = Get-Item -LiteralPath (Join-Path $sourceRoot ($relativePath -replace '/', '\')) -ErrorAction Stop
+        if ($sourceFile -isnot [IO.FileInfo]) { throw "PACKAGE_MANIFEST_NOT_FILE: $relativePath" }
+        Assert-S3RegularFile -File $sourceFile
+        $target = Join-Path $stageRoot ('workspace\repository_payload\tools\s3_cpu_gate\' + ($relativePath -replace '/', '\'))
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        Copy-Item -LiteralPath $sourceFile.FullName -Destination $target -Force
+    }
+}
+
 if ($RuntimeRoot -ne 'C:\Users\MC\Desktop\1') { throw 'RUNTIME_ROOT_NOT_AUTHORIZED' }
 if (-not (Test-Path -LiteralPath $RuntimeRoot -PathType Container)) {
     New-Item -ItemType Directory -Path $RuntimeRoot -Force | Out-Null
@@ -86,8 +103,7 @@ $statePath = Join-Path $RuntimeRoot 'state.json'
 if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $current = [string]$state.currentState
-    $resources = @($state.resources.PSObject.Properties | Where-Object { $null -ne $_.Value -and $_.Value.marker })
-    if ($resources.Count -gt 0 -and $current -notin @('80_RESOURCES_DESTROYED','90_REPORT_READY')) {
+    if ($current -notin @('80_RESOURCES_DESTROYED','90_REPORT_READY')) {
         throw 'ACTIVE_OR_UNCLEAN_STATE_PRESENT'
     }
 }
@@ -97,6 +113,7 @@ try {
     New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
     foreach ($entry in $allowedFiles) { Copy-S3FileToStage -Source $entry.Source -Target $entry.Target }
     foreach ($entry in $allowedTrees) { Copy-S3TreeToStage -Source $entry.Source -Target $entry.Target }
+    Copy-S3ManifestPayloadToStage
 
     foreach ($required in @('Bootstrap.ps1','Initialize-Toolchain.ps1','S3-CpuGate-Orchestrator.ps1','START.cmd','version-manifest.json','modules','python','worker','workspace\repository_payload\tools\s3_cpu_gate')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stageRoot $required))) { throw "STAGING_REQUIRED_MISSING: $required" }
