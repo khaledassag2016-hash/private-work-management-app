@@ -15,7 +15,7 @@
 - ADR: `docs/architecture/ADR-001-FREE-ARCHITECTURE.md` بحالة `Accepted`
 - القرار: D-006 مسجل بتاريخ 2026-08-03
 - المرحلة التالية: **S3 — الهوية وقاعدة البيانات وسجل التدقيق، Issue #2**
-- حالة S3: **B3/B4/B8 منفذة على فرع مستقل وفي Pull Request مفتوح للمراجعة؛ S3 الرئيسية غير مكتملة ولم يبدأ Live CPU Gate.**
+- حالة S3: **B3/B4/B8 منفذة ومتحقق منها تقنيًا على PR #23، لكنها غير مدمجة وغير مقفلة إداريًا؛ S3 الرئيسية غير مكتملة ولم يبدأ Live CPU Gate.**
 - بوابة S3 الإدارية B2/B5: **دُمج PR #21 باستخدام Squash عند commit `cdf0f960ec2a6caada03e896fb2d67136fa3f762`، وأُقفلت B2/B5 إداريًا.**
 - شرط التكلفة: صفر تكلفة إلزامية، بلا بطاقة بنكية أو Billing Account
 - البيانات الحقيقية في GitHub: ممنوعة
@@ -140,14 +140,39 @@
 
 ## المرحلة الداخلية الثالثة — B3/B4/B8
 
-- B2/B5 مقفلتان إداريًا ولا تتغيران.
-- B3/B4/B8 منفذة في الفرع `phase/s3-b3-b4-b8-security-cleanup` ضمن Pull Request واحد مفتوح للمراجعة.
-- المرحلة الداخلية الثالثة ليست مقفلة قبل المراجعة والدمج والتحقق من `main`.
-- S3 الرئيسية لم تكتمل.
-- Live CPU Gate غير منفذة.
+- B2/B5 مقفلتان إداريًا ولم تعدلهما PR #23.
+- الفرع: `phase/s3-b3-b4-b8-security-cleanup`.
+- Pull Request: `#23`، مفتوحة وغير مدمجة.
+- Verified implementation SHA: `e0a5db6c6c912b5b1d21cddc02f1058d64cffd22`.
+- B3: Firebase provider/configuration/account proof يعمل fail-closed مع إعادة قراءة مستقلة واختبارات الحالات السلبية.
+- B4: تنظيف Worker وD1 يعمل fail-closed ولا يعتبر الحذف ناجحًا قبل إثبات الغياب والملكية.
+- B8: الجلسات السابقة محفوظة، ولا Login تلقائي، وتنظف فقط الجلسات/الأسرار/البيئة/المسارات المؤقتة المملوكة للتشغيل.
+- أزيلت ملفات Patch Applicator المؤقتة قبل التحقق النهائي من التنفيذ، وليست ضمن diff الحالية.
+- عُدل Harness الخاص بعدد اختبارات Pester فقط لاستيعاب اختبارات B3/B4/B8 الجديدة: من baseline `120` إلى إجمالي `150`، دون تعديل `version-manifest.json`.
+
+### نتائج قبول B3/B4/B8 على Verified implementation SHA
+
+- Foundation integrity run `#98`، Run ID `31181685667`: **SUCCESS**.
+- S2 architecture validation run `#93`، Run ID `31181686046`: **SUCCESS**.
+- S3 CPU Gate Static run `#27`، Run ID `31181685737`: **SUCCESS**.
+- PowerShell parser: **PASS**.
+- PSScriptAnalyzer: **PASS** بلا Warning/Error مانع.
+- Pester: **150/150 PASS**؛ Failed `0`، Skipped `0`، Inconclusive `0`، NotRun `0`.
+- Python regression: **73/73 PASS**.
+- Node syntax: **PASS**.
+- Secret scan: **PASS**.
+- Payload integrity and ZIP safety: **PASS**.
+- Foundation وS2 regression داخل S3 workflow: **PASS**.
+- راجعت مصادر B8 الرسمية الحالية مجددًا بتاريخ `2026-08-07` وسجلت في تقرير Evidence.
+
+### القيود والحالة الإدارية
+
+- لم ينفذ Cloud أو Login أو Billing أو Live CPU Gate ضمن B3/B4/B8.
 - Issue #2 ما زالت مفتوحة.
-- لم ينفذ Cloud أو Login أو Billing أو Live CPU Gate في هذه المرحلة.
+- المرحلة الداخلية الثالثة ليست مقفلة إداريًا قبل المراجعة الإشرافية والدمج والتحقق اللاحق من `main`.
+- تحديث Evidence وPROJECT_STATE يغيّر PR head بعد Verified implementation SHA؛ لذلك يجب أن تنجح الفحوص نفسها على **الرأس النهائي لـPR** قبل تسليمها للمراجعة المستقلة.
+- S3 الرئيسية لم تكتمل، ولا يبدأ B1 أو Live CPU Gate ضمن هذه PR.
 
 ## الخطوة التالية
 
-المراجعة الإشرافية المستقلة لـPull Request الخاصة بـB3/B4/B8. لا يبدأ B1 أو Live CPU Gate ولا يدمج PR قبل اعتماد صريح.
+بعد نجاح فحوص الرأس النهائي لـPR #23: المراجعة الإشرافية المستقلة لـB3/B4/B8. لا يبدأ B1 أو Live CPU Gate ولا يدمج PR قبل اعتماد صريح.
