@@ -1,10 +1,11 @@
 # S3 Phase 3 — B3/B4/B8 Implementation Report
 
 - Base SHA: `7a9e4d3610387b48ee390edfe790965b66cd1163`
-- Remediated implementation SHA verified before this evidence update: `33b3c42e325258d0a62a7f0596a52e6475382f48`
+- Remediated implementation SHA verified before documentation updates: `33b3c42e325258d0a62a7f0596a52e6475382f48`
+- Final documentation-inclusive verification head before this evidence self-update: `c7b437c527f088acfd288e61cd88d6df644fa3a1`
 - Branch: `phase/s3-b3-b4-b8-security-cleanup`
 - Pull Request: `#23`
-- Status: `AWAITING FINAL LIVE-HEAD CI AFTER EVIDENCE/STATE UPDATE — NOT MERGED`
+- Status: `READY FOR INDEPENDENT SUPERVISORY REVIEW — NOT MERGED`
 
 ## Scope
 
@@ -63,7 +64,7 @@ Added coverage includes:
 
 ## Verified implementation validation — SHA `33b3c42e325258d0a62a7f0596a52e6475382f48`
 
-GitHub Actions completed successfully on the remediated implementation head before this documentation update:
+GitHub Actions completed successfully on the remediated implementation head before documentation updates:
 
 - Foundation integrity `#106` — Run ID `31184465297` — job `verify` / `92885452536`: `SUCCESS`.
 - S2 architecture validation `#101` — Run ID `31184465223` — job `verify` / `92885452044`: `SUCCESS`.
@@ -84,6 +85,18 @@ S3 CPU Gate Static acceptance results:
 
 All B3/B4/B8 tests, including the new independent-review regressions, passed together with the existing regression suite.
 
+## Final documentation-inclusive HEAD validation — SHA `c7b437c527f088acfd288e61cd88d6df644fa3a1`
+
+After updating both this Evidence report and `PROJECT_STATE.md`, all required GitHub Actions also succeeded on the same documentation-inclusive head:
+
+- Foundation integrity `#108` — Run ID `31184789371` — job `verify` / `92886517018`: `SUCCESS`.
+- S2 architecture validation `#103` — Run ID `31184790024` — job `verify` / `92886519182`: `SUCCESS`.
+- S3 CPU Gate Static `#37` — Run ID `31184788983` — job `synthetic-merge-regression` / `92886516417`: `SUCCESS`.
+
+The final S3 job shows every required step as successful: authoritative reconstruction, Foundation, S2 `23/23`, PowerShell parser/Pester/PSScriptAnalyzer, Python tests, Node syntax, Secret Scan, Payload integrity, and ZIP safety. The implementation validation immediately preceding documentation updates established the exact regression counts `Pester 160/160` and `Python 73/73`; the same validation harness and unchanged executable/test files were re-run successfully on the documentation-inclusive head.
+
+Because this Evidence file is being updated to record those final results, this write itself creates a later documentation-only commit. The authoritative live PR HEAD and the final same-head Actions must therefore be recorded in the PR body after this commit and checked once more. No executable or test source is modified by this evidence-only write.
+
 ## Execution exclusions
 
 No Cloud resource, Firebase project, Worker, D1 database, real account, login flow, billing operation, or Live CPU Gate was executed while applying or verifying these fixes. All new cloud-cleanup scenarios were mocked tests only.
@@ -98,6 +111,6 @@ No Cloud resource, Firebase project, Worker, D1 database, real account, login fl
 - Issue #2 remains open.
 - PR #23 remains unmerged.
 
-## Final-live-head rule
+## Handoff rule
 
-This evidence update and the accompanying `PROJECT_STATE.md` update change the PR head after the verified implementation SHA. Therefore the handoff is not valid until Foundation, S2, and S3 Actions all succeed again on the same final documentation-inclusive HEAD. The final live HEAD and its final workflow Run IDs will be recorded in the PR body after those Actions complete, without creating another commit.
+The handoff is valid only after Foundation, S2, and S3 Actions succeed on the live PR HEAD that includes this final evidence write. That live HEAD and its three successful Run IDs are recorded in the PR body without another repository commit.
