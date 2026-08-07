@@ -98,7 +98,9 @@ function Invoke-S3BranchAndDraftPr {
   Assert-S3NoSecret -Context $Context -Path $repoPath
   Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('add','--all')|Out-Null
   $changed=(Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('status','--porcelain')).StdOut.Trim()
-  if(-not $changed){throw 'لا توجد ملفات بوابة CPU لإيداعها؛ توقف لمنع PR فارغة.'}
+  if(-not $changed){
+   return [ordered]@{status='NO_DIFF_CURRENT_MAIN';branch=$script:Branch;draftPr=$null;url=$null;ci='NOT_REQUIRED';currentMain='PASS'}
+  }
   Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('commit','-m','S3: add mandatory CPU gate tooling')|Out-Null
   Assert-S3NoSecret -Context $Context -Path $repoPath
   Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('push','-u','origin',$script:Branch)|Out-Null
