@@ -167,6 +167,42 @@ function Clear-S3OwnedEnvironmentVariable {
     return [ordered]@{status=$(if($errors.Count -eq 0){'PASS'}else{'FAIL'});errors=@($errors)}
 }
 
+function Restore-S3CloudflareCleanupCredential {
+    param([Parameter(Mandatory)]$Context)
+    if ($Context.Mode -ne 'Live') { return [ordered]@{status='NOT_REQUIRED'} }
+    $resource = Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare'
+    if ($null -eq $resource -or (Get-S3MapValue -Map $resource -Name 'cleanupStatus') -eq 'DELETED') { return [ordered]@{status='NOT_REQUIRED'} }
+    $runtimeToken = [string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken')
+    $runtimeAccountId = [string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareAccountId')
+    $recordedAccountId = [string](Get-S3MapValue -Map $resource -Name 'accountId')
+    if (-not [string]::IsNullOrWhiteSpace($runtimeToken) -and $runtimeAccountId -eq $recordedAccountId) { return [ordered]@{status='RUNTIME_PRESENT'} }
+    if ((Get-S3MapValue -Map $Context -Name 'IsResumed') -ne $true) { return [ordered]@{status='NOT_REQUIRED'} }
+
+    $owned = Test-S3CloudflareCleanupOwnership -Context $Context -Resource $resource
+    $inventory = Get-S3MapValue -Map $Context.State.results -Name 'cliSessions'
+    $cloudflareSession = Get-S3MapValue -Map $inventory -Name 'cloudflare'
+    if ($null -eq $cloudflareSession -or [string](Get-S3MapValue -Map $cloudflareSession -Name 'status') -ne 'PREEXISTING') {
+        throw 'CLOUDFLARE_RESUME_PREEXISTING_SESSION_REQUIRED'
+    }
+
+    $token = $null
+    try {
+        $token = Get-S3CloudflareToken -Context $Context
+        [void](Test-S3CloudflareSession -Token $token)
+        $accounts = Get-S3CloudflareAccounts -Token $token
+        $selected = Select-S3CloudflareAccount -Accounts @($accounts.items) -SelectedAccountId $owned.accountId
+        $selectedAccountId = [string](Get-S3CloudflareValue -InputObject $selected -Name @('id'))
+        if ($selectedAccountId -ne $owned.accountId) { throw 'CLOUDFLARE_RESUME_ACCOUNT_MISMATCH' }
+        Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken' -Value $token
+        Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareAccountId' -Value $selectedAccountId
+        return [ordered]@{status='RECOVERED';accountId=(Get-S3RedactedAccountId -AccountId $selectedAccountId)}
+    }
+    finally {
+        $token = $null
+        [GC]::Collect()
+    }
+}
+
 function Invoke-S3Cleanup {
     param([Parameter(Mandatory)]$Context)
     $result = [ordered]@{
@@ -180,7 +216,10 @@ function Invoke-S3Cleanup {
         runtimeSecrets='NOT_ATTEMPTED'
         errors=@()
     }
-    try { $result.cloudflare = Remove-S3CloudflareResource -Context $Context }
+    try {
+        [void](Restore-S3CloudflareCleanupCredential -Context $Context)
+        $result.cloudflare = Remove-S3CloudflareResource -Context $Context
+    }
     catch {
         $safe = Protect-S3Text $_.Exception.Message
         $result.cloudflare = [ordered]@{status='FAILED';reason=$safe}
