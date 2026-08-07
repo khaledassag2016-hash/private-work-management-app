@@ -35,6 +35,40 @@ def test_package_manifest_delegates_versions():
         assert package["versionManifest"]=="source/src/version-manifest.json"; assert "tools" not in package
 
 
+def test_operational_package_manifest_is_allowlist():
+    package = json.loads((ROOT / "package-manifest.json").read_text(encoding="utf-8"))
+    assert package["versionManifest"] == "src/version-manifest.json"
+    assert package["integrityAlgorithm"] == "sha256"
+    assert len(package["files"]) == len(set(package["files"]))
+    assert all(".." not in Path(p).parts and "\\" not in p for p in package["files"])
+
+
+def test_operational_integrity_rejects_unallowlisted_and_forbidden_files(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("phase1_integrity", ROOT / "build/phase1_integrity.py")
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    manifest = json.loads((ROOT / "package-manifest.json").read_text(encoding="utf-8"))
+    (tmp_path / "package-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / "src").mkdir(); (tmp_path / "src/version-manifest.json").write_text('{"authoritative": true}', encoding="utf-8")
+    (tmp_path / "__pycache__").mkdir(); (tmp_path / "__pycache__/bad.pyc").write_bytes(b"x")
+    errors = module.validate(tmp_path)
+    assert any(e.startswith("UNALLOWLISTED:") for e in errors)
+    assert any(e.startswith("FORBIDDEN_FILE:") for e in errors)
+
+
+def test_zip_safety_rejects_absolute_and_traversal_entries(tmp_path):
+    import zipfile
+    spec = __import__("importlib.util").util.spec_from_file_location("phase1_integrity", ROOT / "build/phase1_integrity.py")
+    module = __import__("importlib.util").util.module_from_spec(spec); spec.loader.exec_module(module)
+    archive = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("/absolute.txt", "x")
+        z.writestr("C:/drive.txt", "x")
+        z.writestr("../traversal.txt", "x")
+    errors = module.zip_safety(archive)
+    assert len(errors) == 3
+
+
 def test_executable_files_have_no_rejected_conflicting_versions():
     suffixes={".ps1",".psm1",".yml",".yaml"}
     for path in ROOT.rglob("*"):

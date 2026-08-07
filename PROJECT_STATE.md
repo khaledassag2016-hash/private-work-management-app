@@ -210,3 +210,15 @@
 ## الخطوة التالية
 
 تم تسجيل نجاح Foundation integrity وS2 architecture validation وS3 CPU Gate Static على الرأس النهائي قبل الدمج. لا يبدأ B1 أو Live CPU Gate ولا يدمج هذا السجل الإداري PR #23.
+
+## S3 B1 — حزمة التشغيل النهائية
+
+- B1 قيد التنفيذ في الفرع `phase/s3-b1-final-operational-package` من main عند `8ded7aea50bdf34dad8b2e2c711ddf2a35f619c7`.
+- أضيفت allowlist تشغيلية `tools/s3_cpu_gate/package-manifest.json`، وتحقق fail-closed للملفات غير المسموحة وملفات الأسرار وauth-state وtemp/cache/bytecode، مع ZIP deterministic.
+- اختبار Python النهائي المحلي: `76/76 PASS`، ويتضمن ثلاثة اختبارات B1 جديدة.
+- Payload integrity وZIP safety وsecret scan المحلي: **PASS**؛ لم تضاف أسرار أو بيانات عملاء حقيقية.
+- تقرير Evidence: `docs/evidence/S3-B1-FINAL-OPERATIONAL-PACKAGE-REPORT.md`.
+- PR B1 لم تُنشأ بعد في هذه الحالة الوسيطة؛ الحالة النهائية والـActions تُسجل على HEAD النهائي بعد الدفع.
+- لم تُدمج B1، ولم تُغلق Issue #2، وS3 الرئيسية غير مكتملة.
+- لم يبدأ Live CPU Gate، ولم ينفذ Cloud أو Login أو Billing.
+- B2/B3/B4/B5/B8 تبقى مقفلة دون إعادة فتح، ولا يبدأ أي جزء لاحق تلقائيًا.

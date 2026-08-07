@@ -3,18 +3,44 @@ from __future__ import annotations
 import argparse, hashlib, json, re, zipfile
 from pathlib import Path, PurePosixPath
 
-REQUIRED=[
- "src/version-manifest.json","src/S3-CpuGate-Orchestrator.ps1","src/modules/Common.psm1","src/modules/CpuGate.psm1",
- "tests/pester/TestHelper.ps1","tests/pester/CpuGate.Tests.ps1","tests/python/test_phase1_integrity.py",
- "validation/run_python_tests.py","settings/PSScriptAnalyzerSettings.psd1"
-]
+PACKAGE_MANIFEST = "package-manifest.json"
+FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".venv", ".git"}
+FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".tmp", ".bak", ".swp"}
+FORBIDDEN_NAMES = {".env", ".env.local", "credentials.json", "token.json", "auth.json"}
+
+def unsafe_path(name: str) -> bool:
+ p = PurePosixPath(name)
+ return p.is_absolute() or ".." in p.parts or "\\" in name or bool(re.match(r"^[A-Za-z]:/", name))
 
 def sha(path:Path): return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def validate(root:Path):
  errors=[]
- for rel in REQUIRED:
-  if not (root/rel).is_file(): errors.append(f"MISSING:{rel}")
+ manifest_file = root / PACKAGE_MANIFEST
+ if not manifest_file.is_file():
+  return [f"MISSING:{PACKAGE_MANIFEST}"]
+ try:
+  package_manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+  allowed = package_manifest["files"]
+  if package_manifest.get("schemaVersion") != 1: errors.append("PACKAGE_MANIFEST_SCHEMA")
+  if package_manifest.get("integrityAlgorithm") != "sha256": errors.append("PACKAGE_MANIFEST_ALGORITHM")
+  if package_manifest.get("versionManifest") != "src/version-manifest.json": errors.append("PACKAGE_MANIFEST_VERSION_PATH")
+  if len(allowed) != len(set(allowed)): errors.append("PACKAGE_MANIFEST_DUPLICATE")
+  for rel in allowed:
+   p = root / rel
+   if not p.is_file(): errors.append(f"MISSING:{rel}")
+   if unsafe_path(rel):
+    errors.append(f"UNSAFE_MANIFEST_PATH:{rel}")
+ except (OSError, TypeError, ValueError, KeyError) as exc:
+  errors.append(f"PACKAGE_MANIFEST_INVALID:{exc}")
+  allowed = []
+ tracked = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+ expected = set(allowed) | {PACKAGE_MANIFEST}
+ for rel in sorted(tracked - expected): errors.append(f"UNALLOWLISTED:{rel}")
+ for rel in sorted(tracked):
+  path = PurePosixPath(rel)
+  if set(path.parts) & FORBIDDEN_PARTS or path.suffix.lower() in FORBIDDEN_SUFFIXES or path.name.lower() in FORBIDDEN_NAMES:
+   errors.append(f"FORBIDDEN_FILE:{rel}")
  manifest_path=root/'src/version-manifest.json'
  if manifest_path.is_file():
   try:
@@ -35,9 +61,13 @@ def validate(root:Path):
 
 def make_zip(root:Path,dest:Path):
  dest.parent.mkdir(parents=True,exist_ok=True)
+ package_manifest=json.loads((root/PACKAGE_MANIFEST).read_text(encoding='utf-8'))
+ entries=sorted([PACKAGE_MANIFEST] + package_manifest["files"])
  with zipfile.ZipFile(dest,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
-  for path in sorted(p for p in root.rglob('*') if p.is_file() and '__pycache__' not in p.parts and '.pytest_cache' not in p.parts and p.suffix!='.pyc'):
-   rel=path.relative_to(root).as_posix();z.write(path,rel)
+  for rel in entries:
+   path=root/rel
+   info=zipfile.ZipInfo(rel,date_time=(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED
+   z.writestr(info,path.read_bytes())
 
 def zip_safety(path:Path):
  errors=[];seen=set()
@@ -46,7 +76,7 @@ def zip_safety(path:Path):
    name=info.filename;p=PurePosixPath(name)
    if name in seen: errors.append(f'DUPLICATE:{name}')
    seen.add(name)
-   if p.is_absolute() or '..' in p.parts or '\\' in name: errors.append(f'UNSAFE:{name}')
+   if unsafe_path(name): errors.append(f'UNSAFE:{name}')
  return errors
 
 def main():
