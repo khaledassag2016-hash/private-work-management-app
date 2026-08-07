@@ -210,3 +210,27 @@
 ## الخطوة التالية
 
 تم تسجيل نجاح Foundation integrity وS2 architecture validation وS3 CPU Gate Static على الرأس النهائي قبل الدمج. لا يبدأ B1 أو Live CPU Gate ولا يدمج هذا السجل الإداري PR #23.
+
+## S3 B1 — حزمة التشغيل النهائية
+
+- B1 نُفذت وتحققت في PR #25 المفتوحة (غير المدمجة)، بالفرع `phase/s3-b1-final-operational-package` من main عند `8ded7aea50bdf34dad8b2e2c711ddf2a35f619c7`.
+- أضيفت allowlist تشغيلية `tools/s3_cpu_gate/package-manifest.json`، وتحقق fail-closed للملفات غير المسموحة وملفات الأسرار وauth-state وtemp/cache/bytecode، مع ZIP deterministic.
+- اختبار Python النهائي المحلي: `76/76 PASS`، ويتضمن ثلاثة اختبارات B1 جديدة.
+- Payload integrity وZIP safety وsecret scan المحلي: **PASS**؛ لم تضاف أسرار أو بيانات عملاء حقيقية.
+- تقرير Evidence: `docs/evidence/S3-B1-FINAL-OPERATIONAL-PACKAGE-REPORT.md`.
+- تحقق Actions على رأس التنفيذ: Foundation run #122 / `31194216650`، S2 run #115 / `31194216572`، وS3 CPU Gate Static run #49 / `31194217726`؛ جميعها **SUCCESS**، والـS3 job `92918336510`.
+- Pester: `170/170 PASS`، Python: `76/76 PASS`، reconstruction وSHA: **MATCH**، وS2: `23/23 PASS`.
+- تحديث التوثيق الحالي يغيّر HEAD؛ نتائج Actions على HEAD النهائي الأخير مسجلة في وصف PR لتجنب دورة self-reference.
+- لم تُدمج B1، ولم تُغلق Issue #2، وS3 الرئيسية غير مكتملة.
+- لم يبدأ Live CPU Gate، ولم ينفذ Cloud أو Login أو Billing.
+- B2/B3/B4/B5/B8 تبقى مقفلة دون إعادة فتح، ولا يبدأ أي جزء لاحق تلقائيًا.
+
+## تصحيح إشرافي لـB1 — path traversal fail-closed
+
+- عولج مانع المراجعة على الرأس السابق `702d07b246f72fcd26f9882e117d1d22e2962184` داخل نفس PR #25 ونفس الفرع.
+- عند فشل `validate(root)` لا يستدعى `make_zip()` ولا ينشأ ZIP، ويكتب التقرير حالة **FAIL** ويخرج non-zero.
+- `make_zip()` يتحقق من كل manifest entry قبل فتح ZIP أو قراءة أي ملف، ويرفض POSIX absolute وWindows drive paths وbackslash و`..`، ويتحقق من containment للمسار resolved داخل root.
+- Regression النهائي: Python `79/79 PASS`، ويشمل `../outside.txt` وabsolute paths وvalid package.
+- implementation HEAD الذي اجتاز Actions: `9c9ca5355044175ee9d524c2906977415e386c64`.
+- Actions: Foundation #124 / `31196109150`، S2 #117 / `31196108026`، S3 CPU Gate Static #51 / `31196108144`، جميعها **SUCCESS**، job `92924603577`.
+- تحديث Evidence وPROJECT_STATE الحالي يغيّر HEAD؛ تسجل نتائج Actions على الرأس النهائي الأخير في وصف PR لتجنب دورة self-reference.
