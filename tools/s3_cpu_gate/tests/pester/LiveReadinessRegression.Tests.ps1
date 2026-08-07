@@ -53,8 +53,28 @@ Describe 'Live readiness regression guards' {
 
     It 'keeps the Pester acceptance count at the approved suite size' {
         $validation = Get-Content (Join-Path $SourceRoot 'build\Invoke-Phase1PowerShellValidation.ps1') -Raw
-        $validation | Should -Match '\$expectedPesterCount\s*=\s*176'
+        $validation | Should -Match '\$expectedPesterCount\s*=\s*178'
         $validation | Should -Match '\$result\.TotalCount\s+-eq\s+\$expectedPesterCount'
         $validation | Should -Match '\$result\.PassedCount\s+-eq\s+\$expectedPesterCount'
+    }
+
+    It 'pins gcloud to the versioned release URL' {
+        $manifest = Get-Content (Join-Path $SourceRoot 'src\version-manifest.json') -Raw | ConvertFrom-Json
+        $manifest.tools.gcloud.url | Should -Be 'https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-577.0.0-windows-x86_64.zip'
+        $manifest.tools.gcloud.version | Should -Be '577.0.0'
+        $manifest.tools.gcloud.sha256 | Should -Be '21e68c5e1a88ee4abb484719500c925f814695d8300a7a88db53c70df2d2f142'
+    }
+
+    It 'handles optional tool-plan metadata without weakening required definitions' {
+        Import-Module (Join-Path $ModuleRoot 'Toolchain.psm1') -Force
+        { Get-S3ToolPlan } | Should -Not -Throw
+        $plan = @(Get-S3ToolPlan)
+        ($plan | Where-Object Name -eq 'Npm').ApproxMB | Should -Be 0
+        ($plan | Where-Object Name -eq 'Npm').Source | Should -Be 'PowerShell Gallery/npm official registry'
+        $toolchain = Get-Content (Join-Path $SourceRoot 'src\modules\Toolchain.psm1') -Raw
+        $toolchain | Should -Match "ContainsKey\('ApproxMB'\)"
+        $toolchain | Should -Match "ContainsKey\('Url'\)"
+        $toolchain | Should -Match "ContainsKey\('Repo'\)"
+        $toolchain | Should -Match 'TOOL_DEFINITION_INVALID'
     }
 }
