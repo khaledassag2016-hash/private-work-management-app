@@ -12,6 +12,17 @@ def unsafe_path(name: str) -> bool:
  p = PurePosixPath(name)
  return p.is_absolute() or ".." in p.parts or "\\" in name or bool(re.match(r"^[A-Za-z]:/", name))
 
+def resolve_entry(root: Path, name: str) -> Path:
+ if not isinstance(name, str) or unsafe_path(name):
+  raise ValueError(f"UNSAFE_MANIFEST_PATH:{name}")
+ root_resolved = root.resolve()
+ candidate = (root_resolved / name).resolve()
+ try:
+  candidate.relative_to(root_resolved)
+ except ValueError as exc:
+  raise ValueError(f"PATH_OUTSIDE_ROOT:{name}") from exc
+ return candidate
+
 def sha(path:Path): return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def validate(root:Path):
@@ -27,10 +38,10 @@ def validate(root:Path):
   if package_manifest.get("versionManifest") != "src/version-manifest.json": errors.append("PACKAGE_MANIFEST_VERSION_PATH")
   if len(allowed) != len(set(allowed)): errors.append("PACKAGE_MANIFEST_DUPLICATE")
   for rel in allowed:
-   p = root / rel
+   try: p = resolve_entry(root, rel)
+   except ValueError:
+    errors.append(f"UNSAFE_MANIFEST_PATH:{rel}"); continue
    if not p.is_file(): errors.append(f"MISSING:{rel}")
-   if unsafe_path(rel):
-    errors.append(f"UNSAFE_MANIFEST_PATH:{rel}")
  except (OSError, TypeError, ValueError, KeyError) as exc:
   errors.append(f"PACKAGE_MANIFEST_INVALID:{exc}")
   allowed = []
@@ -63,9 +74,9 @@ def make_zip(root:Path,dest:Path):
  dest.parent.mkdir(parents=True,exist_ok=True)
  package_manifest=json.loads((root/PACKAGE_MANIFEST).read_text(encoding='utf-8'))
  entries=sorted([PACKAGE_MANIFEST] + package_manifest["files"])
+ resolved_entries=[(rel,resolve_entry(root,rel)) for rel in entries]
  with zipfile.ZipFile(dest,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
-  for rel in entries:
-   path=root/rel
+  for rel,path in resolved_entries:
    info=zipfile.ZipInfo(rel,date_time=(1980,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED
    z.writestr(info,path.read_bytes())
 
@@ -82,8 +93,11 @@ def zip_safety(path:Path):
 def main():
  p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True);p.add_argument('--report',type=Path,required=True);p.add_argument('--zip-out',type=Path);a=p.parse_args()
  root=a.root.resolve();errors=validate(root);zip_errors=[]
- if a.zip_out:
-  make_zip(root,a.zip_out);zip_errors=zip_safety(a.zip_out);errors.extend(zip_errors)
- payload={'status':'PASS' if not errors else 'FAIL','root':str(root),'files':len([x for x in root.rglob('*') if x.is_file()]),'errors':errors,'zip':str(a.zip_out) if a.zip_out else None,'zipSha256':sha(a.zip_out) if a.zip_out else None}
+ if a.zip_out and not errors:
+  try:
+   make_zip(root,a.zip_out);zip_errors=zip_safety(a.zip_out);errors.extend(zip_errors)
+  except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+   errors.append(f"ZIP_BUILD_FAILED:{exc}")
+ payload={'status':'PASS' if not errors else 'FAIL','root':str(root),'files':len([x for x in root.rglob('*') if x.is_file()]),'errors':errors,'zip':str(a.zip_out) if a.zip_out else None,'zipSha256':sha(a.zip_out) if a.zip_out and a.zip_out.is_file() and not errors else None}
  a.report.parent.mkdir(parents=True,exist_ok=True);a.report.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8');print(f"PHASE1 INTEGRITY: {payload['status']}");raise SystemExit(1 if errors else 0)
 if __name__=='__main__':main()
