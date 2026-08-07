@@ -1,0 +1,69 @@
+﻿BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
+
+Describe 'B3 Firebase recordsCount ProtoJSON compatibility' -Tag 'B3' {
+    It 'accepts recordsCount string zero with omitted userInfo as zero users' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount='0'} } -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 0
+    }
+
+    It 'accepts recordsCount string two with exactly two users' {
+        Mock Invoke-S3GoogleRest {
+            [pscustomobject]@{
+                recordsCount='2'
+                userInfo=@(
+                    [pscustomobject]@{localId='one'},
+                    [pscustomobject]@{localId='two'}
+                )
+            }
+        } -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 2
+    }
+
+    It 'accepts an integer numeric recordsCount with a matching userInfo count' {
+        Mock Invoke-S3GoogleRest {
+            [pscustomobject]@{
+                recordsCount=[int64]2
+                userInfo=@(
+                    [pscustomobject]@{localId='one'},
+                    [pscustomobject]@{localId='two'}
+                )
+            }
+        } -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 2
+    }
+
+    It 'treats omitted recordsCount and omitted userInfo as zero users' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{} } -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 0
+    }
+
+    It 'treats omitted recordsCount and an empty userInfo array as zero users' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{userInfo=@()} } -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 0
+    }
+
+    It 'fails when recordsCount is omitted but userInfo is nonempty' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{userInfo=@([pscustomobject]@{localId='one'})} } -ModuleName Firebase
+        { Get-S3FirebaseUser -ProjectId p -Token token } | Should -Throw '*RECORDSCOUNT_MISSING*'
+    }
+
+    It 'rejects a malformed nonnumeric recordsCount string' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount='two';userInfo=@()} } -ModuleName Firebase
+        { Get-S3FirebaseUser -ProjectId p -Token token } | Should -Throw '*INTEGER_EXPECTED*'
+    }
+
+    It 'rejects a negative recordsCount' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount=-1;userInfo=@()} } -ModuleName Firebase
+        { Get-S3FirebaseUser -ProjectId p -Token token } | Should -Throw '*INTEGER_OUT_OF_RANGE*'
+    }
+
+    It 'rejects a fractional recordsCount' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount=1.5;userInfo=@()} } -ModuleName Firebase
+        { Get-S3FirebaseUser -ProjectId p -Token token } | Should -Throw '*INTEGER_EXPECTED*'
+    }
+
+    It 'rejects a recordsCount string outside signed int64 range' {
+        Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount='9223372036854775808';userInfo=@()} } -ModuleName Firebase
+        { Get-S3FirebaseUser -ProjectId p -Token token } | Should -Throw '*INTEGER_OUT_OF_RANGE*'
+    }
+}
