@@ -120,6 +120,11 @@ $analyzerStatus = if ($blocking.Count -eq 0) { 'PASS' } else { 'FAIL' }
     blockingCount = $blocking.Count
     findings = @($analysis | Sort-Object file,line,rule,message)
 } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $resolvedReports 'psscriptanalyzer.json') -Encoding UTF8
+if ($blocking.Count -gt 0) {
+    foreach ($finding in $blocking) {
+        Write-Output ("PSSCRIPTANALYZER_BLOCKING: {0}:{1}:{2} [{3}] {4}" -f $finding.file,$finding.line,$finding.column,$finding.rule,$finding.message)
+    }
+}
 
 $pesterResultPath = Join-Path $resolvedReports 'pester.nunit.xml'
 $config = New-PesterConfiguration
