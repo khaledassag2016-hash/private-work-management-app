@@ -157,16 +157,82 @@ function Invoke-S3Process {
 }
 
 function Assert-S3NoSecret {
- [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$Path)
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string[]]$Path)
+ if(@($Path).Count -eq 0){throw 'SECRET_SCAN_SCOPE_EMPTY'}
+ foreach($candidate in $Path){if(-not(Test-Path -LiteralPath $candidate)){throw "SECRET_SCAN_PATH_MISSING: $candidate"}}
  $pythonPath=Join-Path $Context.Root 'python\python.exe'
  if(-not (Test-Path $pythonPath)){
   $pythonCommand=Get-Command python -ErrorAction SilentlyContinue
   $pythonPath=if($null -ne $pythonCommand){$pythonCommand.Source}else{$null}
  }
  $scanner=Join-Path $Context.Root 'python\secret_scan.py'
- if($pythonPath -and (Test-Path $scanner)){Invoke-S3Process -Context $Context -FilePath $pythonPath -ArgumentList @($scanner,$Path) -TimeoutSeconds 120 | Out-Null;return}
- $bad=Get-ChildItem -LiteralPath $Path -Recurse -File -ErrorAction SilentlyContinue | Where-Object{$_.Name -match '^\.env|service.?account|private.?key'}
+ if($pythonPath -and (Test-Path $scanner)){Invoke-S3Process -Context $Context -FilePath $pythonPath -ArgumentList (@($scanner)+@($Path)) -TimeoutSeconds 120 | Out-Null;return}
+ $bad=@(foreach($candidate in $Path){
+  $item=Get-Item -LiteralPath $candidate -Force
+  if($item -is [IO.FileInfo]){$item}else{Get-ChildItem -LiteralPath $candidate -Recurse -File -ErrorAction SilentlyContinue}
+ }) | Where-Object{$_.Name -match '^\.env|service.?account|private.?key'}
  if($bad){throw 'كشف ملفات أسرار ممنوعة.'}
+}
+
+function Get-S3PayloadFile {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][ValidateSet('PreCloud','CloudflareExecution','FinalDeployment','D1Seed')][string]$Scope)
+ $root=[IO.Path]::GetFullPath([string]$Context.Root)
+ $workerRoot=Join-Path $root 'worker'
+ $deploymentRoot=Join-Path $root 'workspace\worker'
+ $schema=Join-Path $workerRoot 'schema.sql'
+ $source=Join-Path $workerRoot 'src'
+ $config=Join-Path $deploymentRoot 'wrangler.json'
+ $seed=Join-Path $root 'temp\allowlist.sql'
+ $paths=switch($Scope){
+  'PreCloud' {@($source,$schema)}
+  'CloudflareExecution' {@((Join-Path $deploymentRoot 'src'),$config,$schema)}
+  'FinalDeployment' {@((Join-Path $deploymentRoot 'src'),$config)}
+  'D1Seed' {@($seed)}
+ }
+ foreach($path in $paths){if(-not(Test-Path -LiteralPath $path)){throw "DEPLOYMENT_PAYLOAD_REQUIRED_PATH_MISSING: $path"}}
+ $files=[Collections.Generic.List[IO.FileInfo]]::new()
+ foreach($path in $paths){
+  $item=Get-Item -LiteralPath $path -Force
+  if($item -is [IO.FileInfo]){$files.Add($item)}else{foreach($file in Get-ChildItem -LiteralPath $path -Recurse -File -Force){$files.Add($file)}}
+ }
+ if($files.Count -eq 0){throw 'DEPLOYMENT_PAYLOAD_EMPTY'}
+ $allowed=@()
+ if($Scope -eq 'PreCloud'){$allowed=@('worker\schema.sql','worker\src\')}
+ elseif($Scope -in @('CloudflareExecution','FinalDeployment')){$allowed=@('workspace\worker\wrangler.json','workspace\worker\src\')}
+ elseif($Scope -eq 'D1Seed'){$allowed=@('temp\allowlist.sql')}
+ $allCandidates=switch($Scope){
+  'PreCloud' {Get-ChildItem -LiteralPath $workerRoot -Recurse -File -Force}
+  'CloudflareExecution' {Get-ChildItem -LiteralPath $deploymentRoot -Recurse -File -Force}
+  'FinalDeployment' {Get-ChildItem -LiteralPath $deploymentRoot -Recurse -File -Force}
+  'D1Seed' {@(Get-Item -LiteralPath $seed -Force)}
+ }
+ foreach($file in @($allCandidates)){
+  if($file.LinkType){throw "DEPLOYMENT_PAYLOAD_REPARSE_POINT: $($file.FullName)"}
+  $relative=$file.FullName.Substring($root.Length).TrimStart('\','/') -replace '/','\'
+  $permitted=$false
+  foreach($entry in $allowed){if($entry.EndsWith('\')){$permitted=$permitted -or $relative.StartsWith($entry,[StringComparison]::OrdinalIgnoreCase)}else{$permitted=$permitted -or $relative.Equals($entry,[StringComparison]::OrdinalIgnoreCase)}}
+  if(-not $permitted){throw "DEPLOYMENT_PAYLOAD_UNALLOWLISTED_FILE: $relative"}
+ }
+ return @($files|Sort-Object FullName)
+}
+
+function Assert-S3DeploymentPayloadNoSecret {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][ValidateSet('PreCloud','CloudflareExecution','FinalDeployment','D1Seed')][string]$Scope)
+ $files=Get-S3PayloadFile -Context $Context -Scope $Scope
+ Assert-S3NoSecret -Context $Context -Path @($files|ForEach-Object FullName)
+ $root=[IO.Path]::GetFullPath([string]$Context.Root)
+ $entries=@($files|ForEach-Object{
+  $relative=$_.FullName.Substring($root.Length).TrimStart('\','/') -replace '/','\'
+  [ordered]@{path=$relative;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant();length=$_.Length}
+ })
+ $canonical=($entries|ConvertTo-Json -Depth 5 -Compress)
+ $bytes=[Text.Encoding]::UTF8.GetBytes($canonical)
+ $payloadHash=([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)|ForEach-Object ToString x2)-join ''
+ $record=[ordered]@{runId=$Context.RunId;scope=$Scope;scannedAtUtc=[DateTime]::UtcNow.ToString('o');fileCount=$entries.Count;files=$entries;payloadSha256=$payloadHash;status='PASS'}
+ $report=Join-Path $Context.Root ("reports\secret-scan-$Scope.json")
+ $record|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $report -Encoding UTF8
+ Set-S3MapValue -Map $Context.State.results -Name ("secretScan$Scope") -Value ([ordered]@{status='PASS';fileCount=$entries.Count;payloadSha256=$payloadHash;report=$report})
+ return $record
 }
 
 function Test-S3OwnedResource {
