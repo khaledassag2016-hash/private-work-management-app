@@ -81,7 +81,7 @@ function Invoke-S3BranchAndDraftPr {
   throw 'ألغى المستخدم إنشاء الفرع وDraft PR.'
  }
  $repoPath=Join-Path $Context.Root 'repository'
- $existing=@((Invoke-S3Process -Context $Context -FilePath 'gh' -ArgumentList @('pr','list','--repo',$script:Repo,'--head',$script:Branch,'--state','all','--json','number,state,isDraft,url') -AllowFailure).StdOut|ConvertFrom-Json)
+ $existing=@((Invoke-S3Process -Context $Context -FilePath 'gh' -ArgumentList @('pr','list','--repo',$script:Repo,'--head',$script:Branch,'--state','open','--json','number,state,isDraft,url') -AllowFailure).StdOut|ConvertFrom-Json)
  if($existing.Count -gt 1){throw 'أكثر من PR للفرع؛ توقف.'}
  if($existing.Count -eq 1){
   if(-not $existing[0].isDraft -or $existing[0].state -ne 'OPEN'){throw 'PR الموجودة ليست Draft مفتوحة.'}
