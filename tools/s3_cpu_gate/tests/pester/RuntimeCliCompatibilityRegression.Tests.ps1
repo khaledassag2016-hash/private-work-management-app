@@ -15,6 +15,12 @@ Describe 'Runtime CLI compatibility regressions' {
   $prerequisitesSource | Should -Match '\$proxy=''DIRECT'''
   $prerequisitesSource | Should -Match '\$null -ne \$defaultProxy'
   $prerequisitesSource | Should -Match '\$null -ne \$proxyUri'
-  $prerequisitesSource | Should -Not -Match 'DefaultWebProxy\.GetProxy\([^\r\n]+\)\.AbsoluteUri'
+ $prerequisitesSource | Should -Not -Match 'DefaultWebProxy\.GetProxy\([^\r\n]+\)\.AbsoluteUri'
+ }
+
+ It 'ignores closed historical PRs when looking for an existing Draft PR' {
+  $repositorySource=Get-Content -Raw (Join-Path $ModuleRoot 'Repository.psm1')
+  $repositorySource | Should -Match "'--state','open'"
+  $repositorySource | Should -Not -Match "'--state','all'"
  }
 }
