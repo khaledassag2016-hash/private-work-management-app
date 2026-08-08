@@ -6,6 +6,13 @@ from pathlib import Path
 import re
 import sys
 
+# Deterministically resolve the local file path and insert its parent directory
+# into sys.path before importing reconstruct_requirements so that the sibling import
+# works in isolated (-I) mode or when scripts/ is not in sys.path.
+_scripts_dir = str(Path(__file__).resolve().parent)
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
 from reconstruct_requirements import (
     EXPECTED_BYTE_SIZE,
     EXPECTED_SHA256,
