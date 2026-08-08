@@ -284,7 +284,7 @@ Describe 'B8 owned login and temporary credential cleanup' -Tag 'B8' {
         $c.State.results.cliSessions=[ordered]@{cloudflare=[ordered]@{status='PREEXISTING';preExisting=$true}}
         Mock Invoke-S3Process {
             param($FilePath,$ArgumentList)
-            if($FilePath -eq 'wrangler' -and $ArgumentList[0] -eq 'auth'){return [pscustomobject]@{ExitCode=0;StdOut='{"token":"resume-session-token"}';StdErr=''}}
+            if($FilePath -eq 'wrangler' -and $ArgumentList[0] -eq 'auth'){return [pscustomobject]@{ExitCode=0;StdOut='{"type":"api_token","token":"resume-session-token"}';StdErr=''}}
             return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{status='active'}}} -ModuleName Cloudflare
@@ -323,7 +323,7 @@ Describe 'B8 owned login and temporary credential cleanup' -Tag 'B8' {
         $c.State.results.cliSessions=[ordered]@{cloudflare=[ordered]@{status='PREEXISTING';preExisting=$true}}
         Mock Invoke-S3Process {
             param($ArgumentList)
-            if($ArgumentList[0] -eq 'auth'){return [pscustomobject]@{ExitCode=0;StdOut='{"token":"resume-session-token"}';StdErr=''}}
+            if($ArgumentList[0] -eq 'auth'){return [pscustomobject]@{ExitCode=0;StdOut='{"type":"api_token","token":"resume-session-token"}';StdErr=''}}
             return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{status='active'}}} -ModuleName Cloudflare

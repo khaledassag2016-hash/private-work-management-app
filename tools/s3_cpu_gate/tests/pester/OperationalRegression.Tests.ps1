@@ -90,10 +90,47 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
  It 'places the preflight before Firebase and stops failures before it' {$source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$preflight=$source.IndexOf('Invoke-S3CloudflareReadOnlyPreflight');$firebase=$source.IndexOf('Invoke-S3FirebaseProvision');$preflight|Should -BeGreaterThan -1;$firebase|Should -BeGreaterThan $preflight;$source|Should -Match "if\(\`$preflight.status -ne 'PASS'\)"}
  It 'rejects every Cloudflare write API call' {Mock Invoke-RestMethod {throw 'must not run'} -ModuleName Cloudflare;{Invoke-S3CloudflareRest -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/a/workers/scripts' -Token token -Body @{}}|Should -Throw '*CLOUDFLARE_WRITE_API_FORBIDDEN*';Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0 -Exactly}
  It 'does not use the deprecated Billing Profile API' {$source=Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw;$source|Should -Not -Match '(?i)billing/profile|billing profile api'}
+ It 'uses accounts rather than token verify for OAuth and requires the selected account' {
+  Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=@([ordered]@{id='account-a'});result_info=[ordered]@{page=1;total_pages=1}}} -ModuleName Cloudflare
+  $result=Test-S3CloudflareSession -Token token -TokenType oauth -SelectedAccountId account-a
+  $result.session|Should -Be OAUTH_ACCOUNTS_VALID
+  Should -Invoke Invoke-S3CloudflareRest -ModuleName Cloudflare -ParameterFilter {$Uri -match '/accounts\?page=1&per_page=50$'} -Times 1 -Exactly
+  Should -Invoke Invoke-S3CloudflareRest -ModuleName Cloudflare -ParameterFilter {$Uri -match '/user/tokens/verify$'} -Times 0 -Exactly
+ }
+ It 'fails OAuth when the selected account is absent' {
+  Mock Get-S3CloudflareAccounts {[ordered]@{status='PASS';items=@([ordered]@{id='different-account'});pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+  {Test-S3CloudflareSession -Token token -TokenType oauth -SelectedAccountId account-a}|Should -Throw '*SELECTED_CLOUDFLARE_ACCOUNT_NOT_FOUND*'
+ }
+ It 'fails OAuth on 401 or 403 accounts responses' {
+  Mock Get-S3CloudflareAccounts {throw '401 Unauthorized'} -ModuleName Cloudflare
+  {Test-S3CloudflareSession -Token token -TokenType oauth -SelectedAccountId account-a}|Should -Throw '*401*'
+  Mock Get-S3CloudflareAccounts {throw '403 Forbidden'} -ModuleName Cloudflare
+  {Test-S3CloudflareSession -Token token -TokenType oauth -SelectedAccountId account-a}|Should -Throw '*403*'
+ }
+ It 'fails OAuth when the accounts response is incomplete' {
+  Mock Get-S3CloudflareAccounts {[ordered]@{status='PASS';items=$null;pagesRead=@();paginationComplete=$false}} -ModuleName Cloudflare
+  {Test-S3CloudflareSession -Token token -TokenType oauth -SelectedAccountId account-a}|Should -Throw '*CLOUDFLARE_OAUTH_ACCOUNTS_INVALID*'
+ }
+ It 'keeps API tokens on the token verify path' {
+  Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='active'}}} -ModuleName Cloudflare
+  $result=Test-S3CloudflareSession -Token token -TokenType api_token -SelectedAccountId account-a
+  $result.session|Should -Be API_TOKEN_VALID
+  Should -Invoke Invoke-S3CloudflareRest -ModuleName Cloudflare -ParameterFilter {$Uri -match '/user/tokens/verify$'} -Times 1 -Exactly
+ }
+ It 'fails closed for an unknown Cloudflare token type' {
+  Mock Invoke-S3CloudflareRest {throw 'must not run'} -ModuleName Cloudflare
+  {Test-S3CloudflareSession -Token token -TokenType unknown -SelectedAccountId account-a}|Should -Throw '*CLOUDFLARE_TOKEN_TYPE_UNKNOWN*'
+  Should -Invoke Invoke-S3CloudflareRest -ModuleName Cloudflare -Times 0 -Exactly
+ }
+ It 'retains the OAuth token type returned by Wrangler' {
+  Mock Invoke-S3Process {[pscustomobject]@{ExitCode=0;StdOut='{"type":"oauth","token":"synthetic-token"}'}} -ModuleName Cloudflare
+  $record=Get-S3CloudflareToken -Context (Get-TestContext Live)
+  $record.type|Should -Be oauth;$record.token|Should -Be synthetic-token
+ }
  It 'completes a fully mocked accepted preflight without cloud writes' {
   $c=Get-TestContext Live
-  Mock Test-S3CloudflareSession {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-  Mock Get-S3CloudflareAccounts {[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+  Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
+  Mock Get-S3CloudflareAccounts {throw 'OAuth session result must supply validated accounts'} -ModuleName Cloudflare
   Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
   Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
   Mock Invoke-S3CloudflareRest {param($Method,$Uri)[void]$Method;if($Uri -match 'paygo'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}}elseif($Uri -match 'account-settings'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}}}elseif($Uri -match 'subdomain'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}}}else{[pscustomobject]@{success=$true;errors=@();result=@()}}} -ModuleName Cloudflare
@@ -102,7 +139,9 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
   Mock Test-S3WorkersObservabilityAuthorization {[ordered]@{status='PASS'}} -ModuleName Cloudflare
   Mock Test-S3WorkersDevSubdomain {[ordered]@{status='PASS'}} -ModuleName Cloudflare
   Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
-  $r=Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token token -AttestationChoice {'1'} -SkipOpenBillingPage
+  $r=Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token token -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage
   $r.status|Should -Be PASS;$r.attestation|Should -Be YES;$c.State.resources.Count|Should -Be 0
+  Should -Invoke Test-S3WorkersObservabilityAuthorization -ModuleName Cloudflare -Times 1 -Exactly
+  Should -Invoke Get-S3CloudflareAccounts -ModuleName Cloudflare -Times 0 -Exactly
  }
 }

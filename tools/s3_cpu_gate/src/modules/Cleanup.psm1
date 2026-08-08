@@ -187,9 +187,11 @@ function Restore-S3CloudflareCleanupCredential {
 
     $token = $null
     try {
-        $token = Get-S3CloudflareToken -Context $Context
-        [void](Test-S3CloudflareSession -Token $token)
-        $accounts = Get-S3CloudflareAccounts -Token $token
+        $tokenRecord = Get-S3CloudflareToken -Context $Context
+        $token = [string]$tokenRecord.token
+        $tokenType = [string]$tokenRecord.type
+        $session = Test-S3CloudflareSession -Token $token -TokenType $tokenType -SelectedAccountId $owned.accountId
+        $accounts = if ($tokenType -eq 'oauth') {$session.accounts} else {Get-S3CloudflareAccounts -Token $token}
         $selected = Select-S3CloudflareAccount -Accounts @($accounts.items) -SelectedAccountId $owned.accountId
         $selectedAccountId = [string](Get-S3CloudflareValue -InputObject $selected -Name @('id'))
         if ($selectedAccountId -ne $owned.accountId) { throw 'CLOUDFLARE_RESUME_ACCOUNT_MISMATCH' }

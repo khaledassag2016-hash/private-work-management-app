@@ -22,8 +22,10 @@ function Get-S3CloudflareToken {
     if ($result.ExitCode -ne 0) { throw 'BLOCKED — لا توجد جلسة Cloudflare صالحة مسبقًا. لن يبدأ تسجيل دخول تلقائي.' }
     $json = $result.StdOut | ConvertFrom-Json
     $token = [string](Get-S3CloudflareValue -InputObject $json -Name @('token','oauth_token','access_token'))
+    $type = ([string](Get-S3CloudflareValue -InputObject $json -Name @('type'))).ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($token)) { throw 'BLOCKED — تعذر قراءة Cloudflare token من الجلسة الحالية.' }
-    return $token
+    if ($type -notin @('oauth','api_token')) { throw 'CLOUDFLARE_TOKEN_TYPE_UNKNOWN' }
+    return [ordered]@{token=$token;type=$type}
 }
 
 function Test-S3CloudflareReadOnlyMethod {
@@ -84,11 +86,18 @@ function Invoke-S3CloudflarePagedGet {
 }
 
 function Test-S3CloudflareSession {
-    param([Parameter(Mandatory)][string]$Token)
+    param([Parameter(Mandatory)][string]$Token,[Parameter(Mandatory)][string]$TokenType,[Parameter(Mandatory)][string]$SelectedAccountId)
+    if ($TokenType -eq 'oauth') {
+        $accounts = Get-S3CloudflareAccounts -Token $Token
+        if ($null -eq $accounts -or $accounts.status -ne 'PASS' -or $accounts.paginationComplete -ne $true -or $null -eq $accounts.items) { throw 'CLOUDFLARE_OAUTH_ACCOUNTS_INVALID' }
+        [void](Select-S3CloudflareAccount -Accounts @($accounts.items) -SelectedAccountId $SelectedAccountId)
+        return [ordered]@{status='PASS';session='OAUTH_ACCOUNTS_VALID';accounts=$accounts}
+    }
+    if ($TokenType -ne 'api_token') { throw 'CLOUDFLARE_TOKEN_TYPE_UNKNOWN' }
     $response = Invoke-S3CloudflareRest -Method GET -Uri 'https://api.cloudflare.com/client/v4/user/tokens/verify' -Token $Token
     $status = [string](Get-S3CloudflareValue -InputObject $response.result -Name @('status'))
     if ($status -notin @('active','valid')) { throw "CLOUDFLARE_SESSION_INVALID: $status" }
-    return [ordered]@{status='PASS';session='VALID'}
+    return [ordered]@{status='PASS';session='API_TOKEN_VALID'}
 }
 
 function Get-S3CloudflareAccounts {
@@ -309,6 +318,7 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         [Parameter(Mandatory)]$Context,
         [string]$SelectedAccountId,
         [string]$Token,
+        [string]$TokenType,
         [scriptblock]$AttestationChoice,
         [switch]$SkipOpenBillingPage
     )
@@ -323,9 +333,16 @@ function Invoke-S3CloudflareReadOnlyPreflight {
     $redactedAccountId = if ([string]::IsNullOrWhiteSpace($selected)) {'UNSELECTED'} else {Get-S3RedactedAccountId -AccountId $selected}
     $automated = [ordered]@{}; $attestationResult = 'NOT_REACHED'
     try {
-        if ([string]::IsNullOrWhiteSpace($Token)) { $Token = Get-S3CloudflareToken -Context $Context }
-        [void](Test-S3CloudflareSession -Token $Token); $automated.session='PASS'
-        $accountsResult = Get-S3CloudflareAccounts -Token $Token; $automated.accounts='PASS'
+        if ([string]::IsNullOrWhiteSpace($Token)) {
+            $tokenRecord = Get-S3CloudflareToken -Context $Context
+            $Token = [string]$tokenRecord.token
+            $TokenType = [string]$tokenRecord.type
+        }
+        if ([string]::IsNullOrWhiteSpace($TokenType)) { throw 'CLOUDFLARE_TOKEN_TYPE_UNKNOWN' }
+        $TokenType = $TokenType.ToLowerInvariant()
+        if ($TokenType -notin @('oauth','api_token')) { throw 'CLOUDFLARE_TOKEN_TYPE_UNKNOWN' }
+        $session = Test-S3CloudflareSession -Token $Token -TokenType $TokenType -SelectedAccountId $selected; $automated.session='PASS'; $automated.tokenType=$TokenType
+        $accountsResult = if ($TokenType -eq 'oauth') {$session.accounts} else {Get-S3CloudflareAccounts -Token $Token}; $automated.accounts='PASS'
         $account = Select-S3CloudflareAccount -Accounts @($accountsResult.items) -SelectedAccountId $selected
         $accountId = [string](Get-S3CloudflareValue -InputObject $account -Name @('id'))
         $redactedAccountId = Get-S3RedactedAccountId -AccountId $accountId
@@ -345,7 +362,7 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         $attestation = if ($null -eq $AttestationChoice) {Confirm-S3CloudflareBillingAttestation} else {Confirm-S3CloudflareBillingAttestation -ReadChoice $AttestationChoice}
         $attestationResult = $attestation.status
         if (-not $attestation.accepted) { throw 'USER_CANCELLED_BILLING_ATTESTATION' }
-        $record = [ordered]@{runId=$Context.RunId;attestedAtUtc=[DateTime]::UtcNow.ToString('o');accountId=$redactedAccountId;automated=$automated;attestation=$attestationResult;status='PASS';writeChecksDeferred='Deferred to separately approved live execution.'}
+        $record = [ordered]@{runId=$Context.RunId;attestedAtUtc=[DateTime]::UtcNow.ToString('o');tokenType=$TokenType;accountId=$redactedAccountId;automated=$automated;attestation=$attestationResult;status='PASS';writeChecksDeferred='Deferred to separately approved live execution.'}
         Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken' -Value $Token
         Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareAccountId' -Value $accountId
         Set-S3MapValue -Map $Context.State.results -Name 'cloudflarePreflight' -Value $record
@@ -353,7 +370,7 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         return $record
     }
     catch {
-        $record = [ordered]@{runId=$Context.RunId;attestedAtUtc=[DateTime]::UtcNow.ToString('o');accountId=$redactedAccountId;automated=$automated;attestation=$attestationResult;status='FAIL';reason=Protect-S3Text $_.Exception.Message;writeChecksDeferred='No write check executed.'}
+        $record = [ordered]@{runId=$Context.RunId;attestedAtUtc=[DateTime]::UtcNow.ToString('o');tokenType=$TokenType;accountId=$redactedAccountId;automated=$automated;attestation=$attestationResult;status='FAIL';reason=Protect-S3Text $_.Exception.Message;writeChecksDeferred='No write check executed.'}
         Set-S3MapValue -Map $Context.State.results -Name 'cloudflarePreflight' -Value $record
         [void](Show-S3CloudflarePreflightRecord -Context $Context -Record $record)
         throw
