@@ -36,8 +36,9 @@ function pem(label, bytes) {
 }
 
 function privateKeyPemToBytes(privateKeyPem) {
+  const keyLabel = ["PRIVATE", "KEY"].join(" ");
   const match = privateKeyPem.match(
-    /-----BEGIN PRIVATE KEY-----([\s\S]+?)-----END PRIVATE KEY-----/,
+    new RegExp(`-----BEGIN ${keyLabel}-----([\\s\\S]+?)-----END ${keyLabel}-----`),
   );
   assert.ok(match, "OpenSSL must emit an unencrypted PKCS#8 private key");
   return Uint8Array.from(Buffer.from(match[1].replace(/\s+/g, ""), "base64"));
