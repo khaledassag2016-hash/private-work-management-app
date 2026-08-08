@@ -24,6 +24,8 @@ def main() -> int:
             "discover",
             "-s",
             "tests",
+            "-t",
+            ".",
             "-p",
             "test_s2_*.py",
             "-v",
