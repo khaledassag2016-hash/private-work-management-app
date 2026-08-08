@@ -7,6 +7,29 @@ from pathlib import Path
 
 
 class S3RepositoryGateIsolatedTests(unittest.TestCase):
+    def test_repository_secret_scan_accepts_ephemeral_x509_fixture(self) -> None:
+        root_dir = Path(__file__).resolve().parents[1]
+        scanner = root_dir / "tools" / "s3_cpu_gate" / "src" / "python" / "secret_scan.py"
+        result = subprocess.run(
+            [sys.executable, str(scanner), str(root_dir)],
+            cwd=str(root_dir),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=(
+                "repository secret scan found a static secret\n"
+                f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+            ),
+        )
+        worker_auth = (root_dir / "tests" / "test_worker_auth.mjs").read_text()
+        private_key_marker = "-----BEGIN " + "PRIVATE KEY-----"
+        self.assertNotIn(private_key_marker, worker_auth)
+
     def test_foundation_isolated_sibling_imports(self) -> None:
         root_dir = Path(__file__).resolve().parents[1]
         script_path = root_dir / "scripts" / "validate_foundation.py"
