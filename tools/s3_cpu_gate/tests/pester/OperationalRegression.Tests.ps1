@@ -133,9 +133,26 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
   Mock Get-S3CloudflareAccounts {throw 'OAuth session result must supply validated accounts'} -ModuleName Cloudflare
   Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
   Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+  Mock Invoke-RestMethod {
+      param($Method, $Uri, $Headers, $TimeoutSec)
+      if ($Uri -match '/subscriptions') {
+          return [pscustomobject]@{success=$true; errors=@(); result=@()}
+      }
+      if ($Uri -match '/paygo-usage-info') {
+          return [pscustomobject]@{success=$true; errors=@(); result=[ordered]@{status='disabled'; covered=$false; subscriptions=@()}}
+      }
+      if ($Uri -match '/accounts/[^/]+/workers/account-settings') {
+          return [pscustomobject]@{success=$true; errors=@(); result=[ordered]@{default_usage_model='bundled'}}
+      }
+      if ($Uri -match '/workers/subdomain') {
+          return [pscustomobject]@{success=$true; errors=@(); result=[ordered]@{subdomain='example'; enabled=$true}}
+      }
+      if ($Uri -match '/user/tokens/verify') {
+          return [pscustomobject]@{success=$true; errors=@(); result=[ordered]@{status='active'}}
+      }
+      return [pscustomobject]@{success=$true; errors=@(); result=@()}
+  } -ModuleName Cloudflare
   Mock Invoke-S3CloudflareRest {param($Method,$Uri)[void]$Method;if($Uri -match 'paygo'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}}elseif($Uri -match 'account-settings'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}}}elseif($Uri -match 'subdomain'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}}}else{[pscustomobject]@{success=$true;errors=@();result=@()}}} -ModuleName Cloudflare
-  Mock Invoke-S3CloudflareBillingPagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
-  Mock Invoke-S3CloudflareBillingRead {[pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}} -ModuleName Cloudflare
   Mock Test-S3CloudflarePayGo {[ordered]@{status='PASS'}} -ModuleName Cloudflare
   Mock Test-S3WorkersAccountSettings {[ordered]@{status='PASS'}} -ModuleName Cloudflare
   Mock Test-S3WorkersObservabilityAuthorization {[ordered]@{status='PASS'}} -ModuleName Cloudflare
@@ -145,6 +162,7 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
   $r.status|Should -Be PASS;$r.attestation|Should -Be YES;$c.State.resources.Count|Should -Be 0
   Should -Invoke Test-S3WorkersObservabilityAuthorization -ModuleName Cloudflare -Times 1 -Exactly
   Should -Invoke Get-S3CloudflareAccounts -ModuleName Cloudflare -Times 0 -Exactly
+  Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 5
  }
 }
 
