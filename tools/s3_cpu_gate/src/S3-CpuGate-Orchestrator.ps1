@@ -19,7 +19,7 @@ try{
  if($context.State.currentState -eq '20_REPOSITORY_GATE'){Show-S3Stage 3 9 'الفرع وDraft PR' 'في Plan لا كتابة. في Live ينشأ فرع وDraft PR فقط.';$branchPr=Invoke-S3BranchAndDraftPr -Context $context;Set-S3MapValue -Map $context.State.results -Name 'branchPr' -Value $branchPr;Set-S3Checkpoint $context '30_BRANCH_AND_DRAFT_PR'}
  if($Mode -eq 'Plan'){@('# نتيجة Plan','',"- Run ID: $($context.RunId)",'- لا موارد سحابية.','- لا فرع أو PR.','- الخطوة التالية بعد المراجعة: Simulation أو Live.')|Set-Content (Join-Path $context.Root 'reports\plan.md') -Encoding UTF8;Write-Information -InformationAction Continue 'اكتملت الخطة الآمنة دون أي كتابة.';return}
  if($context.State.currentState -eq '30_BRANCH_AND_DRAFT_PR'){
-  Show-S3Stage 4 9 'بوابة Cloudflare للقراءة فقط' 'تعمل قبل Firebase وقبل أي كتابة سحابية.';Assert-S3NoSecret -Context $context -Path $context.Root
+  Show-S3Stage 4 9 'بوابة Cloudflare للقراءة فقط' 'تعمل قبل Firebase وقبل أي كتابة سحابية.';[void](Assert-S3DeploymentPayloadNoSecret -Context $context -Scope PreCloud)
   $selectedAccountId=$CloudflareAccountId
   if($Mode -eq 'Live' -and [string]::IsNullOrWhiteSpace($selectedAccountId)){$selectedAccountId=Read-Host 'أدخل Cloudflare Account ID الذي اخترته بوضوح من قائمة الحسابات'}
   $preflight=Invoke-S3CloudflareReadOnlyPreflight -Context $context -SelectedAccountId $selectedAccountId

@@ -12,7 +12,8 @@ RULES={
 IGNORE={"secret_scan.py","redaction.py","SecretScanning.Tests.ps1"}
 def scan(root:Path):
  findings=[]
- for path in root.rglob('*'):
+ paths=[root] if root.is_file() else root.rglob('*')
+ for path in paths:
   if not path.is_file() or path.name in IGNORE or '.git' in path.parts: continue
   if path.suffix.lower() in {'.zip','.png','.jpg','.exe','.dll','.tar','.gz'}: continue
   try: text=path.read_text(encoding='utf-8')
@@ -21,6 +22,6 @@ def scan(root:Path):
    for m in rx.finditer(text): findings.append({"rule":name,"path":str(path.relative_to(root)),"offset":m.start()})
  return findings
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('root',type=Path);a=p.parse_args();f=scan(a.root)
+ p=argparse.ArgumentParser();p.add_argument('root',type=Path,nargs='+');a=p.parse_args();f=[finding for root in a.root for finding in scan(root)]
  for x in f: print(f"{x['rule']} {x['path']} @{x['offset']}")
  raise SystemExit(1 if f else 0)

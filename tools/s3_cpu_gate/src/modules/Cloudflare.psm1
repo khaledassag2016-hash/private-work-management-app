@@ -366,7 +366,7 @@ function New-S3WranglerConfig {
     $workerDirectory = Join-Path $Context.Root 'workspace\worker'
     if (-not $PSCmdlet.ShouldProcess($workerDirectory,'Create Wrangler configuration')) { return }
     New-Item -ItemType Directory -Path $workerDirectory -Force | Out-Null
-    Copy-Item (Join-Path $Context.Root 'workspace\package\worker\src') $workerDirectory -Recurse -Force
+    Copy-Item (Join-Path $Context.Root 'worker\src') $workerDirectory -Recurse -Force
     $configuration = [ordered]@{'$schema'='node_modules/wrangler/config-schema.json';name=$WorkerName;main='src/index.js';compatibility_date='2026-08-01';workers_dev=$true;observability=@{enabled=$true;logs=@{enabled=$true;invocation_logs=$true;head_sampling_rate=1}};vars=@{FIREBASE_PROJECT_ID=$ProjectId;RUN_MARKER=$Context.RunId;TEST_CONTROLS=$(if($TestControls){'enabled'}else{'disabled'});TEST_RESET_NONCE=$TestNonce};d1_databases=@(@{binding='DB';database_name="s3cpu-$($Context.RunId)-d1";database_id=$DatabaseId})}
     $path = Join-Path $workerDirectory 'wrangler.json'
     $configuration | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $path -Encoding UTF8
@@ -390,16 +390,17 @@ function Invoke-S3CloudflareProvision {
     try {
         $worker=('s3cpu-'+$Context.RunId+'-worker').ToLower();if($worker.Length -gt 63){$worker=$worker.Substring(0,63)}
         $databaseName=('s3cpu-'+$Context.RunId+'-d1').ToLower();if($databaseName.Length -gt 63){$databaseName=$databaseName.Substring(0,63)}
+        [void](Assert-S3DeploymentPayloadNoSecret -Context $Context -Scope PreCloud)
         $create=Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','create',$databaseName) -TimeoutSeconds 180
         $match=[regex]::Match($create.StdOut,'(?i)database_id\s*=\s*["'']?([0-9a-f-]{32,36})');if(-not $match.Success){$match=[regex]::Match($create.StdOut,'([0-9a-f]{8}-[0-9a-f-]{27,})')};if(-not $match.Success){throw 'تعذر استخراج D1 database ID.'};$databaseId=$match.Groups[1].Value
         $resource=[ordered]@{accountId=$accountId;worker=$worker;d1Name=$databaseName;d1Id=$databaseId;marker=$Context.RunId;freePlan=$true;billingAbsent=$true}
         Set-S3MapValue -Map $Context.State.resources -Name 'cloudflare' -Value $resource;Write-S3State -Root $Context.Root -State $Context.State
         $firebaseResource=Get-S3MapValue -Map $Context.State.resources -Name 'firebase';$projectId=[string](Get-S3MapValue -Map $firebaseResource -Name 'projectId');$nonce=[guid]::NewGuid().ToString('N');$Context.RuntimeSecrets.testResetNonce=$nonce
         $configurationPath=New-S3WranglerConfig -Context $Context -WorkerName $worker -DatabaseId $databaseId -ProjectId $projectId -TestNonce $nonce -TestControls $true
-        $schema=Join-Path $Context.Root 'workspace\package\worker\schema.sql';Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$databaseName,'--remote','--file',$schema,'--config',$configurationPath,'--yes') -TimeoutSeconds 300|Out-Null
+        $schema=Join-Path $Context.Root 'worker\schema.sql';[void](Assert-S3DeploymentPayloadNoSecret -Context $Context -Scope CloudflareExecution);Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$databaseName,'--remote','--file',$schema,'--config',$configurationPath,'--yes') -TimeoutSeconds 300|Out-Null
         $runtime=$Context.RuntimeSecrets;$sql="INSERT INTO app_users(uid,role,active,run_marker) VALUES ('$($runtime.uid1)','person_1',1,'$($Context.RunId)'),('$($runtime.uid2)','person_2',1,'$($Context.RunId)');";$sqlFile=Join-Path $Context.Root 'temp\allowlist.sql';Set-Content -LiteralPath $sqlFile -Value $sql -Encoding UTF8
-        Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$databaseName,'--remote','--file',$sqlFile,'--config',$configurationPath,'--yes') -TimeoutSeconds 300|Out-Null;Remove-Item -LiteralPath $sqlFile -Force
-        $deploy=Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('deploy','--config',$configurationPath) -WorkingDirectory (Split-Path -Parent $configurationPath) -TimeoutSeconds 600
+        [void](Assert-S3DeploymentPayloadNoSecret -Context $Context -Scope D1Seed);Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$databaseName,'--remote','--file',$sqlFile,'--config',$configurationPath,'--yes') -TimeoutSeconds 300|Out-Null;Remove-Item -LiteralPath $sqlFile -Force
+        [void](Assert-S3DeploymentPayloadNoSecret -Context $Context -Scope FinalDeployment);$deploy=Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('deploy','--config',$configurationPath) -WorkingDirectory (Split-Path -Parent $configurationPath) -TimeoutSeconds 600
         $urlMatch=[regex]::Match($deploy.StdOut,'https://[^\s]+\.workers\.dev');if(-not $urlMatch.Success){throw 'تعذر إثبات workers.dev URL.'};$url=$urlMatch.Value.TrimEnd('/')
         $cloudflareResource=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';Set-S3MapValue -Map $cloudflareResource -Name 'url' -Value $url
         return [ordered]@{status='PASS';worker=$worker;d1=$databaseName;url=$url;freePlan=$true;billingAbsent=$true}

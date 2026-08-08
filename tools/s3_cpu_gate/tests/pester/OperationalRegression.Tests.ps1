@@ -1,5 +1,19 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
 Describe 'Operational regression coverage' {
+ It 'does not scan the full runtime root before Cloudflare preflight' {
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
+  $source|Should -Not -Match 'Assert-S3NoSecret\s+-Context\s+\$context\s+-Path\s+\$context\.Root'
+  $source|Should -Match 'Assert-S3DeploymentPayloadNoSecret\s+-Context\s+\$context\s+-Scope\s+PreCloud'
+ }
+ It 'requires a positive allowlist and direct scans before every Cloudflare deployment write' {
+  $common=Get-Content (Join-Path $SourceRoot 'src\modules\Common.psm1') -Raw
+  $cloudflare=Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw
+  $common|Should -Match "DEPLOYMENT_PAYLOAD_UNALLOWLISTED_FILE"
+  $common|Should -Match "SECRET_SCAN_SCOPE_EMPTY"
+  $cloudflare.IndexOf("Assert-S3DeploymentPayloadNoSecret -Context `$Context -Scope PreCloud")|Should -BeLessThan $cloudflare.IndexOf("'d1','create'")
+  $cloudflare.IndexOf("Assert-S3DeploymentPayloadNoSecret -Context `$Context -Scope CloudflareExecution")|Should -BeLessThan $cloudflare.IndexOf("'d1','execute'")
+  $cloudflare.LastIndexOf("Assert-S3DeploymentPayloadNoSecret -Context `$Context -Scope FinalDeployment")|Should -BeLessThan $cloudflare.LastIndexOf("'deploy','--config'")
+ }
  It 'normalizes JSON resume state for mutable resource and result writes' {
   $state=[ordered]@{
    schemaVersion=2;runId='s3cpu-resume-test';mode='Simulation';currentState='40_PRE_CLOUD_GATE'
