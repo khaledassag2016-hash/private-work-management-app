@@ -148,15 +148,15 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
 
 Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     BeforeEach {
-        $script:ActiveBillingToken = $null
+        Set-S3ActiveBillingToken -Token $null
         $env:S3_CLOUDFLARE_BILLING_TOKEN = $null
         $env:S3_CLOUDFLARE_BILLING_READ_TOKEN = $null
     }
 
     It 'OAuth remains the primary credential and billing token is separate' {
         $c = Get-TestContext Live
-        $c.RuntimeSecrets.cloudflareToken | Should -BeNullOrEmpty
-        $c.RuntimeSecrets.cloudflareAccountId | Should -BeNullOrEmpty
+        (Get-S3MapValue -Map $c.RuntimeSecrets -Name 'cloudflareToken') | Should -BeNullOrEmpty
+        (Get-S3MapValue -Map $c.RuntimeSecrets -Name 'cloudflareAccountId') | Should -BeNullOrEmpty
     }
 
     It 'Missing Billing credential in Live path throws MANUAL_ACTION_REQUIRED_BILLING_READ_TOKEN' {
@@ -194,16 +194,16 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
 
     It 'billing token cannot be used for Workers/D1/Observability APIs' {
         $c = Get-TestContext Live
-        $script:ActiveBillingToken = 'billing-token-xyz'
+        Set-S3ActiveBillingToken -Token 'billing-token-xyz'
         { Invoke-S3CloudflareRest -Method GET -Uri 'https://api.cloudflare.com/client/v4/accounts/a/workers/scripts' -Token 'billing-token-xyz' } | Should -Throw '*CLOUDFLARE_BILLING_ENDPOINT_FORBIDDEN*'
-        $script:ActiveBillingToken = $null
+        Set-S3ActiveBillingToken -Token $null
     }
 
     It 'billing token cannot be used with write operations POST/PUT/PATCH/DELETE' {
         $c = Get-TestContext Live
-        $script:ActiveBillingToken = 'billing-token-xyz'
+        Set-S3ActiveBillingToken -Token 'billing-token-xyz'
         { Invoke-S3CloudflareRest -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/a/subscriptions' -Token 'billing-token-xyz' -Body @{} } | Should -Throw '*CLOUDFLARE_BILLING_WRITE_FORBIDDEN*'
-        $script:ActiveBillingToken = $null
+        Set-S3ActiveBillingToken -Token $null
     }
 
     It 'subscriptions = 200 is accepted' {
@@ -369,7 +369,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
         Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
 
         $r = Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz'
-        $script:ActiveBillingToken | Should -BeNullOrEmpty
+        (Get-S3ActiveBillingToken) | Should -BeNullOrEmpty
     }
 
     It 'finally/cleanup logic works after Billing exception' {
@@ -379,7 +379,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
             throw 'Billing API error simulation'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
-        $script:ActiveBillingToken | Should -BeNullOrEmpty
+        (Get-S3ActiveBillingToken) | Should -BeNullOrEmpty
     }
 
     It 'after billing checks billing credential is not available to the rest of Cloudflare preflight' {
@@ -393,7 +393,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
             if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
             if ($Uri -match 'account-settings') {
                 # Verify ActiveBillingToken is null during subsequent steps
-                $script:ActiveBillingToken | Should -BeNullOrEmpty
+                (Get-S3ActiveBillingToken) | Should -BeNullOrEmpty
                 return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}}
             }
             if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
@@ -476,6 +476,6 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
         Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
 
         $r = Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz'
-        $c.State.results.cloudflarePreflight.billingToken | Should -BeNullOrEmpty
+        (Get-S3MapValue -Map $c.State.results.cloudflarePreflight -Name 'billingToken') | Should -BeNullOrEmpty
     }
 }

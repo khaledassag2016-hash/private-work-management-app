@@ -3,6 +3,15 @@ $ErrorActionPreference = 'Stop'
 
 $script:ActiveBillingToken = $null
 
+function Set-S3ActiveBillingToken {
+    param([string]$Token)
+    $script:ActiveBillingToken = $Token
+}
+
+function Get-S3ActiveBillingToken {
+    return $script:ActiveBillingToken
+}
+
 function Get-S3CloudflareValue {
     param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string[]]$Name)
     if ($null -eq $InputObject) { return $null }
@@ -371,7 +380,7 @@ function Invoke-S3CloudflareReadOnlyPreflight {
             throw 'MANUAL_ACTION_REQUIRED_BILLING_READ_TOKEN'
         }
 
-        $script:ActiveBillingToken = $resolvedBillingToken
+        Set-S3ActiveBillingToken -Token $resolvedBillingToken
         try {
             $subscriptions = Invoke-S3CloudflarePagedGet -Uri "$base/subscriptions" -Token $resolvedBillingToken
             [void](Test-S3CloudflareSubscriptions -Subscriptions @($subscriptions.items)); $automated.subscriptions='PASS'
@@ -379,7 +388,7 @@ function Invoke-S3CloudflareReadOnlyPreflight {
             [void](Test-S3CloudflarePayGo -PayGoResult $payGoResponse.result); $automated.payGo='PASS'
         }
         finally {
-            $script:ActiveBillingToken = $null
+            Set-S3ActiveBillingToken -Token $null
             $resolvedBillingToken = $null
             $BillingToken = $null
             [GC]::Collect()
