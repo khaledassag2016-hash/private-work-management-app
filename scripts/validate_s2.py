@@ -21,7 +21,13 @@ def main() -> int:
             "-I",
             "-m",
             "unittest",
-            "tests.test_s3_repository_gate_s2_isolated",
+            "discover",
+            "-s",
+            "tests",
+            "-t",
+            ".",
+            "-p",
+            "test_s3_repository_gate_s2_isolated.py",
             "-v",
         ]
     )
