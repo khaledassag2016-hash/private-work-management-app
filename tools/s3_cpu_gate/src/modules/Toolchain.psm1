@@ -88,18 +88,7 @@ function Install-S3PowerShellModule {
  foreach($name in @('Pester','PSScriptAnalyzer')){$version=$script:ToolDefinitions[$name].Version;if(-not(Test-Path (Join-Path $modulePath "$name\$version"))){Save-Module -Name $name -RequiredVersion $version -Path $modulePath -Repository PSGallery -Force -ErrorAction Stop}}
 }
 function Get-S3ToolPlan {
- $rows=@()
- foreach($name in $script:ToolDefinitions.Keys){
-  $definition=$script:ToolDefinitions[$name]
-  if(-not $definition.ContainsKey('Version') -or -not $definition.ContainsKey('Purpose')){throw "TOOL_DEFINITION_INVALID: $name"}
-  $approxMb=0
-  if($definition.ContainsKey('ApproxMB') -and $null -ne $definition['ApproxMB']){$approxMb=$definition['ApproxMB']}
-  $source='PowerShell Gallery/npm official registry'
-  if($definition.ContainsKey('Url') -and -not [string]::IsNullOrWhiteSpace([string]$definition['Url'])){$source=[string]$definition['Url']}
-  elseif($definition.ContainsKey('Repo') -and -not [string]::IsNullOrWhiteSpace([string]$definition['Repo'])){$source=[string]$definition['Repo']}
-  $rows+=[pscustomobject]@{Name=$name;Version=[string]$definition['Version'];ApproxMB=$approxMb;Purpose=[string]$definition['Purpose'];Source=$source}
- }
- return $rows
+ $rows=@();foreach($name in $script:ToolDefinitions.Keys){$definition=$script:ToolDefinitions[$name];$rows+=[pscustomobject]@{Name=$name;Version=$definition.Version;ApproxMB=($definition.ApproxMB ?? 0);Purpose=$definition.Purpose;Source=($definition.Url ?? $definition.Repo ?? 'PowerShell Gallery/npm official registry')}};return $rows
 }
 function Initialize-S3LocalToolchain {
  [CmdletBinding()]param([string]$Root='C:\Users\MC\Desktop\1',[switch]$NonInteractive)

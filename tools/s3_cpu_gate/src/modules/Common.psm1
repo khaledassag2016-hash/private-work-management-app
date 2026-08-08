@@ -136,12 +136,7 @@ function Invoke-S3Process {
   [Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$FilePath,[string[]]$ArgumentList=@(),
   [int]$TimeoutSeconds=300,[string]$WorkingDirectory=$Context.Root,[switch]$AllowFailure,[hashtable]$Environment=@{},[switch]$SensitiveOutput
  )
- $resolvedFilePath=$FilePath
- if($IsWindows -and $FilePath -notmatch '[\\/.]'){
-  $candidate=Get-Command ($FilePath + '.cmd') -ErrorAction SilentlyContinue | Select-Object -First 1
-  if($null -ne $candidate){$resolvedFilePath=$candidate.Source}
- }
- $psi=[Diagnostics.ProcessStartInfo]::new();$psi.FileName=$resolvedFilePath;$psi.WorkingDirectory=$WorkingDirectory;$psi.UseShellExecute=$false;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.CreateNoWindow=$true
+ $psi=[Diagnostics.ProcessStartInfo]::new();$psi.FileName=$FilePath;$psi.WorkingDirectory=$WorkingDirectory;$psi.UseShellExecute=$false;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.CreateNoWindow=$true
  foreach($arg in $ArgumentList){[void]$psi.ArgumentList.Add($arg)}
  foreach($k in $Environment.Keys){$psi.Environment[$k]=[string]$Environment[$k]}
  $p=[Diagnostics.Process]::new();$p.StartInfo=$psi
