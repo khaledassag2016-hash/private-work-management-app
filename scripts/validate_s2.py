@@ -15,6 +15,16 @@ def run(command: list[str]) -> None:
 
 
 def main() -> int:
+    run(
+        [
+            sys.executable,
+            "-I",
+            "-m",
+            "unittest",
+            "tests.test_s3_repository_gate_s2_isolated",
+            "-v",
+        ]
+    )
     run([sys.executable, "-m", "py_compile", "prototype/s2_local_architecture/core.py"])
     run(
         [
