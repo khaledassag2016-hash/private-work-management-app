@@ -1,15 +1,73 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ActiveBillingToken = $null
-
-function Set-S3ActiveBillingToken {
-    param([string]$Token)
-    $script:ActiveBillingToken = $Token
+function Invoke-S3CloudflareBillingRead {
+    param(
+        [Parameter(Mandatory)][string]$Method,
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Token,
+        [Parameter(Mandatory)][string]$ExpectedAccountId,
+        [int]$TimeoutSeconds = 90
+    )
+    $normalizedMethod = $Method.ToUpperInvariant()
+    if ($normalizedMethod -ne 'GET') {
+        throw "CLOUDFLARE_BILLING_WRITE_FORBIDDEN: Method $Method is forbidden for billing token"
+    }
+    if ([string]::IsNullOrWhiteSpace($ExpectedAccountId)) {
+        throw "CLOUDFLARE_BILLING_ACCOUNT_MISSING: Expected Account ID is required"
+    }
+    $match = [regex]::Match($Uri, '(?i)^https://api.cloudflare.com/client/v4/accounts/([^/]+)/(subscriptions|paygo-usage-info)(?:\?.*)?$')
+    if (-not $match.Success) {
+        throw "CLOUDFLARE_BILLING_ENDPOINT_FORBIDDEN: URI $Uri is not a valid billing endpoint"
+    }
+    $uriAccountId = $match.Groups[1].Value
+    if ($uriAccountId -ne $ExpectedAccountId) {
+        throw "CLOUDFLARE_BILLING_ACCOUNT_MISMATCH: Account ID in URI does not match expected $ExpectedAccountId"
+    }
+    $parameters = @{
+        Method = 'GET'
+        Uri = $Uri
+        Headers = @{ Authorization = "Bearer $Token" }
+        TimeoutSec = $TimeoutSeconds
+    }
+    $response = Invoke-RestMethod @parameters
+    if ($response.success -eq $false -or @($response.errors).Count -gt 0) {
+        $safeErrors = Protect-S3Text (@($response.errors) | ConvertTo-Json -Depth 10 -Compress)
+        throw "CLOUDFLARE_API_ERROR: $safeErrors"
+    }
+    return $response
 }
 
-function Get-S3ActiveBillingToken {
-    return $script:ActiveBillingToken
+function Invoke-S3CloudflareBillingPagedGet {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Token,
+        [Parameter(Mandatory)][string]$ExpectedAccountId,
+        [ValidateRange(1,100)][int]$PerPage=50
+    )
+    $items = [Collections.Generic.List[object]]::new()
+    $pagesRead = [Collections.Generic.List[int]]::new()
+    $page = 1
+    while ($true) {
+        $separator = if ($Uri.Contains('?')) {'&'} else {'?'}
+        $response = Invoke-S3CloudflareBillingRead -Method GET -Uri "$Uri${separator}page=$page&per_page=$PerPage" -Token $Token -ExpectedAccountId $ExpectedAccountId
+        if ($response.success -eq $false -or @($response.errors).Count -gt 0) { throw "CLOUDFLARE_PAGED_API_ERROR: page=$page" }
+        $pagesRead.Add($page)
+        foreach ($item in @($response.result)) { $items.Add($item) }
+        $resultInfo = Get-S3CloudflareValue -InputObject $response -Name @('result_info')
+        if ($null -eq $resultInfo) {
+            if (@($response.result).Count -ge $PerPage) { throw "PAGINATION_METADATA_MISSING: page=$page" }
+            break
+        }
+        $reportedPage = Get-S3CloudflareValue -InputObject $resultInfo -Name @('page')
+        $totalPages = Get-S3CloudflareValue -InputObject $resultInfo -Name @('total_pages')
+        if ($null -eq $reportedPage -or $null -eq $totalPages) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+        if ([int]$reportedPage -ne $page) { throw "PAGINATION_PAGE_MISMATCH: expected=$page actual=$reportedPage" }
+        if ([int]$totalPages -lt $page) { throw "PAGINATION_TOTAL_INVALID: page=$page total=$totalPages" }
+        if ($page -ge [int]$totalPages) { break }
+        $page++
+    }
+    return [ordered]@{status='PASS';items=@($items);pagesRead=@($pagesRead);paginationComplete=$true}
 }
 
 function Get-S3CloudflareValue {
@@ -55,15 +113,6 @@ function Invoke-S3CloudflareRest {
         [AllowNull()][object]$Body = $null,
         [int]$TimeoutSeconds = 90
     )
-    if ($null -ne $script:ActiveBillingToken -and $Token -eq $script:ActiveBillingToken) {
-        $normalizedMethod = $Method.ToUpperInvariant()
-        if ($normalizedMethod -ne 'GET') {
-            throw "CLOUDFLARE_BILLING_WRITE_FORBIDDEN: Method $Method is forbidden for billing token"
-        }
-        if ($Uri -notmatch '/accounts/[^/]+/subscriptions(?:\?.*)?$' -and $Uri -notmatch '/accounts/[^/]+/paygo-usage-info(?:\?.*)?$') {
-            throw "CLOUDFLARE_BILLING_ENDPOINT_FORBIDDEN: URI $Uri is forbidden for billing token"
-        }
-    }
     [void](Test-S3CloudflareReadOnlyMethod -Method $Method -Uri $Uri)
     $parameters = @{Method=$Method;Uri=$Uri;Headers=@{Authorization="Bearer $Token"};TimeoutSec=$TimeoutSeconds}
     if ($null -ne $Body) {
@@ -371,27 +420,25 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         $base = "https://api.cloudflare.com/client/v4/accounts/$accountId"
 
         if ([string]::IsNullOrWhiteSpace($resolvedBillingToken)) {
-            $resolvedBillingToken = $env:S3_CLOUDFLARE_BILLING_TOKEN
-        }
-        if ([string]::IsNullOrWhiteSpace($resolvedBillingToken)) {
             $resolvedBillingToken = $env:S3_CLOUDFLARE_BILLING_READ_TOKEN
+            if (-not [string]::IsNullOrWhiteSpace($resolvedBillingToken)) {
+                [Environment]::SetEnvironmentVariable('S3_CLOUDFLARE_BILLING_READ_TOKEN', $null, 'Process')
+                $env:S3_CLOUDFLARE_BILLING_READ_TOKEN = $null
+            }
         }
         if ([string]::IsNullOrWhiteSpace($resolvedBillingToken)) {
             throw 'MANUAL_ACTION_REQUIRED_BILLING_READ_TOKEN'
         }
 
-        Set-S3ActiveBillingToken -Token $resolvedBillingToken
         try {
-            $subscriptions = Invoke-S3CloudflarePagedGet -Uri "$base/subscriptions" -Token $resolvedBillingToken
+            $subscriptions = Invoke-S3CloudflareBillingPagedGet -Uri "$base/subscriptions" -Token $resolvedBillingToken -ExpectedAccountId $accountId
             [void](Test-S3CloudflareSubscriptions -Subscriptions @($subscriptions.items)); $automated.subscriptions='PASS'
-            $payGoResponse = Invoke-S3CloudflareRest -Method GET -Uri "$base/paygo-usage-info" -Token $resolvedBillingToken
+            $payGoResponse = Invoke-S3CloudflareBillingRead -Method GET -Uri "$base/paygo-usage-info" -Token $resolvedBillingToken -ExpectedAccountId $accountId
             [void](Test-S3CloudflarePayGo -PayGoResult $payGoResponse.result); $automated.payGo='PASS'
         }
         finally {
-            Set-S3ActiveBillingToken -Token $null
             $resolvedBillingToken = $null
             $BillingToken = $null
-            [GC]::Collect()
         }
 
         $settingsResponse = Invoke-S3CloudflareRest -Method GET -Uri "$base/workers/account-settings" -Token $Token

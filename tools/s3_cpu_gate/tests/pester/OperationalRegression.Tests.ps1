@@ -148,8 +148,6 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
 
 Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     BeforeEach {
-        Set-S3ActiveBillingToken -Token $null
-        $env:S3_CLOUDFLARE_BILLING_TOKEN = $null
         $env:S3_CLOUDFLARE_BILLING_READ_TOKEN = $null
     }
 
@@ -165,20 +163,49 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token token -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage } | Should -Throw '*MANUAL_ACTION_REQUIRED_BILLING_READ_TOKEN*'
     }
 
+    It 'Billing environment variable is immediately wiped after acquisition' {
+        $c = Get-TestContext Live
+        $env:S3_CLOUDFLARE_BILLING_READ_TOKEN = 'secret-token-123'
+        Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingPagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingRead {[pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled'}}} -ModuleName Cloudflare
+        Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Test-S3CloudflarePayGo {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareRest {
+            param($Method,$Uri)
+            if($Uri -match 'account-settings'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}}}
+            elseif($Uri -match 'subdomain'){[pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}}}
+            else{[pscustomobject]@{success=$true;errors=@();result=@()}}
+        } -ModuleName Cloudflare
+        Mock Test-S3WorkersAccountSettings {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Test-S3WorkersObservabilityAuthorization {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Test-S3WorkersDevSubdomain {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
+
+        $r = Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage
+        $env:S3_CLOUDFLARE_BILLING_READ_TOKEN | Should -BeNullOrEmpty
+    }
+
     It 'billing token is used only for subscriptions and paygo, OAuth is used for the rest' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
-            param($Uri, $Token)
-            if ($Uri -match 'subscriptions') { $Token | Should -Be 'billing-token-xyz' }
-            else { $Token | Should -Be 'oauth-token-123' }
+        Mock Invoke-S3CloudflareBillingPagedGet {
+            param($Uri, $Token, $ExpectedAccountId)
+            $Token | Should -Be 'billing-token-xyz'
+            $ExpectedAccountId | Should -Be 'account-a'
             return [ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingRead {
+            param($Method, $Uri, $Token, $ExpectedAccountId)
+            $Token | Should -Be 'billing-token-xyz'
+            $ExpectedAccountId | Should -Be 'account-a'
+            return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {
             param($Method, $Uri, $Token)
-            if ($Uri -match 'paygo') { $Token | Should -Be 'billing-token-xyz'; return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
-            if ($Uri -match 'account-settings') { $Token | Should -Be 'oauth-token-123'; return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}} }
-            if ($Uri -match 'subdomain') { $Token | Should -Be 'oauth-token-123'; return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
+            $Token | Should -Be 'oauth-token-123'
+            if ($Uri -match 'account-settings') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}} }
+            if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
             return [pscustomobject]@{success=$true;errors=@();result=@()}
         } -ModuleName Cloudflare
         Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
@@ -193,28 +220,34 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     }
 
     It 'billing token cannot be used for Workers/D1/Observability APIs' {
-        $c = Get-TestContext Live
-        Set-S3ActiveBillingToken -Token 'billing-token-xyz'
-        { Invoke-S3CloudflareRest -Method GET -Uri 'https://api.cloudflare.com/client/v4/accounts/a/workers/scripts' -Token 'billing-token-xyz' } | Should -Throw '*CLOUDFLARE_BILLING_ENDPOINT_FORBIDDEN*'
-        Set-S3ActiveBillingToken -Token $null
+        Mock Invoke-RestMethod {throw 'must not run'} -ModuleName Cloudflare
+        { Invoke-S3CloudflareBillingRead -Method GET -Uri 'https://api.cloudflare.com/client/v4/accounts/account-a/workers/scripts' -Token 'billing-token-xyz' -ExpectedAccountId 'account-a' } | Should -Throw '*CLOUDFLARE_BILLING_ENDPOINT_FORBIDDEN*'
+        Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0
     }
 
     It 'billing token cannot be used with write operations POST/PUT/PATCH/DELETE' {
-        $c = Get-TestContext Live
-        Set-S3ActiveBillingToken -Token 'billing-token-xyz'
-        { Invoke-S3CloudflareRest -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/a/subscriptions' -Token 'billing-token-xyz' -Body @{} } | Should -Throw '*CLOUDFLARE_BILLING_WRITE_FORBIDDEN*'
-        Set-S3ActiveBillingToken -Token $null
+        Mock Invoke-RestMethod {throw 'must not run'} -ModuleName Cloudflare
+        { Invoke-S3CloudflareBillingRead -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/account-a/subscriptions' -Token 'billing-token-xyz' -ExpectedAccountId 'account-a' } | Should -Throw '*CLOUDFLARE_BILLING_WRITE_FORBIDDEN*'
+        Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0
+    }
+
+    It 'billing token cannot be used with mismatched account ID' {
+        Mock Invoke-RestMethod {throw 'must not run'} -ModuleName Cloudflare
+        { Invoke-S3CloudflareBillingRead -Method GET -Uri 'https://api.cloudflare.com/client/v4/accounts/different-account/subscriptions' -Token 'billing-token-xyz' -ExpectedAccountId 'account-a' } | Should -Throw '*CLOUDFLARE_BILLING_ACCOUNT_MISMATCH*'
+        Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0
     }
 
     It 'subscriptions = 200 is accepted' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             return [ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingRead {
+            return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {
             param($Method, $Uri, $Token)
-            if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
             if ($Uri -match 'account-settings') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}} }
             if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
             return [pscustomobject]@{success=$true;errors=@();result=@()}
@@ -233,7 +266,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'subscriptions = 401 fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             throw 'CLOUDFLARE_PAGED_API_ERROR: 401 Unauthorized'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
@@ -242,7 +275,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'subscriptions = 403 fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             throw 'CLOUDFLARE_PAGED_API_ERROR: 403 Forbidden'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
@@ -251,7 +284,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'subscriptions timeout fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             throw 'Invoke-RestMethod: The request timed out.'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
@@ -260,7 +293,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'subscriptions malformed fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             throw 'MALFORMED_JSON'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
@@ -269,12 +302,10 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'paygo = 401 fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingPagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
         Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflareRest {
-            param($Method, $Uri)
-            if ($Uri -match 'paygo') { throw 'CLOUDFLARE_API_ERROR: 401 Unauthorized' }
-            return [pscustomobject]@{success=$true;errors=@();result=@()}
+        Mock Invoke-S3CloudflareBillingRead {
+            throw 'CLOUDFLARE_API_ERROR: 401 Unauthorized'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
     }
@@ -282,12 +313,10 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'paygo = 403 fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingPagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
         Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflareRest {
-            param($Method, $Uri)
-            if ($Uri -match 'paygo') { throw 'CLOUDFLARE_API_ERROR: 403 Forbidden' }
-            return [pscustomobject]@{success=$true;errors=@();result=@()}
+        Mock Invoke-S3CloudflareBillingRead {
+            throw 'CLOUDFLARE_API_ERROR: 403 Forbidden'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
     }
@@ -295,12 +324,10 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'paygo timeout fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingPagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
         Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflareRest {
-            param($Method, $Uri)
-            if ($Uri -match 'paygo') { throw 'Invoke-RestMethod: The request timed out.' }
-            return [pscustomobject]@{success=$true;errors=@();result=@()}
+        Mock Invoke-S3CloudflareBillingRead {
+            throw 'Invoke-RestMethod: The request timed out.'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
     }
@@ -308,12 +335,10 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'paygo malformed fails' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingPagedGet {[ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
         Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflareRest {
-            param($Method, $Uri)
-            if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=$null} }
-            return [pscustomobject]@{success=$true;errors=@();result=@()}
+        Mock Invoke-S3CloudflareBillingRead {
+            return [pscustomobject]@{success=$true;errors=@();result=$null}
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
     }
@@ -351,12 +376,14 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'finally/cleanup logic works after Billing PASS' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             return [ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingRead {
+            return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {
             param($Method, $Uri, $Token)
-            if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
             if ($Uri -match 'account-settings') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}} }
             if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
             return [pscustomobject]@{success=$true;errors=@();result=@()}
@@ -369,55 +396,28 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
         Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
 
         $r = Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz'
-        (Get-S3ActiveBillingToken) | Should -BeNullOrEmpty
     }
 
     It 'finally/cleanup logic works after Billing exception' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             throw 'Billing API error simulation'
         } -ModuleName Cloudflare
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
-        (Get-S3ActiveBillingToken) | Should -BeNullOrEmpty
-    }
-
-    It 'after billing checks billing credential is not available to the rest of Cloudflare preflight' {
-        $c = Get-TestContext Live
-        Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
-            return [ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}
-        } -ModuleName Cloudflare
-        Mock Invoke-S3CloudflareRest {
-            param($Method, $Uri, $Token)
-            if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
-            if ($Uri -match 'account-settings') {
-                # Verify ActiveBillingToken is null during subsequent steps
-                (Get-S3ActiveBillingToken) | Should -BeNullOrEmpty
-                return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}}
-            }
-            if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
-            return [pscustomobject]@{success=$true;errors=@();result=@()}
-        } -ModuleName Cloudflare
-        Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Test-S3CloudflarePayGo {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Test-S3WorkersAccountSettings {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Test-S3WorkersObservabilityAuthorization {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Test-S3WorkersDevSubdomain {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
-
-        $r = Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz'
     }
 
     It 'success of billing checks does not bypass other preflight guards' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             return [ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingRead {
+            return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {
             param($Method, $Uri, $Token)
-            if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
             if ($Uri -match 'account-settings') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='unacceptable-plan'}} }
             if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
             return [pscustomobject]@{success=$true;errors=@();result=@()}
@@ -434,12 +434,14 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'Billing Attestation remains after automated read-only guards' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             return [ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingRead {
+            return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {
             param($Method, $Uri, $Token)
-            if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
             if ($Uri -match 'account-settings') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}} }
             if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
             return [pscustomobject]@{success=$true;errors=@();result=@()}
@@ -458,12 +460,14 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     It 'Wrangler billing token is independent and not persisted' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflarePagedGet {
+        Mock Invoke-S3CloudflareBillingPagedGet {
             return [ordered]@{status='PASS';items=@();pagesRead=@(1);paginationComplete=$true}
+        } -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareBillingRead {
+            return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {
             param($Method, $Uri, $Token)
-            if ($Uri -match 'paygo') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}} }
             if ($Uri -match 'account-settings') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}} }
             if ($Uri -match 'subdomain') { return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{subdomain='example';enabled=$true}} }
             return [pscustomobject]@{success=$true;errors=@();result=@()}
