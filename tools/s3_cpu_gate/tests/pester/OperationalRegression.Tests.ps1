@@ -1,4 +1,5 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
+
 Describe 'Operational regression coverage' {
  It 'does not scan the full runtime root before Cloudflare preflight' {
   $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
@@ -72,7 +73,6 @@ Describe 'Operational regression coverage' {
   $text|Should -Match "\`$result\.status -eq 'PASS'.*\`$RuntimeRoot"
  }
 }
-
 Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
  It 'selects one correct account only when the ID is explicit' {$a=Select-S3CloudflareAccount -Accounts @([ordered]@{id='account-a'}) -SelectedAccountId account-a;$a.id|Should -Be account-a}
  It 'refuses multiple accounts without selection' {{Select-S3CloudflareAccount -Accounts @([ordered]@{id='a'},[ordered]@{id='b'})}|Should -Throw '*MULTIPLE_CLOUDFLARE_ACCOUNTS*'}
@@ -510,5 +510,353 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
 
         [void](Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz')
         (Get-S3MapValue -Map $c.State.results.cloudflarePreflight -Name 'billingToken') | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'S3 Cloudflare paged get regression and D1 support' -Tag 'B5' {
+    It '1. D1 empty result without total_pages terminates immediately after page 1' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @()
+                result_info = [ordered]@{ count = 0; page = 1; per_page = 50; total_count = 0 }
+            }
+        } -ModuleName Cloudflare
+        $res = Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token'
+        $res.status | Should -Be 'PASS'
+        $res.items.Count | Should -Be 0
+        $res.pagesRead | Should -Be @(1)
+        $res.paginationComplete | Should -BeTrue
+    }
+
+    It '2. D1 single-page non-empty result without total_pages' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @(1..5 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                result_info = [ordered]@{ count = 5; page = 1; per_page = 50; total_count = 5 }
+            }
+        } -ModuleName Cloudflare
+        $res = Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token'
+        $res.status | Should -Be 'PASS'
+        $res.items.Count | Should -Be 5
+        $res.pagesRead | Should -Be @(1)
+    }
+
+    It '3. D1 multi-page result without total_pages' {
+        Mock Invoke-S3CloudflareRest {
+            param($Method, $Uri)
+            [void]$Method
+            if ($Uri -match 'page=1') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(1..50 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 1; per_page = 50; total_count = 105 }
+                }
+            }
+            if ($Uri -match 'page=2') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(51..100 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 2; per_page = 50; total_count = 105 }
+                }
+            }
+            if ($Uri -match 'page=3') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(101..105 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 5; page = 3; per_page = 50; total_count = 105 }
+                }
+            }
+            throw "Unexpected URI $Uri"
+        } -ModuleName Cloudflare
+        $res = Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token'
+        $res.status | Should -Be 'PASS'
+        $res.items.Count | Should -Be 105
+        $res.pagesRead | Should -Be @(1, 2, 3)
+    }
+
+    It '4. Existing valid response containing total_pages (Path A)' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @([ordered]@{ id = 'acc-1' })
+                result_info = [ordered]@{ page = 1; total_pages = 1 }
+            }
+        } -ModuleName Cloudflare
+        $res = Get-S3CloudflareAccounts -Token 'token'
+        $res.status | Should -Be 'PASS'
+        $res.items.Count | Should -Be 1
+    }
+
+    It '5. Contradictory pagination metadata must fail' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @(1..50 | ForEach-Object { [ordered]@{ id = "item$_" } })
+                result_info = [ordered]@{ page = 1; total_pages = 1; per_page = 50; total_count = 105 }
+            }
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts' -Token 'token' } | Should -Throw '*PAGINATION_CONTRADICTION*'
+    }
+
+    It '6. Missing completion metadata must fail when total_pages is absent' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @([ordered]@{ id = 'item1' })
+                result_info = [ordered]@{ page = 1; total_count = 1 }
+            }
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts' -Token 'token' } | Should -Throw '*PAGINATION_METADATA_INCOMPLETE*'
+    }
+
+    It '7. Intermediate-page completeness must be enforced' {
+        Mock Invoke-S3CloudflareRest {
+            param($Method, $Uri)
+            [void]$Method
+            if ($Uri -match 'page=1') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(1..30 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 30; page = 1; per_page = 50; total_count = 80 }
+                }
+            }
+            throw "Unexpected URI $Uri"
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token' } | Should -Throw '*PAGINATION_INTERMEDIATE_PAGE_INCOMPLETE*'
+    }
+
+    It '8. Exact cumulative count on terminal page must be validated' {
+        Mock Invoke-S3CloudflareRest {
+            param($Method, $Uri)
+            [void]$Method
+            if ($Uri -match 'page=1') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(1..50 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 1; per_page = 50; total_count = 80 }
+                }
+            }
+            if ($Uri -match 'page=2') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(51..79 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 29; page = 2; per_page = 50; total_count = 80 }
+                }
+            }
+            throw "Unexpected URI $Uri"
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token' } | Should -Throw '*PAGINATION_TOTAL_COUNT_MISMATCH*'
+    }
+
+    It '9. Requested page differs from returned page fails' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @([ordered]@{ id = 'db1' })
+                result_info = [ordered]@{ page = 2; per_page = 50; total_count = 1 }
+            }
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token' } | Should -Throw '*PAGINATION_PAGE_MISMATCH*'
+    }
+
+    It '10. result.Count > per_page fails' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @(1..55 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                result_info = [ordered]@{ page = 1; per_page = 50; total_count = 55 }
+            }
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token' } | Should -Throw '*PAGINATION_RESULT_COUNT_EXCEEDED*'
+    }
+
+    It '11. Accounts inventory regression' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @([ordered]@{ id = 'acc-a' })
+                result_info = [ordered]@{ page = 1; total_pages = 1 }
+            }
+        } -ModuleName Cloudflare
+        $acc = Get-S3CloudflareAccounts -Token 'token'
+        $acc.items[0].id | Should -Be 'acc-a'
+    }
+
+    It '12. Workers scripts inventory regression' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @([ordered]@{ id = 'worker-1' })
+                result_info = [ordered]@{ page = 1; total_pages = 1 }
+            }
+        } -ModuleName Cloudflare
+        $res = Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/workers/scripts' -Token 'token'
+        $res.items[0].id | Should -Be 'worker-1'
+    }
+
+    It '13. D1 cleanup absence-proof regression' {
+        Mock Invoke-S3CloudflarePagedGet {
+            param($Uri)
+            if ($Uri -match 'workers/scripts') {
+                return [ordered]@{ status = 'PASS'; items = @([ordered]@{ id = 'other-worker' }); pagesRead = @(1); paginationComplete = $true }
+            }
+            if ($Uri -match 'd1/database') {
+                return [ordered]@{ status = 'PASS'; items = @(); pagesRead = @(1); paginationComplete = $true }
+            }
+            throw "Unexpected $Uri"
+        } -ModuleName Cloudflare
+        $proof = Get-S3CloudflareResourceAbsenceProof -AccountId 'acc' -Token 'token' -Worker 's3cpu-test-worker' -D1Name 's3cpu-test-d1' -D1Id 'd1-uuid-123'
+        $proof.workerAbsent | Should -BeTrue
+        $proof.d1Absent | Should -BeTrue
+    }
+
+    It '14. result_info.count equals result.Count passes' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @(1..5 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                result_info = [ordered]@{ count = 5; page = 1; per_page = 50; total_count = 5 }
+            }
+        } -ModuleName Cloudflare
+        $res = Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token'
+        $res.status | Should -Be 'PASS'
+    }
+
+    It '15. result_info.count differs from result.Count fails closed' {
+        Mock Invoke-S3CloudflareRest {
+            [pscustomobject]@{
+                success = $true
+                errors = @()
+                result = @(1..5 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                result_info = [ordered]@{ count = 10; page = 1; per_page = 50; total_count = 5 }
+            }
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token' } | Should -Throw '*PAGINATION_COUNT_MISMATCH*'
+    }
+
+    It '16. D1 total_count changes between page 1 and page 2 fails closed' {
+        Mock Invoke-S3CloudflareRest {
+            param($Method, $Uri)
+            [void]$Method
+            if ($Uri -match 'page=1') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(1..50 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 1; per_page = 50; total_count = 100 }
+                }
+            }
+            if ($Uri -match 'page=2') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(51..100 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 2; per_page = 50; total_count = 120 }
+                }
+            }
+            throw "Unexpected URI $Uri"
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token' } | Should -Throw '*PAGINATION_METADATA_DRIFT*'
+    }
+
+    It '17. D1 per_page changes between page 1 and page 2 fails closed' {
+        Mock Invoke-S3CloudflareRest {
+            param($Method, $Uri)
+            [void]$Method
+            if ($Uri -match 'page=1') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(1..50 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 1; per_page = 50; total_count = 100 }
+                }
+            }
+            if ($Uri -match 'page=2') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(51..100 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 2; per_page = 25; total_count = 100 }
+                }
+            }
+            throw "Unexpected URI $Uri"
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token' } | Should -Throw '*PAGINATION_METADATA_DRIFT*'
+    }
+
+    It '18. total_pages changes between page 1 and page 2 fails closed' {
+        Mock Invoke-S3CloudflareRest {
+            param($Method, $Uri)
+            [void]$Method
+            if ($Uri -match 'page=1') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(1..50 | ForEach-Object { [ordered]@{ id = "item$_" } })
+                    result_info = [ordered]@{ page = 1; total_pages = 2 }
+                }
+            }
+            if ($Uri -match 'page=2') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(51..60 | ForEach-Object { [ordered]@{ id = "item$_" } })
+                    result_info = [ordered]@{ page = 2; total_pages = 3 }
+                }
+            }
+            throw "Unexpected URI $Uri"
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts' -Token 'token' } | Should -Throw '*PAGINATION_METADATA_DRIFT*'
+    }
+
+    It '19. missing result_info after pagination continuation fails closed' {
+        Mock Invoke-S3CloudflareRest {
+            param($Method, $Uri)
+            [void]$Method
+            if ($Uri -match 'page=1') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @(1..50 | ForEach-Object { [ordered]@{ id = "db$_" } })
+                    result_info = [ordered]@{ count = 50; page = 1; per_page = 50; total_count = 100 }
+                }
+            }
+            if ($Uri -match 'page=2') {
+                return [pscustomobject]@{
+                    success = $true
+                    errors = @()
+                    result = @([ordered]@{ id = 'db51' })
+                }
+            }
+            throw "Unexpected URI $Uri"
+        } -ModuleName Cloudflare
+        $result = $null
+        $caught = $null
+        try {
+            $result = Invoke-S3CloudflarePagedGet -Uri 'https://api.cloudflare.com/client/v4/accounts/acc/d1/database' -Token 'token'
+        }
+        catch {
+            $caught = $_
+        }
+        $caught.Exception.Message | Should -Match 'PAGINATION_METADATA_MISSING'
+        $result | Should -BeNullOrEmpty
     }
 }

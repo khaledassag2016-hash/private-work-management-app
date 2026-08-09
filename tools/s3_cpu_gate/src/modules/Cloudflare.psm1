@@ -132,25 +132,115 @@ function Invoke-S3CloudflarePagedGet {
     $items = [Collections.Generic.List[object]]::new()
     $pagesRead = [Collections.Generic.List[int]]::new()
     $page = 1
+    $maxPages = 1000
+    $establishedPerPage = $null
+    $establishedTotalCount = $null
+    $establishedTotalPages = $null
+    $reportedTotalCount = $null
     while ($true) {
+        if ($page -gt $maxPages) { throw "PAGINATION_MAX_PAGES_EXCEEDED: page=$page" }
+        if ($pagesRead.Contains($page)) { throw "PAGINATION_PAGE_REPEATED: page=$page" }
         $separator = if ($Uri.Contains('?')) {'&'} else {'?'}
         $response = Invoke-S3CloudflareRest -Method GET -Uri "$Uri${separator}page=$page&per_page=$PerPage" -Token $Token
         if ($response.success -eq $false -or @($response.errors).Count -gt 0) { throw "CLOUDFLARE_PAGED_API_ERROR: page=$page" }
         $pagesRead.Add($page)
-        foreach ($item in @($response.result)) { $items.Add($item) }
+        $currentResult = @($response.result)
+        $pageCount = $currentResult.Count
+        foreach ($item in $currentResult) { $items.Add($item) }
         $resultInfo = Get-S3CloudflareValue -InputObject $response -Name @('result_info')
         if ($null -eq $resultInfo) {
-            if (@($response.result).Count -ge $PerPage) { throw "PAGINATION_METADATA_MISSING: page=$page" }
+            if ($page -gt 1) { throw "PAGINATION_METADATA_MISSING: page=$page" }
+            if ($pageCount -ge $PerPage) { throw "PAGINATION_METADATA_MISSING: page=$page" }
             break
         }
-        $reportedPage = Get-S3CloudflareValue -InputObject $resultInfo -Name @('page')
-        $totalPages = Get-S3CloudflareValue -InputObject $resultInfo -Name @('total_pages')
-        if ($null -eq $reportedPage -or $null -eq $totalPages) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
-        if ([int]$reportedPage -ne $page) { throw "PAGINATION_PAGE_MISMATCH: expected=$page actual=$reportedPage" }
-        if ([int]$totalPages -lt $page) { throw "PAGINATION_TOTAL_INVALID: page=$page total=$totalPages" }
-        if ($page -ge [int]$totalPages) { break }
+        $reportedPageRaw = Get-S3CloudflareValue -InputObject $resultInfo -Name @('page')
+        $totalPagesRaw = Get-S3CloudflareValue -InputObject $resultInfo -Name @('total_pages')
+        $perPageRaw = Get-S3CloudflareValue -InputObject $resultInfo -Name @('per_page')
+        $totalCountRaw = Get-S3CloudflareValue -InputObject $resultInfo -Name @('total_count')
+        $countRaw = Get-S3CloudflareValue -InputObject $resultInfo -Name @('count')
+
+        $reportedPage = $null
+        if ($null -ne $reportedPageRaw) {
+            $parsedPage = 0
+            if (-not [int]::TryParse([string]$reportedPageRaw, [ref]$parsedPage) -or $parsedPage -lt 1) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+            $reportedPage = $parsedPage
+        }
+        $reportedTotalPages = $null
+        if ($null -ne $totalPagesRaw) {
+            $parsedTotalPages = 0
+            if (-not [int]::TryParse([string]$totalPagesRaw, [ref]$parsedTotalPages) -or $parsedTotalPages -lt 0) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+            $reportedTotalPages = $parsedTotalPages
+            if ($null -eq $establishedTotalPages) { $establishedTotalPages = $reportedTotalPages }
+            elseif ($reportedTotalPages -ne $establishedTotalPages) { throw "PAGINATION_METADATA_DRIFT: total_pages changed from $establishedTotalPages to $reportedTotalPages" }
+        }
+        $reportedPerPage = $null
+        if ($null -ne $perPageRaw) {
+            $parsedPerPage = 0
+            if (-not [int]::TryParse([string]$perPageRaw, [ref]$parsedPerPage) -or $parsedPerPage -lt 1) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+            $reportedPerPage = $parsedPerPage
+            if ($null -eq $establishedPerPage) { $establishedPerPage = $reportedPerPage }
+            elseif ($reportedPerPage -ne $establishedPerPage) { throw "PAGINATION_METADATA_DRIFT: per_page changed from $establishedPerPage to $reportedPerPage" }
+        }
+        $reportedTotalCount = $null
+        if ($null -ne $totalCountRaw) {
+            $parsedTotalCount = 0L
+            if (-not [long]::TryParse([string]$totalCountRaw, [ref]$parsedTotalCount) -or $parsedTotalCount -lt 0) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+            $reportedTotalCount = $parsedTotalCount
+            if ($null -eq $establishedTotalCount) { $establishedTotalCount = $reportedTotalCount }
+            elseif ($reportedTotalCount -ne $establishedTotalCount) { throw "PAGINATION_METADATA_DRIFT: total_count changed from $establishedTotalCount to $reportedTotalCount" }
+        }
+        if ($null -ne $countRaw) {
+            $parsedCount = 0
+            if (-not [int]::TryParse([string]$countRaw, [ref]$parsedCount) -or $parsedCount -lt 0) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+            if ($parsedCount -ne $pageCount) { throw "PAGINATION_COUNT_MISMATCH: expected=$pageCount actual=$parsedCount" }
+        }
+
+        if ($null -ne $reportedPage -and $reportedPage -ne $page) { throw "PAGINATION_PAGE_MISMATCH: expected=$page actual=$reportedPage" }
+        $effectivePerPage = if ($null -ne $reportedPerPage) { $reportedPerPage } else { $PerPage }
+        if ($pageCount -gt $effectivePerPage) { throw "PAGINATION_RESULT_COUNT_EXCEEDED: page=$page count=$pageCount per_page=$effectivePerPage" }
+
+        $effectiveTotalPages = 0
+        if ($null -eq $reportedTotalPages) {
+            if ($null -eq $reportedPage -or $null -eq $reportedPerPage -or $null -eq $reportedTotalCount) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+            if ($reportedTotalCount -eq 0) {
+                if ($reportedPage -ne 1) { throw "PAGINATION_PAGE_MISMATCH: expected=1 actual=$reportedPage" }
+                if ($pageCount -ne 0) { throw "PAGINATION_CONTRADICTION: total_count=0 count=$pageCount" }
+                break
+            }
+            $effectiveTotalPages = [int][Math]::Ceiling([double]$reportedTotalCount / [double]$effectivePerPage)
+        }
+        else {
+            if ($null -eq $reportedPage) { throw "PAGINATION_METADATA_INCOMPLETE: page=$page" }
+            if ($reportedTotalPages -lt $page -and -not ($reportedTotalPages -eq 0 -and $page -eq 1 -and $pageCount -eq 0)) {
+                throw "PAGINATION_TOTAL_INVALID: page=$page total=$reportedTotalPages"
+            }
+            if ($null -ne $reportedTotalCount -and $null -ne $reportedPerPage) {
+                if ($reportedTotalCount -eq 0) {
+                    if ($reportedTotalPages -notin @(0, 1)) { throw "PAGINATION_CONTRADICTION: total_count=0 total_pages=$reportedTotalPages" }
+                    if ($pageCount -ne 0) { throw "PAGINATION_CONTRADICTION: total_count=0 count=$pageCount" }
+                }
+                else {
+                    $derivedTotalPages = [int][Math]::Ceiling([double]$reportedTotalCount / [double]$effectivePerPage)
+                    if ($reportedTotalPages -ne $derivedTotalPages) { throw "PAGINATION_CONTRADICTION: total_pages=$reportedTotalPages derived=$derivedTotalPages" }
+                }
+            }
+            elseif ($null -ne $reportedTotalCount) {
+                if ($reportedTotalCount -eq 0 -and ($reportedTotalPages -notin @(0, 1) -or $pageCount -ne 0)) { throw "PAGINATION_CONTRADICTION: total_count=0 total_pages=$reportedTotalPages" }
+            }
+            $effectiveTotalPages = $reportedTotalPages
+        }
+
+        if ($page -lt $effectiveTotalPages) {
+            if ($pageCount -lt $effectivePerPage) { throw "PAGINATION_INTERMEDIATE_PAGE_INCOMPLETE: page=$page count=$pageCount expected=$effectivePerPage" }
+        }
+
+        if ($page -ge $effectiveTotalPages) {
+            if ($null -ne $reportedTotalCount -and $items.Count -ne $reportedTotalCount) { throw "PAGINATION_TOTAL_COUNT_MISMATCH: collected=$($items.Count) expected=$reportedTotalCount" }
+            break
+        }
         $page++
     }
+    if ($null -ne $reportedTotalCount -and $items.Count -ne $reportedTotalCount) { throw "PAGINATION_TOTAL_COUNT_MISMATCH: collected=$($items.Count) expected=$reportedTotalCount" }
     return [ordered]@{status='PASS';items=@($items);pagesRead=@($pagesRead);paginationComplete=$true}
 }
 
