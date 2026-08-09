@@ -9,6 +9,7 @@ on:
       - "README.md"
       - "PROJECT_STATE.md"
       - "PROJECT_SUPERVISION_BRIEF.md"
+      - "tests/test_stable_checkpoint.py"
       - ".github/workflows/foundation-integrity.yml"
   push:
     branches: [main]
@@ -29,8 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout event revision (synthetic merge on pull requests)
+      - name: Checkout final PR head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       - name: Record tested revision
         run: |
@@ -43,14 +46,17 @@ jobs:
             echo "This is the pushed main revision."
           fi
 
-      - name: Compile validators
-        run: python -m py_compile scripts/reconstruct_requirements.py scripts/validate_foundation.py
+      - name: Compile validators and checkpoint tool
+        run: python -m py_compile scripts/reconstruct_requirements.py scripts/validate_foundation.py scripts/stable_checkpoint.py tests/test_stable_checkpoint.py
 
       - name: Reconstruct authoritative DOCX
         run: python scripts/reconstruct_requirements.py
 
       - name: Validate S1 foundation
         run: python scripts/validate_foundation.py
+
+      - name: Run stable checkpoint regressions
+        run: python -m unittest tests.test_stable_checkpoint -v
 
       - name: Verify DOCX size and SHA-256 independently
         run: |

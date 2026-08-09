@@ -11,10 +11,10 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout synthetic PR merge revision
+      - name: Checkout final PR head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Record tested merge revision
@@ -31,6 +31,9 @@ jobs:
 
       - name: Validate S1 foundation regression
         run: python scripts/validate_foundation.py
+
+      - name: Run stable checkpoint regressions
+        run: python -m unittest tests.test_stable_checkpoint -v
 
       - name: Validate S2 local architecture prototype
         run: python scripts/validate_s2.py

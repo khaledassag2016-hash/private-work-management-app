@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -12,6 +13,9 @@ from pathlib import Path
 
 DEFAULT_REF = "stable/2026-08-09-be14a389"
 DEFAULT_SHA = "be14a389d7e11f1df9f935999d888e7e2295c8a3"
+APPROVED_REQUIREMENTS_RELATIVE_PATH = Path("docs/APPROVED_REQUIREMENTS.docx")
+APPROVED_REQUIREMENTS_SIZE = 63710
+APPROVED_REQUIREMENTS_SHA256 = "6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b"
 
 
 def git(repo: Path, *args: str, check: bool = True) -> str:
@@ -52,6 +56,30 @@ def ref_for_worktree(repo: Path, ref: str) -> str:
 def validation_commands() -> list[list[str]]:
     python = sys.executable
     return [[python, "scripts/validate_foundation.py"], [python, "scripts/validate_s2.py"]]
+
+
+def reconstruction_command(output: Path) -> list[str]:
+    return [sys.executable, "scripts/reconstruct_requirements.py", "--output", str(output)]
+
+
+def verify_reconstructed_docx(path: Path) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"reconstructed DOCX missing: {path}")
+    data = path.read_bytes()
+    actual_sha = hashlib.sha256(data).hexdigest()
+    if len(data) != APPROVED_REQUIREMENTS_SIZE:
+        raise RuntimeError(
+            f"DOCX size mismatch: expected {APPROVED_REQUIREMENTS_SIZE}, got {len(data)}"
+        )
+    if actual_sha != APPROVED_REQUIREMENTS_SHA256:
+        raise RuntimeError(
+            f"DOCX SHA-256 mismatch: expected {APPROVED_REQUIREMENTS_SHA256}, got {actual_sha}"
+        )
+    print(f"DOCX VERIFIED: size={len(data)} SHA-256={actual_sha}")
+
+
+def run_checked(command: list[str], cwd: Path, environment: dict[str, str]) -> None:
+    subprocess.run(command, cwd=cwd, check=True, env=environment)
 
 
 def validation_environment() -> dict[str, str]:
@@ -96,9 +124,14 @@ def run_restore_test(repo: Path, ref: str, sha: str, dry_run: bool = False) -> N
                 raise RuntimeError(f"recovered SHA mismatch: {recovered}")
             print(f"RECOVERED SHA: {recovered}")
             print("WORKTREE HEAD MATCH: PASS")
+            docx_path = worktree / APPROVED_REQUIREMENTS_RELATIVE_PATH
+            command = reconstruction_command(docx_path)
+            print("$", " ".join(command))
+            run_checked(command, worktree, environment)
+            verify_reconstructed_docx(docx_path)
             for command in validation_commands():
                 print("$", " ".join(command))
-                subprocess.run(command, cwd=worktree, check=True, env=environment)
+                run_checked(command, worktree, environment)
             print("FOUNDATION PASS")
             print("S2 PASS")
         finally:
