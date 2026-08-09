@@ -1,4 +1,4 @@
-BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
+﻿BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
 
 Describe 'Operational regression coverage' {
  It 'does not scan the full runtime root before Cloudflare preflight' {
