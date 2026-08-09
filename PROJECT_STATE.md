@@ -254,3 +254,15 @@
 - Existing immutable stable: `stable/2026-08-09-be14a389` at `be14a389d7e11f1df9f935999d888e7e2295c8a3`; it was not moved, deleted, or recreated.
 - Issue #2: **OPEN**. S3: **INCOMPLETE**. Live CPU Gate: **NOT COMPLETED**.
 - This administrative update performed **NO CLOUD WRITE**, **NO STABLE REF MOVEMENT**, **NO TAG**, **NO MAIN DIRECT EDIT**, and **NO FORCE-PUSH**.
+
+## Post-stable-promotion administrative state — 2026-08-09
+
+- PR #43: **MERGED by Squash**.
+- PR #43 Squash commit / current main at the start of this administrative update: `35fb31cd406784d75e5eb43613a1a1900a66c5aa`.
+- Previously recorded stable promotion candidate `643de962dc8631f68a42e3796c4a096a29c4e14c`: **PROMOTED TO STABLE** by a separate supervised action.
+- New immutable stable: `stable/2026-08-09-643de962` -> `643de962dc8631f68a42e3796c4a096a29c4e14c`.
+- Independent comparison of `stable/2026-08-09-643de962` against `643de962dc8631f68a42e3796c4a096a29c4e14c`: **identical**; ahead = 0; behind = 0.
+- Old immutable stable remains: `stable/2026-08-09-be14a389` -> `be14a389d7e11f1df9f935999d888e7e2295c8a3`; unchanged and immutable.
+- Current main `35fb31cd406784d75e5eb43613a1a1900a66c5aa` is **NOT promoted to stable merely because it is the current main tip**.
+- Issue #2: **OPEN**. S3: **INCOMPLETE**. Live CPU Gate: **NOT COMPLETED**.
+- This administrative update performs: **NO STABLE REF MOVEMENT**, **NO TAG CREATION**, **NO CLOUD WRITE**, **NO FIREBASE WRITE**, **NO CLOUDFLARE WRITE**, **NO DEPLOYMENT**, **NO BILLING OPERATION**, **NO SECRET OPERATION**, **NO DIRECT MAIN EDIT**, and **NO FORCE-PUSH**.
