@@ -93,3 +93,38 @@ jobs:
             exit 1
           fi
           echo "NEGATIVE MUTATION TEST: PASS"
+
+  synthetic-merge-regression:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout synthetic PR merge revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: Record synthetic merge revision
+        run: |
+          echo "Synthetic merge revision: $GITHUB_SHA"
+          echo "PR head revision: ${{ github.event.pull_request.head.sha }}"
+          echo "PR base revision: ${{ github.event.pull_request.base.sha }}"
+
+      - name: Compile validators and checkpoint tool
+        run: python -m py_compile scripts/reconstruct_requirements.py scripts/validate_foundation.py scripts/validate_s2.py scripts/stable_checkpoint.py tests/test_stable_checkpoint.py
+
+      - name: Reconstruct authoritative DOCX
+        run: python scripts/reconstruct_requirements.py
+
+      - name: Validate Foundation on synthetic merge
+        run: python scripts/validate_foundation.py
+
+      - name: Run stable checkpoint regressions on synthetic merge
+        run: python -m unittest tests.test_stable_checkpoint -v
+
+      - name: Run stable checkpoint restore-test on synthetic merge
+        run: python scripts/stable_checkpoint.py restore-test --ref stable/2026-08-09-be14a389 --sha be14a389d7e11f1df9f935999d888e7e2295c8a3
+
+      - name: Validate S2 on synthetic merge
+        run: python scripts/validate_s2.py
