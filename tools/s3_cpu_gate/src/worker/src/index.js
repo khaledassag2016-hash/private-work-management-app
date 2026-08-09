@@ -2,7 +2,8 @@ const DEFAULT_CERT_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/secu
 let certificateCache = { expiresAt: 0, certificates: null };
 
 function reject(status, code, requestId, cacheState = 'none', runMarker = '', scenario = '') {
-  console.log(JSON.stringify({ event: 'auth_result', requestId, code, cacheState, allowed: false, runId: runMarker, scenario }));
+  const s3Correlation = { runId: runMarker, requestId, scenario };
+  console.log(JSON.stringify({ event: 'auth_result', requestId, code, cacheState, allowed: false, runId: runMarker, scenario, s3Correlation }));
   return Response.json({ ok: false, code, requestId }, { status });
 }
 function b64urlBytes(value) {
@@ -100,7 +101,8 @@ export default {
     try {
       const verified = await verifyJwt(auth.slice(7), env); const user = await allowed(env, verified.claims.sub);
       if (!user) return reject(403, 'UID_NOT_ALLOWED', requestId, verified.cacheState, env.RUN_MARKER, scenario);
-      console.log(JSON.stringify({ event: 'auth_result', requestId, code: 'ALLOW', cacheState: verified.cacheState, allowed: true, runId, scenario, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) }));
+      const s3Correlation = { runId, requestId, scenario };
+      console.log(JSON.stringify({ event: 'auth_result', requestId, code: 'ALLOW', cacheState: verified.cacheState, allowed: true, runId, scenario, s3Correlation, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) }));
       return Response.json({ ok: true, requestId, role: user.role });
     } catch (error) {
       const code = error instanceof Error ? error.message : 'AUTH_FAILED';
