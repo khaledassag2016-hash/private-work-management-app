@@ -390,7 +390,8 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         [string]$TokenType,
         [scriptblock]$AttestationChoice,
         [switch]$SkipOpenBillingPage,
-        [string]$BillingToken
+        [string]$BillingToken,
+        [string]$ObservabilityToken
     )
     if ($Context.Mode -eq 'Simulation') {
         $record = [ordered]@{runId=$Context.RunId;attestedAtUtc=[DateTime]::UtcNow.ToString('o');accountId='mock-a***ount';automated=[ordered]@{session='PASS';accounts='PASS';subscriptions='PASS';payGo='PASS';workersSettings='PASS';observability='PASS';workers='PASS';d1='PASS';workersDev='PASS'};attestation='YES';status='PASS';writeChecksDeferred='Deferred to separately approved live execution.'}
@@ -403,6 +404,7 @@ function Invoke-S3CloudflareReadOnlyPreflight {
     $redactedAccountId = if ([string]::IsNullOrWhiteSpace($selected)) {'UNSELECTED'} else {Get-S3RedactedAccountId -AccountId $selected}
     $automated = [ordered]@{}; $attestationResult = 'NOT_REACHED'
     $resolvedBillingToken = $BillingToken
+    $resolvedObservabilityToken = $ObservabilityToken
     try {
         if ([string]::IsNullOrWhiteSpace($Token)) {
             $tokenRecord = Get-S3CloudflareToken -Context $Context
@@ -443,7 +445,15 @@ function Invoke-S3CloudflareReadOnlyPreflight {
 
         $settingsResponse = Invoke-S3CloudflareRest -Method GET -Uri "$base/workers/account-settings" -Token $Token
         [void](Test-S3WorkersAccountSettings -Settings $settingsResponse.result); $automated.workersSettings='PASS'
-        [void](Test-S3WorkersObservabilityAuthorization -AccountId $accountId -Token $Token); $automated.observability='PASS'
+        if ([string]::IsNullOrWhiteSpace($resolvedObservabilityToken)) {
+            $resolvedObservabilityToken = $env:S3_CLOUDFLARE_OBSERVABILITY_WRITE_TOKEN
+            if (-not [string]::IsNullOrWhiteSpace($resolvedObservabilityToken)) {
+                [Environment]::SetEnvironmentVariable('S3_CLOUDFLARE_OBSERVABILITY_WRITE_TOKEN', $null, 'Process')
+                $env:S3_CLOUDFLARE_OBSERVABILITY_WRITE_TOKEN = $null
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($resolvedObservabilityToken)) { throw 'MANUAL_ACTION_REQUIRED_OBSERVABILITY_WRITE_TOKEN' }
+        [void](Test-S3WorkersObservabilityAuthorization -AccountId $accountId -Token $resolvedObservabilityToken); $automated.observability='PASS'
         $workers = Invoke-S3CloudflarePagedGet -Uri "$base/workers/scripts" -Token $Token; $automated.workers="PASS:$(@($workers.items).Count)"
         $d1 = Invoke-S3CloudflarePagedGet -Uri "$base/d1/database" -Token $Token; $automated.d1="PASS:$(@($d1.items).Count)"
         $subdomainResponse = Invoke-S3CloudflareRest -Method GET -Uri "$base/workers/subdomain" -Token $Token
@@ -455,6 +465,7 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         $record = [ordered]@{runId=$Context.RunId;attestedAtUtc=[DateTime]::UtcNow.ToString('o');tokenType=$TokenType;accountId=$redactedAccountId;automated=$automated;attestation=$attestationResult;status='PASS';writeChecksDeferred='Deferred to separately approved live execution.'}
         Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken' -Value $Token
         Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareAccountId' -Value $accountId
+        Set-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareObservabilityToken' -Value $resolvedObservabilityToken
         Set-S3MapValue -Map $Context.State.results -Name 'cloudflarePreflight' -Value $record
         [void](Show-S3CloudflarePreflightRecord -Context $Context -Record $record)
         return $record
@@ -464,6 +475,10 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         Set-S3MapValue -Map $Context.State.results -Name 'cloudflarePreflight' -Value $record
         [void](Show-S3CloudflarePreflightRecord -Context $Context -Record $record)
         throw
+    }
+    finally {
+        $resolvedObservabilityToken = $null
+        $ObservabilityToken = $null
     }
 }
 
