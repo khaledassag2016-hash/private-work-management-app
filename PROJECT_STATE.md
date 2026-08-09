@@ -230,3 +230,13 @@
 - S3 الرئيسية غير مكتملة، وLive CPU Gate لم يبدأ.
 - لم ينفذ Cloud أو Login أو Billing.
 - لا تبدأ أي مرحلة لاحقة تلقائيًا.
+
+## Stable checkpoint governance — 2026-08-09
+
+- Approved baseline source SHA: `be14a389d7e11f1df9f935999d888e7e2295c8a3`.
+- Source PR: `#40`.
+- PR `#28`: **closed, unmerged, not stable**.
+- PR `#41`: **open, not stable pending final supervisory approval**.
+- Stable branch: `stable/2026-08-09-be14a389`.
+- This governance PR is the PR that makes the checkpoint registration official after supervisory review and merge. No later PR becomes stable automatically; a later stable status requires the explicit D-007 promotion gates and a new checkpoint record.
+- No stable tag is created by this PR. An annotated stable tag, if approved, is a separate post-merge supervisory action.
