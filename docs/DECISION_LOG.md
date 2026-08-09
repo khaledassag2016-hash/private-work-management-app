@@ -21,3 +21,9 @@
 ## إضافة قرار جديد
 
 يضاف القرار برقم متسلسل، وتاريخ، ونص دقيق، وسبب، وحالة. لا تُعدل القرارات القديمة لمسح التاريخ؛ يُضاف قرار لاحق يلغي أو يستبدل السابق. لا يتحول أي بند `Q` إلى قاعدة تنفيذية إلا بعد تسجيل قرار `D` معتمد.
+
+## D-007 — Stable checkpoint and recovery governance
+
+| Number | Date | Decision | Rationale | Status |
+|---|---|---|---|---|
+| D-007 | 2026-08-09 | Models must not work directly on `main`; work starts from a stable checkpoint or from `main` only after explicit verification. A PR is accepted only when CI passes on its final head. Force-push to stable refs and deletion of stable branches/tags are prohibited. A commit is not stable merely because it was merged. Stable promotion requires final-head CI, human supervisory review, SHA registration in `PROJECT_STATE.md`, and an explicit stable checkpoint. If a suspect change series exists, do not repair `main` with a force reset; create a recovery branch from the last stable checkpoint and reintroduce changes through a PR. | Protect the recoverable baseline and separate merging from declaring stability. | Approved |
