@@ -53,6 +53,14 @@ def ref_for_worktree(repo: Path, ref: str) -> str:
     raise RuntimeError(f"checkpoint ref not found locally: {ref}")
 
 
+def resolve_main_ref(repo: Path) -> str:
+    for candidate in ("refs/heads/main^{commit}", "refs/remotes/origin/main^{commit}"):
+        resolved = git(repo, "rev-parse", "--verify", candidate, check=False)
+        if resolved:
+            return resolved
+    raise RuntimeError("main ref not found locally")
+
+
 def validation_commands() -> list[list[str]]:
     python = sys.executable
     return [[python, "scripts/validate_foundation.py"], [python, "scripts/validate_s2.py"]]
@@ -104,7 +112,7 @@ def run_restore_test(repo: Path, ref: str, sha: str, dry_run: bool = False) -> N
     before_status = git(repo, "status", "--porcelain=v1", "--untracked-files=all")
     stable_ref = ref_for_worktree(repo, ref)
     before_refs = {
-        "main": git(repo, "rev-parse", "--verify", "refs/heads/main"),
+        "main": resolve_main_ref(repo),
         "stable": git(repo, "rev-parse", "--verify", f"{stable_ref}^{{commit}}"),
     }
     if dry_run:
@@ -139,7 +147,7 @@ def run_restore_test(repo: Path, ref: str, sha: str, dry_run: bool = False) -> N
 
     after_status = git(repo, "status", "--porcelain=v1", "--untracked-files=all")
     after_refs = {
-        "main": git(repo, "rev-parse", "--verify", "refs/heads/main"),
+        "main": resolve_main_ref(repo),
         "stable": git(repo, "rev-parse", "--verify", f"{stable_ref}^{{commit}}"),
     }
     if before_status != after_status:

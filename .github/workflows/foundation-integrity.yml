@@ -58,6 +58,9 @@ jobs:
       - name: Run stable checkpoint regressions
         run: python -m unittest tests.test_stable_checkpoint -v
 
+      - name: Run stable checkpoint restore-test
+        run: python scripts/stable_checkpoint.py restore-test --ref stable/2026-08-09-be14a389 --sha be14a389d7e11f1df9f935999d888e7e2295c8a3
+
       - name: Verify DOCX size and SHA-256 independently
         run: |
           python - <<'PY'
