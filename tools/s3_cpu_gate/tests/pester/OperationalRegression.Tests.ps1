@@ -144,7 +144,7 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
   Mock Test-S3WorkersObservabilityAuthorization {[ordered]@{status='PASS'}} -ModuleName Cloudflare
   Mock Test-S3WorkersDevSubdomain {[ordered]@{status='PASS'}} -ModuleName Cloudflare
   Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
-  $r=Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token token -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz'
+  $r=Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token token -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' -ObservabilityToken 'observability-token-xyz'
   $r.status|Should -Be PASS;$r.attestation|Should -Be YES;$c.State.resources.Count|Should -Be 0
   Should -Invoke Test-S3WorkersObservabilityAuthorization -ModuleName Cloudflare -Times 1 -Exactly
   Should -Invoke Get-S3CloudflareAccounts -ModuleName Cloudflare -Times 0 -Exactly
@@ -155,6 +155,7 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
 Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
     BeforeEach {
         $env:S3_CLOUDFLARE_BILLING_READ_TOKEN = $null
+        $env:S3_CLOUDFLARE_OBSERVABILITY_WRITE_TOKEN = 'test-observability-token'
     }
 
     It 'OAuth remains the primary credential and billing token is separate' {
@@ -169,7 +170,7 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
         { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token token -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage } | Should -Throw '*MANUAL_ACTION_REQUIRED_BILLING_READ_TOKEN*'
     }
 
-    It 'Billing environment variable is immediately wiped after acquisition' {
+    It 'temporary Billing and Observability environment variables are immediately wiped after acquisition' {
         $c = Get-TestContext Live
         $env:S3_CLOUDFLARE_BILLING_READ_TOKEN = 'secret-token-123'
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
@@ -191,9 +192,10 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
 
         [void](Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage)
         $env:S3_CLOUDFLARE_BILLING_READ_TOKEN | Should -BeNullOrEmpty
+        $env:S3_CLOUDFLARE_OBSERVABILITY_WRITE_TOKEN | Should -BeNullOrEmpty
     }
 
-    It 'billing token is used only for subscriptions and paygo, OAuth is used for the rest' {
+    It 'billing, OAuth, and Observability credentials remain isolated by endpoint' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
         Mock Invoke-S3CloudflareBillingPagedGet {throw 'subscriptions must not use pagination'} -ModuleName Cloudflare
@@ -216,12 +218,14 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
         Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
         Mock Test-S3CloudflarePayGo {[ordered]@{status='PASS'}} -ModuleName Cloudflare
         Mock Test-S3WorkersAccountSettings {[ordered]@{status='PASS'}} -ModuleName Cloudflare
-        Mock Test-S3WorkersObservabilityAuthorization {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Test-S3WorkersObservabilityAuthorization {param($AccountId,$Token);$AccountId|Should -Be 'account-a';$Token|Should -Be 'observability-token-xyz';[ordered]@{status='PASS'}} -ModuleName Cloudflare
         Mock Test-S3WorkersDevSubdomain {[ordered]@{status='PASS'}} -ModuleName Cloudflare
         Mock Show-S3CloudflarePreflightRecord {'mock.json'} -ModuleName Cloudflare
 
-        $r = Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz'
+        $r = Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' -ObservabilityToken 'observability-token-xyz'
         $r.status | Should -Be PASS
+        (Get-S3MapValue -Map $c.RuntimeSecrets -Name 'cloudflareObservabilityToken') | Should -Be 'observability-token-xyz'
+        (Get-S3MapValue -Map $c.State.results.cloudflarePreflight -Name 'observabilityToken') | Should -BeNullOrEmpty
         Should -Invoke Invoke-S3CloudflareBillingPagedGet -ModuleName Cloudflare -Times 0 -Exactly
         Should -Invoke Invoke-S3CloudflareBillingRead -ModuleName Cloudflare -ParameterFilter {$Uri -match '/subscriptions$'} -Times 1 -Exactly
     }
@@ -410,13 +414,20 @@ Describe 'S3 Billing Read Preflight Isolation and Bounds' -Tag 'B5' {
         [void](Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth-token-123' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz')
     }
 
-    It 'finally/cleanup logic works after Billing exception' {
+    It 'missing Observability credential fails closed after the other read-only guards pass' {
         $c = Get-TestContext Live
         Mock Test-S3CloudflareSession {[ordered]@{status='PASS';accounts=[ordered]@{status='PASS';items=@([ordered]@{id='account-a'});pagesRead=@(1);paginationComplete=$true}}} -ModuleName Cloudflare
-        Mock Invoke-S3CloudflareBillingPagedGet {
-            throw 'Billing API error simulation'
+        Mock Invoke-S3CloudflareBillingRead {
+            param($Uri)
+            if ($Uri -match '/subscriptions$') { return [pscustomobject]@{success=$true;errors=@();result=@()} }
+            return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{status='disabled';covered=$false;subscriptions=@()}}
         } -ModuleName Cloudflare
-        { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw
+        Mock Test-S3CloudflareSubscriptions {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Test-S3CloudflarePayGo {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        Mock Invoke-S3CloudflareRest {param($Uri);if($Uri -match 'account-settings'){return [pscustomobject]@{success=$true;errors=@();result=[ordered]@{default_usage_model='bundled'}}};return [pscustomobject]@{success=$true;errors=@();result=@()}} -ModuleName Cloudflare
+        Mock Test-S3WorkersAccountSettings {[ordered]@{status='PASS'}} -ModuleName Cloudflare
+        $env:S3_CLOUDFLARE_OBSERVABILITY_WRITE_TOKEN = $null
+        { Invoke-S3CloudflareReadOnlyPreflight -Context $c -SelectedAccountId account-a -Token 'oauth' -TokenType oauth -AttestationChoice {'1'} -SkipOpenBillingPage -BillingToken 'billing-token-xyz' } | Should -Throw '*MANUAL_ACTION_REQUIRED_OBSERVABILITY_WRITE_TOKEN*'
     }
 
     It 'success of billing checks does not bypass other preflight guards' {

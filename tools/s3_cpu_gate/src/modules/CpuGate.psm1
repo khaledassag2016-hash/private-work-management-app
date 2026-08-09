@@ -153,15 +153,15 @@ function Invoke-S3CpuGate {
  if($Context.Mode -ne 'Live'){return [ordered]@{status='NOT_EXECUTED';reasons=@('PLAN_MODE')}}
  $cloudflare=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';$uri="$((Get-S3MapValue -Map $cloudflare -Name 'url'))/private/ping";$token1=[string]$Context.RuntimeSecrets.token1;$token2=[string]$Context.RuntimeSecrets.token2;$nonce=[string]$Context.RuntimeSecrets.testResetNonce
  if(-not $token1 -or -not $token2 -or -not $nonce){throw 'الأسرار المؤقتة غير موجودة في الذاكرة؛ يجب التنظيف وإعادة تشغيل Live.'}
- $accountId=[string](Get-S3MapValue -Map $cloudflare -Name 'accountId');$cloudflareToken=[string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken')
- if(-not $cloudflareToken -or -not $accountId){throw 'Cloudflare preflight context غير موجود في الذاكرة.'}
+ $accountId=[string](Get-S3MapValue -Map $cloudflare -Name 'accountId');$cloudflareObservabilityToken=[string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareObservabilityToken')
+ if(-not $cloudflareObservabilityToken -or -not $accountId){throw 'Cloudflare Observability preflight context غير موجود في الذاكرة.'}
  try{
   for($index=0;$index -lt 20;$index++){Invoke-S3HttpRequest -Uri $uri -Token $token1|Out-Null}
   $expected1=Invoke-S3TrackedRequestGroup -Uri $uri -Token $token1 -RunId $Context.RunId -Scenario 'cache_hit_round_1' -Count 100
-  $telemetry1=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareToken -RunId $Context.RunId -Scenario 'cache_hit_round_1' -ExpectedRequests $expected1
+  $telemetry1=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareObservabilityToken -RunId $Context.RunId -Scenario 'cache_hit_round_1' -ExpectedRequests $expected1
   if($telemetry1.status -ne 'PASS'){throw "B2_TELEMETRY_FAIL:$($telemetry1.reasons -join ',')"}
   $expected2=Invoke-S3TrackedRequestGroup -Uri $uri -Token $token1 -RunId $Context.RunId -Scenario 'cache_hit_round_2' -Count 100
-  $telemetry2=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareToken -RunId $Context.RunId -Scenario 'cache_hit_round_2' -ExpectedRequests $expected2
+  $telemetry2=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareObservabilityToken -RunId $Context.RunId -Scenario 'cache_hit_round_2' -ExpectedRequests $expected2
   if($telemetry2.status -ne 'PASS'){throw "B2_TELEMETRY_FAIL:$($telemetry2.reasons -join ',')"}
   $expectedMisses=[Collections.Generic.List[object]]::new()
   for($index=0;$index -lt 20;$index++){
@@ -169,13 +169,13 @@ function Invoke-S3CpuGate {
    $requestId=[guid]::NewGuid().ToString('N');Invoke-S3HttpRequest -Uri $uri -Token $token1 -Headers @{'x-s3-run-id'=$Context.RunId;'x-s3-request-id'=$requestId;'x-s3-scenario'='cache_miss'}|Out-Null
    $expectedMisses.Add([ordered]@{runId=$Context.RunId;requestId=$requestId;scenario='cache_miss'})
   }
-  $telemetryMiss=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareToken -RunId $Context.RunId -Scenario 'cache_miss' -ExpectedRequests @($expectedMisses)
+  $telemetryMiss=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareObservabilityToken -RunId $Context.RunId -Scenario 'cache_miss' -ExpectedRequests @($expectedMisses)
   if($telemetryMiss.status -ne 'PASS'){throw "B2_TELEMETRY_FAIL:$($telemetryMiss.reasons -join ',')"}
   $negative=Invoke-S3NegativeTest -Context $Context -Uri $uri -Token1 $token1 -Token2 $token2
   Set-S3WorkerTestVariable -Context $Context -Vars @{TEST_CONTROLS='disabled';TEST_RESET_NONCE=$null;EXPECTED_AUDIENCE_OVERRIDE=$null;EXPECTED_ISSUER_PROJECT_OVERRIDE=$null;TEST_NOW_OFFSET_SECONDS=$null;CERT_URL_OVERRIDE=$null;FORCE_CACHE_METADATA_INVALID=$null}
   $group1=@($telemetry1.records|ForEach-Object{$_.cache_state='hit';$_});$group2=@($telemetry2.records|ForEach-Object{$_.cache_state='hit';$_});$misses=@($telemetryMiss.records|ForEach-Object{$_.cache_state='miss';$_})
   $payload=[ordered]@{run_id=$Context.RunId;groups=[ordered]@{cache_hit_round_1=$group1;cache_hit_round_2=$group2;cache_miss=$misses};plan_free=(Get-S3MapValue -Map $cloudflare -Name 'freePlan');billing_absent=(Get-S3MapValue -Map $cloudflare -Name 'billingAbsent');security_reduced=$false;telemetry_official=$true;telemetry_endpoint='POST /accounts/{account_id}/workers/observability/telemetry/query';stable=$true;independent_reproducible_cpu_terminations=0;negativeTests=$negative}
   $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;$payload|ConvertTo-Json -Depth 30|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8;return $decision
- }finally{$token1=$null;$token2=$null;$cloudflareToken=$null;[GC]::Collect()}
+ }finally{$token1=$null;$token2=$null;$cloudflareObservabilityToken=$null;[GC]::Collect()}
 }
 Export-ModuleMember -Function *-S3*
