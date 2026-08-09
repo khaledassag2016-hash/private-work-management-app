@@ -431,8 +431,8 @@ function Invoke-S3CloudflareReadOnlyPreflight {
         }
 
         try {
-            $subscriptions = Invoke-S3CloudflareBillingPagedGet -Uri "$base/subscriptions" -Token $resolvedBillingToken -ExpectedAccountId $accountId
-            [void](Test-S3CloudflareSubscriptions -Subscriptions @($subscriptions.items)); $automated.subscriptions='PASS'
+            $subscriptionsResponse = Invoke-S3CloudflareBillingRead -Method GET -Uri "$base/subscriptions" -Token $resolvedBillingToken -ExpectedAccountId $accountId
+            [void](Test-S3CloudflareSubscriptions -Subscriptions @($subscriptionsResponse.result)); $automated.subscriptions='PASS'
             $payGoResponse = Invoke-S3CloudflareBillingRead -Method GET -Uri "$base/paygo-usage-info" -Token $resolvedBillingToken -ExpectedAccountId $accountId
             [void](Test-S3CloudflarePayGo -PayGoResult $payGoResponse.result); $automated.payGo='PASS'
         }
