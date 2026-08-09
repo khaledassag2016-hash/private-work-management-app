@@ -242,3 +242,15 @@
 - Stable branch: `stable/2026-08-09-be14a389`.
 - This governance PR is the PR that makes the checkpoint registration official after supervisory review and merge. No later PR becomes stable automatically; a later stable status requires the explicit D-007 promotion gates and a new checkpoint record.
 - No stable tag is created by this PR. An annotated stable tag, if approved, is a separate post-merge supervisory action.
+
+## Post-PR-42 administrative state — 2026-08-09
+
+- PR #41: **MERGED by Squash** at `90f949da8a82cd63eca7841c58142ef673cbfcef`; **NOT STABLE automatically**.
+- PR #42: **MERGED by Squash** at `643de962dc8631f68a42e3796c4a096a29c4e14c`.
+- Current main SHA at the start of this administrative update: `643de962dc8631f68a42e3796c4a096a29c4e14c`.
+- D-007 stable checkpoint/recovery governance: **MERGED / IN FORCE**.
+- Stable promotion candidate: `643de962dc8631f68a42e3796c4a096a29c4e14c` — **CANDIDATE ONLY / NOT STABLE**.
+- The candidate includes PR #41, PR #42, and the D-007 governance merged through PR #42. It has not been promoted and has no new stable ref.
+- Existing immutable stable: `stable/2026-08-09-be14a389` at `be14a389d7e11f1df9f935999d888e7e2295c8a3`; it was not moved, deleted, or recreated.
+- Issue #2: **OPEN**. S3: **INCOMPLETE**. Live CPU Gate: **NOT COMPLETED**.
+- This administrative update performed **NO CLOUD WRITE**, **NO STABLE REF MOVEMENT**, **NO TAG**, **NO MAIN DIRECT EDIT**, and **NO FORCE-PUSH**.
