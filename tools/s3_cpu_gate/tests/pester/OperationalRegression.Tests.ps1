@@ -1103,7 +1103,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
     It 'does not mark Firebase cleanup already absent after ambiguous permission failure' {
         $c = Get-TestContext Live
         $suffix = ($c.RunId -replace '[^a-z0-9-]','').ToLowerInvariant();if($suffix.Length -gt 20){$suffix=$suffix.Substring($suffix.Length-20)}
-        $c.State.resources.firebase = [ordered]@{projectId="s3cpu-$suffix";marker=$c.RunId;provisioningStatus='PROJECT_CREATE_PENDING';preCreateAbsence='PASS'}
+        $c.State.resources.firebase = [ordered]@{projectId="s3cpu-$suffix";marker=$c.RunId;provisioningStatus='PROJECT_CREATE_PENDING';preCreateAbsence='PASS';cleanupStatus=$null}
         Mock Get-S3FirebaseProjectPresence { 'UNKNOWN' } -ModuleName Firebase
         Mock Invoke-S3Process { throw 'FIREBASE_DELETE_MUST_NOT_RUN' } -ModuleName Firebase
         { Remove-S3FirebaseProject -Context $c } | Should -Throw '*FIREBASE_PROJECT_PRESENCE_UNVERIFIABLE*'
