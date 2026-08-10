@@ -316,7 +316,14 @@ function Invoke-S3FirebaseProvision {
         }
         Set-S3MapValue -Map $Context.State.resources -Name 'firebase' -Value $resource
         Write-S3State -Root $Context.Root -State $Context.State
-        Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('projects:create',$projectId,'--display-name',$display,'--json','--non-interactive') -TimeoutSeconds 600 | Out-Null
+        $createResult = Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('projects:create',$projectId,'--display-name',$display,'--json','--non-interactive') -TimeoutSeconds 600 -AllowFailure
+        if ($createResult.ExitCode -ne 0) {
+            $createDiagnostic = Protect-S3Text ((@([string]$createResult.StdOut,[string]$createResult.StdErr) -join "`n").Trim())
+            if ([string]::IsNullOrWhiteSpace($createDiagnostic)) {
+                throw "FIREBASE_PROJECT_CREATE_FAILED_NO_DIAGNOSTIC: exit=$($createResult.ExitCode)"
+            }
+            throw "FIREBASE_PROJECT_CREATE_FAILED: exit=$($createResult.ExitCode): $createDiagnostic"
+        }
         Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATED'
         Write-S3State -Root $Context.Root -State $Context.State
         $billingProof = Assert-S3GoogleNoBilling -Context $Context -ProjectId $projectId
