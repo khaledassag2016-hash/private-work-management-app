@@ -281,7 +281,9 @@ function Get-S3FirebaseProjectPresence {
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$ProjectId)
     $result = Invoke-S3Process -Context $Context -FilePath 'gcloud' -ArgumentList @('projects','describe',$ProjectId,'--format=json') -TimeoutSeconds 120 -AllowFailure
     if ($result.ExitCode -eq 0) { return 'EXISTS' }
-    if (($result.StdErr + $result.StdOut) -match '(?i)not found|does not exist|not exist') { return 'ABSENT' }
+    $diagnostic = @([string]$result.StdErr,[string]$result.StdOut) -join "`n"
+    if ($diagnostic -match '(?i)permission_denied|permission denied|access denied|forbidden|unauthorized|\b(?:401|403)\b') { return 'UNKNOWN' }
+    if ($diagnostic -match '(?i)\bNOT_FOUND\b|requested entity was not found|\bproject\b[^\r\n]*\bwas not found\b') { return 'ABSENT' }
     return 'UNKNOWN'
 }
 
