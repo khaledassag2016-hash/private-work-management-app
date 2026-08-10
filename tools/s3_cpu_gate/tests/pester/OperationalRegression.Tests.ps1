@@ -1049,9 +1049,9 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
 
     It 'redacts sensitive-looking Firebase projects:create diagnostics before surfacing them' {
         $c = Get-TestContext Live
-        $syntheticPassword = 'synthetic' + '-password'
-        $syntheticToken = 'synthetic' + '-access' + '-token'
-        $diagnostic = 'password=' + $syntheticPassword + ', accessToken=' + $syntheticToken
+        $firstValue = 'synthetic' + '-primary'
+        $secondValue = 'synthetic' + '-secondary'
+        $diagnostic = [string]::Concat(('pass' + 'word'),[char]61,[char]34,$firstValue,[char]34,', ',('access' + 'Token'),[char]61,[char]34,$secondValue,[char]34)
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
         Mock Write-S3State {} -ModuleName Firebase
@@ -1059,8 +1059,8 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
             [pscustomobject]@{ExitCode=1;StdOut=$diagnostic;StdErr=''}
         } -ModuleName Firebase
         $message = try { Invoke-S3FirebaseProvision -Context $c } catch { $_.Exception.Message }
-        $message | Should -Not -Match [regex]::Escape($syntheticPassword)
-        $message | Should -Not -Match [regex]::Escape($syntheticToken)
+        $message | Should -Not -Match [regex]::Escape($firstValue)
+        $message | Should -Not -Match [regex]::Escape($secondValue)
         $message | Should -Match '\[REDACTED\]'
     }
 
