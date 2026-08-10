@@ -128,12 +128,14 @@ Describe 'B4 Cloudflare cleanup fail-closed' -Tag 'B4' {
     It 'does not report DELETED when Worker deletion fails' {
         $c=New-S3LiveCleanupContextForTest
         Mock Invoke-S3Process {param($ArgumentList);if($ArgumentList[0] -eq 'delete'){[pscustomobject]@{ExitCode=1;StdOut='';StdErr='failed'}}else{[pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}}} -ModuleName Cloudflare
+        Mock Get-S3CloudflareResourceAbsenceProof {[ordered]@{workerAbsent=$false;d1Absent=$false}} -ModuleName Cloudflare
         Mock Wait-S3CloudflareResourceAbsence {[ordered]@{status='PASS';attempts=1;workerAbsent=$true;d1Absent=$true}} -ModuleName Cloudflare
         (Remove-S3CloudflareResource $c).status | Should -Be 'FAILED'
     }
     It 'does not report DELETED when D1 deletion fails' {
         $c=New-S3LiveCleanupContextForTest
         Mock Invoke-S3Process {param($ArgumentList);if($ArgumentList[0] -eq 'd1'){[pscustomobject]@{ExitCode=1;StdOut='';StdErr='failed'}}else{[pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}}} -ModuleName Cloudflare
+        Mock Get-S3CloudflareResourceAbsenceProof {[ordered]@{workerAbsent=$false;d1Absent=$false}} -ModuleName Cloudflare
         Mock Wait-S3CloudflareResourceAbsence {[ordered]@{status='PASS';attempts=1;workerAbsent=$true;d1Absent=$true}} -ModuleName Cloudflare
         (Remove-S3CloudflareResource $c).status | Should -Be 'FAILED'
     }
@@ -156,12 +158,14 @@ Describe 'B4 Cloudflare cleanup fail-closed' -Tag 'B4' {
     It 'reports partial cleanup rather than PASS' {
         $c=New-S3LiveCleanupContextForTest
         Mock Invoke-S3Process {[pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}} -ModuleName Cloudflare
+        Mock Get-S3CloudflareResourceAbsenceProof {[ordered]@{workerAbsent=$false;d1Absent=$false}} -ModuleName Cloudflare
         Mock Wait-S3CloudflareResourceAbsence {[ordered]@{status='PARTIAL';attempts=3;workerAbsent=$true;d1Absent=$false}} -ModuleName Cloudflare
         (Remove-S3CloudflareResource $c).status | Should -Be 'PARTIAL'
     }
     It 'reports DELETED only when both deletions and absence proof pass' {
         $c=New-S3LiveCleanupContextForTest
         Mock Invoke-S3Process {[pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}} -ModuleName Cloudflare
+        Mock Get-S3CloudflareResourceAbsenceProof {[ordered]@{workerAbsent=$false;d1Absent=$false}} -ModuleName Cloudflare
         Mock Wait-S3CloudflareResourceAbsence {[ordered]@{status='PASS';attempts=2;workerAbsent=$true;d1Absent=$true}} -ModuleName Cloudflare
         $result=Remove-S3CloudflareResource $c
         $result.status | Should -Be 'DELETED'
@@ -289,6 +293,7 @@ Describe 'B8 owned login and temporary credential cleanup' -Tag 'B8' {
         } -ModuleName Cloudflare
         Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{status='active'}}} -ModuleName Cloudflare
         Mock Invoke-S3CloudflarePagedGet {[ordered]@{status='PASS';items=@([pscustomobject]@{id=$accountId});pagesRead=@(1);paginationComplete=$true}} -ModuleName Cloudflare
+        Mock Get-S3CloudflareResourceAbsenceProof {[ordered]@{workerAbsent=$false;d1Absent=$false}} -ModuleName Cloudflare
         Mock Wait-S3CloudflareResourceAbsence {[ordered]@{status='PASS';attempts=1;workerAbsent=$true;d1Absent=$true}} -ModuleName Cloudflare
         $result=Invoke-S3Cleanup $c
         $result.status | Should -Be 'PASS'
