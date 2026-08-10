@@ -635,6 +635,58 @@ function New-S3WranglerConfig {
     return $path
 }
 
+function Get-S3CloudflareD1ExactMatches {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns','Get-S3CloudflareD1ExactMatches',Justification='Returns all exact matches so ambiguous ownership is rejected fail-closed.')]
+    param(
+        [Parameter(Mandatory)][string]$AccountId,
+        [Parameter(Mandatory)][string]$Token,
+        [Parameter(Mandatory)][string]$D1Name
+    )
+    if ([string]::IsNullOrWhiteSpace($D1Name)) { throw 'D1_EXACT_NAME_REQUIRED' }
+    $base = "https://api.cloudflare.com/client/v4/accounts/$AccountId"
+    $response = Invoke-S3CloudflarePagedGet -Uri "$base/d1/database" -Token $Token
+    $exactMatches = @(
+        foreach ($item in @($response.items)) {
+            $uuid = [string](Get-S3CloudflareValue -InputObject $item -Name @('uuid','id'))
+            $name = [string](Get-S3CloudflareValue -InputObject $item -Name @('name'))
+            if ([string]::IsNullOrWhiteSpace($uuid) -or [string]::IsNullOrWhiteSpace($name)) {
+                throw 'D1_LIST_RESPONSE_UNKNOWN'
+            }
+            if ($name -ceq $D1Name) {
+                [ordered]@{name=$name;uuid=$uuid}
+            }
+        }
+    )
+    return $exactMatches
+}
+
+function Resolve-S3CloudflarePendingD1 {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Resource,
+        [Parameter(Mandatory)][string]$Token
+    )
+    $d1Id = [string](Get-S3MapValue -Map $Resource -Name 'd1Id')
+    if (-not [string]::IsNullOrWhiteSpace($d1Id)) {
+        return [ordered]@{status='KNOWN';d1Id=$d1Id}
+    }
+    $accountId = [string](Get-S3MapValue -Map $Resource -Name 'accountId')
+    $d1Name = [string](Get-S3MapValue -Map $Resource -Name 'd1Name')
+    $exactMatches = @(Get-S3CloudflareD1ExactMatches -AccountId $accountId -Token $Token -D1Name $d1Name)
+    if ($exactMatches.Count -gt 1) { throw 'D1_EXACT_NAME_AMBIGUOUS' }
+    if ($exactMatches.Count -eq 0) {
+        Set-S3MapValue -Map $Resource -Name 'provisioningStatus' -Value 'D1_ABSENT'
+        Write-S3State -Root $Context.Root -State $Context.State
+        return [ordered]@{status='ABSENT';d1Id=$null}
+    }
+    $recoveredId = [string]$exactMatches[0].uuid
+    if ([string]::IsNullOrWhiteSpace($recoveredId)) { throw 'D1_EXACT_ID_MISSING' }
+    Set-S3MapValue -Map $Resource -Name 'd1Id' -Value $recoveredId
+    Set-S3MapValue -Map $Resource -Name 'provisioningStatus' -Value 'D1_CREATED'
+    Write-S3State -Root $Context.Root -State $Context.State
+    return [ordered]@{status='RECOVERED';d1Id=$recoveredId}
+}
+
 function Invoke-S3CloudflareProvision {
     param([Parameter(Mandatory)]$Context)
     if ($Context.Mode -eq 'Simulation') {
@@ -653,10 +705,29 @@ function Invoke-S3CloudflareProvision {
         $worker=('s3cpu-'+$Context.RunId+'-worker').ToLower();if($worker.Length -gt 63){$worker=$worker.Substring(0,63)}
         $databaseName=('s3cpu-'+$Context.RunId+'-d1').ToLower();if($databaseName.Length -gt 63){$databaseName=$databaseName.Substring(0,63)}
         [void](Assert-S3DeploymentPayloadNoSecret -Context $Context -Scope PreCloud)
+        $preCreateMatches = @(Get-S3CloudflareD1ExactMatches -AccountId $accountId -Token $token -D1Name $databaseName)
+        if ($preCreateMatches.Count -gt 0) { throw 'D1_NAME_ALREADY_EXISTS' }
+        $resource=[ordered]@{
+            accountId=$accountId;worker=$worker;d1Name=$databaseName;d1Id=$null;marker=$Context.RunId
+            provisioningStatus='D1_CREATE_PENDING';cleanupStatus=$null;preCreateAbsence='PASS';freePlan=$true;billingAbsent=$true
+        }
+        Set-S3MapValue -Map $Context.State.resources -Name 'cloudflare' -Value $resource
+        Write-S3State -Root $Context.Root -State $Context.State
         $create=Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','create',$databaseName) -TimeoutSeconds 180
-        $match=[regex]::Match($create.StdOut,'(?i)database_id\s*=\s*["'']?([0-9a-f-]{32,36})');if(-not $match.Success){$match=[regex]::Match($create.StdOut,'([0-9a-f]{8}-[0-9a-f-]{27,})')};if(-not $match.Success){throw 'تعذر استخراج D1 database ID.'};$databaseId=$match.Groups[1].Value
-        $resource=[ordered]@{accountId=$accountId;worker=$worker;d1Name=$databaseName;d1Id=$databaseId;marker=$Context.RunId;freePlan=$true;billingAbsent=$true}
-        Set-S3MapValue -Map $Context.State.resources -Name 'cloudflare' -Value $resource;Write-S3State -Root $Context.Root -State $Context.State
+        $match=[regex]::Match($create.StdOut,'(?i)database_id\s*=\s*["'']?([0-9a-f-]{32,36})');if(-not $match.Success){$match=[regex]::Match($create.StdOut,'([0-9a-f]{8}-[0-9a-f-]{27,})')}
+        if ($match.Success) {
+            $databaseId=$match.Groups[1].Value
+        }
+        else {
+            $recovered = @(Get-S3CloudflareD1ExactMatches -AccountId $accountId -Token $token -D1Name $databaseName)
+            if ($recovered.Count -eq 0) { throw 'D1_CREATE_RESULT_UNRECOVERABLE' }
+            if ($recovered.Count -gt 1) { throw 'D1_EXACT_NAME_AMBIGUOUS' }
+            $databaseId=[string]$recovered[0].uuid
+            if ([string]::IsNullOrWhiteSpace($databaseId)) { throw 'D1_EXACT_ID_MISSING' }
+        }
+        Set-S3MapValue -Map $resource -Name 'd1Id' -Value $databaseId
+        Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'D1_CREATED'
+        Write-S3State -Root $Context.Root -State $Context.State
         $firebaseResource=Get-S3MapValue -Map $Context.State.resources -Name 'firebase';$projectId=[string](Get-S3MapValue -Map $firebaseResource -Name 'projectId');$nonce=[guid]::NewGuid().ToString('N');$Context.RuntimeSecrets.testResetNonce=$nonce
         $configurationPath=New-S3WranglerConfig -Context $Context -WorkerName $worker -DatabaseId $databaseId -ProjectId $projectId -TestNonce $nonce -TestControls $true
         $schema=Join-Path $Context.Root 'worker\schema.sql';[void](Assert-S3DeploymentPayloadNoSecret -Context $Context -Scope CloudflareExecution);Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$databaseName,'--remote','--file',$schema,'--config',$configurationPath,'--yes') -TimeoutSeconds 300|Out-Null
@@ -677,14 +748,16 @@ function Test-S3CloudflareCleanupOwnership {
     $d1Name = [string](Get-S3MapValue -Map $Resource -Name 'd1Name')
     $d1Id = [string](Get-S3MapValue -Map $Resource -Name 'd1Id')
     $accountId = [string](Get-S3MapValue -Map $Resource -Name 'accountId')
-    if (-not (Test-S3OwnedResource -Context $Context -Name $worker -Marker $marker) -or -not (Test-S3OwnedResource -Context $Context -Name $d1Name -Marker $marker) -or $worker -notmatch '^s3cpu-' -or $d1Name -notmatch '^s3cpu-' -or [string]::IsNullOrWhiteSpace($d1Id) -or [string]::IsNullOrWhiteSpace($accountId)) {
+    $provisioningStatus = [string](Get-S3MapValue -Map $Resource -Name 'provisioningStatus')
+    $pendingD1 = [string]::IsNullOrWhiteSpace($d1Id) -and $provisioningStatus -in @('D1_CREATE_PENDING','D1_ABSENT')
+    if (-not (Test-S3OwnedResource -Context $Context -Name $worker -Marker $marker) -or -not (Test-S3OwnedResource -Context $Context -Name $d1Name -Marker $marker) -or $worker -notmatch '^s3cpu-' -or $worker -eq 's3cpu-be239c6980' -or $d1Name -notmatch '^s3cpu-' -or (([string]::IsNullOrWhiteSpace($d1Id)) -and -not $pendingD1) -or [string]::IsNullOrWhiteSpace($accountId)) {
         throw 'رفض حذف Cloudflare غير مملوكة.'
     }
-    return [ordered]@{worker=$worker;d1Name=$d1Name;d1Id=$d1Id;accountId=$accountId}
+    return [ordered]@{worker=$worker;d1Name=$d1Name;d1Id=$d1Id;accountId=$accountId;provisioningStatus=$provisioningStatus}
 }
 
 function Get-S3CloudflareResourceAbsenceProof {
-    param([Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$Token,[Parameter(Mandatory)][string]$Worker,[Parameter(Mandatory)][string]$D1Name,[Parameter(Mandatory)][string]$D1Id)
+    param([Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$Token,[Parameter(Mandatory)][string]$Worker,[Parameter(Mandatory)][string]$D1Name,[AllowEmptyString()][string]$D1Id='')
     $base = "https://api.cloudflare.com/client/v4/accounts/$AccountId"
     $workerResponse = Invoke-S3CloudflarePagedGet -Uri "$base/workers/scripts" -Token $Token
     $workerIds = [Collections.Generic.List[string]]::new()
@@ -733,24 +806,37 @@ function Remove-S3CloudflareResource {
     $token = [string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken')
     $runtimeAccountId = [string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareAccountId')
     if ([string]::IsNullOrWhiteSpace($token) -or $runtimeAccountId -ne $owned.accountId) { return [ordered]@{status='UNKNOWN';reason='CLOUDFLARE_CLEANUP_RUNTIME_CONTEXT_MISSING';accountId=(Get-S3RedactedAccountId -AccountId $owned.accountId)} }
+    $d1Resolution = Resolve-S3CloudflarePendingD1 -Context $Context -Resource $resource -Token $token
+    $owned.d1Id = [string]$d1Resolution.d1Id
+    $initialProof = Get-S3CloudflareResourceAbsenceProof -AccountId $owned.accountId -Token $token -Worker $owned.worker -D1Name $owned.d1Name -D1Id $owned.d1Id
     $workerDelete = [ordered]@{status='NOT_ATTEMPTED';exitCode=$null}
     $d1Delete = [ordered]@{status='NOT_ATTEMPTED';exitCode=$null}
-    try {
-        $workerCommand = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('delete',$owned.worker,'--force') -TimeoutSeconds 300 -AllowFailure
-        $workerDelete.status = if ($workerCommand.ExitCode -eq 0) {'REQUESTED'} else {'FAILED'}
-        $workerDelete.exitCode = $workerCommand.ExitCode
+    if ($initialProof.workerAbsent) {
+        $workerDelete.status = 'ALREADY_ABSENT'
     }
-    catch { $workerDelete = [ordered]@{status='FAILED';exitCode=$null;reason=Protect-S3Text $_.Exception.Message} }
-    try {
-        $d1Command = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','delete',$owned.d1Name,'--yes') -TimeoutSeconds 300 -AllowFailure
-        $d1Delete.status = if ($d1Command.ExitCode -eq 0) {'REQUESTED'} else {'FAILED'}
-        $d1Delete.exitCode = $d1Command.ExitCode
+    else {
+        try {
+            $workerCommand = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('delete',$owned.worker,'--force') -TimeoutSeconds 300 -AllowFailure
+            $workerDelete.status = if ($workerCommand.ExitCode -eq 0) {'REQUESTED'} else {'FAILED'}
+            $workerDelete.exitCode = $workerCommand.ExitCode
+        }
+        catch { $workerDelete = [ordered]@{status='FAILED';exitCode=$null;reason=Protect-S3Text $_.Exception.Message} }
     }
-    catch { $d1Delete = [ordered]@{status='FAILED';exitCode=$null;reason=Protect-S3Text $_.Exception.Message} }
+    if ($initialProof.d1Absent) {
+        $d1Delete.status = 'ALREADY_ABSENT'
+    }
+    else {
+        try {
+            $d1Command = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','delete',$owned.d1Name,'--yes') -TimeoutSeconds 300 -AllowFailure
+            $d1Delete.status = if ($d1Command.ExitCode -eq 0) {'REQUESTED'} else {'FAILED'}
+            $d1Delete.exitCode = $d1Command.ExitCode
+        }
+        catch { $d1Delete = [ordered]@{status='FAILED';exitCode=$null;reason=Protect-S3Text $_.Exception.Message} }
+    }
     $proof = Wait-S3CloudflareResourceAbsence -AccountId $owned.accountId -Token $token -Worker $owned.worker -D1Name $owned.d1Name -D1Id $owned.d1Id
-    $workerOk = ($workerDelete.status -eq 'REQUESTED' -and $proof.workerAbsent -eq $true)
-    $d1Ok = ($d1Delete.status -eq 'REQUESTED' -and $proof.d1Absent -eq $true)
-    $status = if ($workerDelete.status -ne 'REQUESTED' -or $d1Delete.status -ne 'REQUESTED') {'FAILED'} elseif ($workerOk -and $d1Ok -and $proof.status -eq 'PASS') {'DELETED'} elseif ($proof.status -eq 'UNKNOWN') {'UNKNOWN'} elseif ($proof.workerAbsent -xor $proof.d1Absent) {'PARTIAL'} else {'FAILED'}
+    $workerOk = ($workerDelete.status -in @('REQUESTED','ALREADY_ABSENT') -and $proof.workerAbsent -eq $true)
+    $d1Ok = ($d1Delete.status -in @('REQUESTED','ALREADY_ABSENT') -and $proof.d1Absent -eq $true)
+    $status = if ($workerDelete.status -eq 'FAILED' -or $d1Delete.status -eq 'FAILED') {'FAILED'} elseif ($workerOk -and $d1Ok -and $proof.status -eq 'PASS') {'DELETED'} elseif ($proof.status -eq 'UNKNOWN') {'UNKNOWN'} elseif ($proof.workerAbsent -xor $proof.d1Absent) {'PARTIAL'} else {'FAILED'}
     if ($status -eq 'DELETED') {
         Set-S3MapValue -Map $resource -Name 'cleanupStatus' -Value 'DELETED'
         Write-S3State -Root $Context.Root -State $Context.State

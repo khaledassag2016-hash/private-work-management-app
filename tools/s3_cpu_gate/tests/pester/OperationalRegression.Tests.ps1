@@ -860,3 +860,250 @@ Describe 'S3 Cloudflare paged get regression and D1 support' -Tag 'B5' {
         $result | Should -BeNullOrEmpty
     }
 }
+
+Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
+    It 'persists the D1 pending intent before invoking d1 create' {
+        $source = Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw
+        $pending = $source.IndexOf("provisioningStatus='D1_CREATE_PENDING'")
+        $create = $source.IndexOf("'d1','create'")
+        $pending | Should -BeGreaterThan -1
+        $pending | Should -BeLessThan $create
+        $source.IndexOf('Write-S3State -Root $Context.Root -State $Context.State',$pending) | Should -BeGreaterThan $pending
+    }
+
+    It 'never invokes D1 create when the pending-state write fails' {
+        $c = Get-TestContext Live
+        $c.State.results.cloudflarePreflight = [ordered]@{status='PASS'}
+        $c.RuntimeSecrets.cloudflareToken = 'token'
+        $c.RuntimeSecrets.cloudflareAccountId = 'account-a'
+        Mock Assert-S3DeploymentPayloadNoSecret {} -ModuleName Cloudflare
+        Mock Get-S3CloudflareD1ExactMatches { @() } -ModuleName Cloudflare
+        Mock Write-S3State { throw 'STATE_WRITE_FAILED' } -ModuleName Cloudflare
+        Mock Invoke-S3Process { throw 'D1_CREATE_MUST_NOT_RUN' } -ModuleName Cloudflare
+        { Invoke-S3CloudflareProvision -Context $c } | Should -Throw '*STATE_WRITE_FAILED*'
+        Should -Invoke Invoke-S3Process -ModuleName Cloudflare -Times 0 -Exactly
+    }
+
+    It 'persists a parseable D1 UUID before schema execution' {
+        $c = Get-TestContext Live
+        $c.State.results.cloudflarePreflight = [ordered]@{status='PASS'}
+        $c.State.resources.firebase = [ordered]@{projectId='s3cpu-test-firebase'}
+        $c.RuntimeSecrets.cloudflareToken = 'token';$c.RuntimeSecrets.cloudflareAccountId = 'account-a'
+        $events = [Collections.Generic.List[string]]::new()
+        Mock Assert-S3DeploymentPayloadNoSecret {} -ModuleName Cloudflare
+        Mock Get-S3CloudflareD1ExactMatches { @() } -ModuleName Cloudflare
+        Mock Write-S3State { [void]$events.Add('state') } -ModuleName Cloudflare
+        Mock New-S3WranglerConfig { 'config.json' } -ModuleName Cloudflare
+        Mock Invoke-S3Process {
+            [void]$events.Add(($ArgumentList -join ' '))
+            if ($ArgumentList -contains 'create') { return [pscustomobject]@{ExitCode=0;StdOut='database_id = "11111111-2222-3333-4444-555555555555"';StdErr=''} }
+            throw 'STOP_AFTER_D1_STATE'
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflareProvision -Context $c } | Should -Throw '*STOP_AFTER_D1_STATE*'
+        $events[0] | Should -Be 'state'
+        $events[1] | Should -Match 'd1 create'
+        $events[2] | Should -Be 'state'
+        $c.State.resources.cloudflare.d1Id | Should -Be '11111111-2222-3333-4444-555555555555'
+    }
+
+    It 'recovers one exact D1 by name when create output has no UUID' {
+        $c = Get-TestContext Live
+        $c.State.results.cloudflarePreflight = [ordered]@{status='PASS'}
+        $c.State.resources.firebase = [ordered]@{projectId='s3cpu-test-firebase'}
+        $c.RuntimeSecrets.cloudflareToken = 'token';$c.RuntimeSecrets.cloudflareAccountId = 'account-a'
+        $lookup = [Collections.Generic.List[int]]::new()
+        Mock Assert-S3DeploymentPayloadNoSecret {} -ModuleName Cloudflare
+        Mock Get-S3CloudflareD1ExactMatches { [void]$lookup.Add(1); if ($lookup.Count -eq 1) { @() } else { @([ordered]@{name='s3cpu-20260803-174000-abcdef12-d1';uuid='11111111-2222-3333-4444-555555555555'}) } } -ModuleName Cloudflare
+        Mock Write-S3State {} -ModuleName Cloudflare
+        Mock New-S3WranglerConfig { 'config.json' } -ModuleName Cloudflare
+        Mock Invoke-S3Process {
+            if ($ArgumentList -contains 'create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            throw 'STOP_AFTER_RECOVERY'
+        } -ModuleName Cloudflare
+        { Invoke-S3CloudflareProvision -Context $c } | Should -Throw '*STOP_AFTER_RECOVERY*'
+        $c.State.resources.cloudflare.d1Id | Should -Be '11111111-2222-3333-4444-555555555555'
+        $lookup.Count | Should -Be 2
+    }
+
+    It 'does not invent D1 ownership when exact recovery finds zero matches' {
+        $c = Get-TestContext Live
+        $c.State.results.cloudflarePreflight = [ordered]@{status='PASS'}
+        $c.State.resources.firebase = [ordered]@{projectId='s3cpu-test-firebase'}
+        $c.RuntimeSecrets.cloudflareToken = 'token';$c.RuntimeSecrets.cloudflareAccountId = 'account-a'
+        Mock Assert-S3DeploymentPayloadNoSecret {} -ModuleName Cloudflare
+        Mock Get-S3CloudflareD1ExactMatches { @() } -ModuleName Cloudflare
+        Mock Write-S3State {} -ModuleName Cloudflare
+        Mock Invoke-S3Process { [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} } -ModuleName Cloudflare
+        { Invoke-S3CloudflareProvision -Context $c } | Should -Throw '*D1_CREATE_RESULT_UNRECOVERABLE*'
+        $c.State.resources.cloudflare.d1Id | Should -BeNullOrEmpty
+    }
+
+    It 'fails closed when exact D1 recovery is ambiguous' {
+        $c = Get-TestContext Live
+        $c.State.results.cloudflarePreflight = [ordered]@{status='PASS'}
+        $c.State.resources.firebase = [ordered]@{projectId='s3cpu-test-firebase'}
+        $c.RuntimeSecrets.cloudflareToken = 'token';$c.RuntimeSecrets.cloudflareAccountId = 'account-a'
+        $lookup = [Collections.Generic.List[int]]::new()
+        Mock Assert-S3DeploymentPayloadNoSecret {} -ModuleName Cloudflare
+        Mock Get-S3CloudflareD1ExactMatches { [void]$lookup.Add(1); if ($lookup.Count -eq 1) { @() } else { @([ordered]@{name='same';uuid='one'},[ordered]@{name='same';uuid='two'}) } } -ModuleName Cloudflare
+        Mock Write-S3State {} -ModuleName Cloudflare
+        Mock Invoke-S3Process { [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} } -ModuleName Cloudflare
+        { Invoke-S3CloudflareProvision -Context $c } | Should -Throw '*D1_EXACT_NAME_AMBIGUOUS*'
+        $c.State.resources.cloudflare.d1Id | Should -BeNullOrEmpty
+    }
+
+    It 'recovers a pending D1 by one exact name match during cleanup preparation' {
+        $c = Get-TestContext Live
+        $resource = [ordered]@{accountId='account-a';worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id=$null;marker=$c.RunId;provisioningStatus='D1_CREATE_PENDING';preCreateAbsence='PASS'}
+        Mock Get-S3CloudflareD1ExactMatches { @([ordered]@{name=$resource.d1Name;uuid='11111111-2222-3333-4444-555555555555'}) } -ModuleName Cloudflare
+        Mock Write-S3State {} -ModuleName Cloudflare
+        $result = Resolve-S3CloudflarePendingD1 -Context $c -Resource $resource -Token 'token'
+        $result.status | Should -Be 'RECOVERED'
+        $resource.d1Id | Should -Be '11111111-2222-3333-4444-555555555555'
+    }
+
+    It 'treats a pending D1 with no exact match as already absent' {
+        $c = Get-TestContext Live
+        $resource = [ordered]@{accountId='account-a';worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id=$null;marker=$c.RunId;provisioningStatus='D1_CREATE_PENDING';preCreateAbsence='PASS'}
+        Mock Get-S3CloudflareD1ExactMatches { @() } -ModuleName Cloudflare
+        Mock Write-S3State {} -ModuleName Cloudflare
+        $result = Resolve-S3CloudflarePendingD1 -Context $c -Resource $resource -Token 'token'
+        $result.status | Should -Be 'ABSENT'
+        $resource.provisioningStatus | Should -Be 'D1_ABSENT'
+    }
+
+    It 'fails closed when pending D1 recovery returns multiple exact matches' {
+        $c = Get-TestContext Live
+        $resource = [ordered]@{accountId='account-a';worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id=$null;marker=$c.RunId;provisioningStatus='D1_CREATE_PENDING';preCreateAbsence='PASS'}
+        Mock Get-S3CloudflareD1ExactMatches { @([ordered]@{name=$resource.d1Name;uuid='one'},[ordered]@{name=$resource.d1Name;uuid='two'}) } -ModuleName Cloudflare
+        { Resolve-S3CloudflarePendingD1 -Context $c -Resource $resource -Token 'token' } | Should -Throw '*D1_EXACT_NAME_AMBIGUOUS*'
+    }
+
+    It 'makes cleanup idempotent when the exact owned Worker and D1 are already absent' {
+        $c = Get-TestContext Live
+        $resource = [ordered]@{accountId='account-a';worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id='11111111-2222-3333-4444-555555555555';marker=$c.RunId;provisioningStatus='D1_CREATED'}
+        $c.State.resources.cloudflare = $resource;$c.RuntimeSecrets.cloudflareToken='token';$c.RuntimeSecrets.cloudflareAccountId='account-a'
+        Mock Get-S3CloudflareResourceAbsenceProof { [ordered]@{workerAbsent=$true;d1Absent=$true} } -ModuleName Cloudflare
+        Mock Invoke-S3Process { throw 'DELETE_MUST_NOT_RUN' } -ModuleName Cloudflare
+        Mock Write-S3State {} -ModuleName Cloudflare
+        $result = Remove-S3CloudflareResource -Context $c
+        $result.status | Should -Be 'DELETED'
+        Should -Invoke Invoke-S3Process -ModuleName Cloudflare -Times 0 -Exactly
+    }
+
+    It 'rejects the persistent workers.dev subdomain as a cleanup target' {
+        $c = Get-TestContext Live
+        $resource = [ordered]@{accountId='account-a';worker='s3cpu-be239c6980';d1Name="$($c.RunId)-d1";d1Id='11111111-2222-3333-4444-555555555555';marker=$c.RunId;provisioningStatus='D1_CREATED'}
+        { Test-S3CloudflareCleanupOwnership -Context $c -Resource $resource } | Should -Throw
+    }
+
+    It 'does not place secrets in a pending resource state' {
+        $c = Get-TestContext Live
+        $c.State.resources.cloudflare = [ordered]@{accountId='account-a';worker="$($c.RunId)-worker";d1Name="$($c.RunId)-d1";d1Id=$null;marker=$c.RunId;provisioningStatus='D1_CREATE_PENDING';preCreateAbsence='PASS'}
+        $json = $c.State | ConvertTo-Json -Depth 20
+        $json | Should -Not -Match '(?i)token|password|refreshToken|idToken|accessToken|apiKey|authorization'
+    }
+
+    It 'persists Firebase project intent before projects:create' {
+        $source = Get-Content (Join-Path $SourceRoot 'src\modules\Firebase.psm1') -Raw
+        $pending = $source.IndexOf("provisioningStatus='PROJECT_CREATE_PENDING'")
+        $create = $source.IndexOf("'projects:create'")
+        $pending | Should -BeGreaterThan -1
+        $pending | Should -BeLessThan $create
+        $source.IndexOf('Write-S3State -Root $Context.Root -State $Context.State',$pending) | Should -BeGreaterThan $pending
+    }
+
+    It 'never invokes Firebase project creation when the intent write fails' {
+        $c = Get-TestContext Live
+        Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Write-S3State { throw 'STATE_WRITE_FAILED' } -ModuleName Firebase
+        Mock Invoke-S3Process { throw 'FIREBASE_CREATE_MUST_NOT_RUN' } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*STATE_WRITE_FAILED*'
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
+    }
+
+    It 'persists PROJECT_CREATED before Firebase child provisioning' {
+        $c = Get-TestContext Live
+        $events = [Collections.Generic.List[string]]::new()
+        Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Write-S3State { [void]$events.Add('state') } -ModuleName Firebase
+        Mock Invoke-S3Process {
+            [void]$events.Add(($ArgumentList -join ' '))
+            if ($ArgumentList -contains 'projects:create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            throw 'STOP_AFTER_PROJECT_STATE'
+        } -ModuleName Firebase
+        Mock Assert-S3GoogleNoBilling { throw 'STOP_AFTER_PROJECT_STATE' } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*STOP_AFTER_PROJECT_STATE*'
+        $events[0] | Should -Be 'state'
+        $events[1] | Should -Match 'projects:create'
+        $events[2] | Should -Be 'state'
+        $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED'
+    }
+
+    It 'treats a pending Firebase project proven absent as idempotent cleanup' {
+        $c = Get-TestContext Live
+        $suffix = ($c.RunId -replace '[^a-z0-9-]','').ToLowerInvariant();if($suffix.Length -gt 20){$suffix=$suffix.Substring($suffix.Length-20)}
+        $resource = [ordered]@{projectId="s3cpu-$suffix";marker=$c.RunId;provisioningStatus='PROJECT_CREATE_PENDING';preCreateAbsence='PASS'}
+        $c.State.resources.firebase = $resource
+        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        Mock Invoke-S3Process { throw 'DELETE_MUST_NOT_RUN' } -ModuleName Firebase
+        $result = Remove-S3FirebaseProject -Context $c
+        $result.status | Should -Be 'ALREADY_ABSENT'
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
+    }
+
+    It 'cleans a pending exact Firebase project only with valid intent ownership' {
+        $c = Get-TestContext Live
+        $suffix = ($c.RunId -replace '[^a-z0-9-]','').ToLowerInvariant();if($suffix.Length -gt 20){$suffix=$suffix.Substring($suffix.Length-20)}
+        $resource = [ordered]@{projectId="s3cpu-$suffix";marker=$c.RunId;provisioningStatus='PROJECT_CREATE_PENDING';preCreateAbsence='PASS'}
+        $c.State.resources.firebase = $resource
+        Mock Get-S3FirebaseProjectPresence { 'EXISTS' } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        Mock Invoke-S3Process {
+            if ($ArgumentList -contains 'delete') { return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''} }
+            return [pscustomobject]@{ExitCode=0;StdOut='DELETE_REQUESTED';StdErr=''}
+        } -ModuleName Firebase
+        $result = Remove-S3FirebaseProject -Context $c
+        $result.status | Should -Be 'DELETE_REQUESTED'
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 2 -Exactly
+    }
+
+    It 'fails closed when Firebase pending ownership proof is missing' {
+        $c = Get-TestContext Live
+        $suffix = ($c.RunId -replace '[^a-z0-9-]','').ToLowerInvariant();if($suffix.Length -gt 20){$suffix=$suffix.Substring($suffix.Length-20)}
+        $c.State.resources.firebase = [ordered]@{projectId="s3cpu-$suffix";marker=$c.RunId;provisioningStatus='PROJECT_CREATE_PENDING'}
+        Mock Get-S3FirebaseProjectPresence { 'EXISTS' } -ModuleName Firebase
+        Mock Invoke-S3Process { throw 'DELETE_MUST_NOT_RUN' } -ModuleName Firebase
+        { Remove-S3FirebaseProject -Context $c } | Should -Throw '*FIREBASE_PROJECT_OWNERSHIP_PROOF_MISSING*'
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
+    }
+
+    It 'keeps a Firebase project cleanup-capable after child provisioning fails' {
+        $c = Get-TestContext Live
+        Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        Mock Invoke-S3Process {
+            if ($ArgumentList -contains 'projects:create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            throw 'CHILD_PROVISIONING_FAILED'
+        } -ModuleName Firebase
+        Mock Assert-S3GoogleNoBilling { throw 'CHILD_PROVISIONING_FAILED' } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*CHILD_PROVISIONING_FAILED*'
+        $c.State.resources.firebase.projectId | Should -Match '^s3cpu-'
+        $c.State.resources.firebase.marker | Should -Be $c.RunId
+        $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED'
+    }
+
+    It 'does not clean pre-existing CLI sessions as owned sessions' {
+        $c = Get-TestContext Live
+        $c.RuntimeSecrets.ownedCliSessions = @([ordered]@{kind='gcloud-config';createdByTool=$false;cleaned=$false;configPath=(Join-Path $TestDrive 'temp\gcloud')})
+        Mock Invoke-S3Process { throw 'PREEXISTING_SESSION_MUST_NOT_BE_TOUCHED' } -ModuleName Cleanup
+        $result = Invoke-S3OwnedCliSessionCleanup -Context $c
+        $result.status | Should -Be 'PASS'
+        $result.cleaned | Should -Be 0
+        Should -Invoke Invoke-S3Process -ModuleName Cleanup -Times 0 -Exactly
+    }
+}

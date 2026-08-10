@@ -277,6 +277,14 @@ function Assert-S3PreexistingGoogleCliSession {
     }
 }
 
+function Get-S3FirebaseProjectPresence {
+    param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$ProjectId)
+    $result = Invoke-S3Process -Context $Context -FilePath 'gcloud' -ArgumentList @('projects','describe',$ProjectId,'--format=json') -TimeoutSeconds 120 -AllowFailure
+    if ($result.ExitCode -eq 0) { return 'EXISTS' }
+    if (($result.StdErr + $result.StdOut) -match '(?i)not found|does not exist|not exist') { return 'ABSENT' }
+    return 'UNKNOWN'
+}
+
 function Invoke-S3FirebaseProvision {
     param([Parameter(Mandatory)]$Context)
     if ($Context.Mode -eq 'Simulation') {
@@ -297,9 +305,17 @@ function Invoke-S3FirebaseProvision {
     $display = "S3 CPU Gate $($Context.RunId)"
     $password1=$null;$password2=$null;$accessToken=$null;$id1=$null;$id2=$null;$apiKey=$null
     try {
-        Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('projects:create',$projectId,'--display-name',$display,'--json','--non-interactive') -TimeoutSeconds 600 | Out-Null
-        $resource = [ordered]@{projectId=$projectId;marker=$Context.RunId;billing=$null;users=0}
+        $preCreatePresence = Get-S3FirebaseProjectPresence -Context $Context -ProjectId $projectId
+        if ($preCreatePresence -eq 'EXISTS') { throw 'FIREBASE_PROJECT_NAME_ALREADY_EXISTS' }
+        if ($preCreatePresence -ne 'ABSENT') { throw 'FIREBASE_PROJECT_ABSENCE_UNVERIFIABLE' }
+        $resource = [ordered]@{
+            projectId=$projectId;marker=$Context.RunId;billing=$null;users=0
+            provisioningStatus='PROJECT_CREATE_PENDING';cleanupStatus=$null;preCreateAbsence='PASS'
+        }
         Set-S3MapValue -Map $Context.State.resources -Name 'firebase' -Value $resource
+        Write-S3State -Root $Context.Root -State $Context.State
+        Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('projects:create',$projectId,'--display-name',$display,'--json','--non-interactive') -TimeoutSeconds 600 | Out-Null
+        Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATED'
         Write-S3State -Root $Context.Root -State $Context.State
         $billingProof = Assert-S3GoogleNoBilling -Context $Context -ProjectId $projectId
         $apps = (Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('apps:create','WEB','s3-cpu-gate','--project',$projectId,'--json','--non-interactive') -TimeoutSeconds 300).StdOut | ConvertFrom-Json
@@ -375,6 +391,19 @@ function Remove-S3FirebaseProject {
     if ($null -eq $resource) { return [ordered]@{status='NOT_CREATED'} }
     $projectId = [string](Get-S3MapValue -Map $resource -Name 'projectId')
     if ((Get-S3MapValue -Map $resource -Name 'marker') -ne $Context.RunId -or $projectId -notlike 's3cpu-*') { throw 'رفض حذف Firebase غير مملوكة.' }
+    if ($Context.Mode -eq 'Live') {
+        $suffix = ($Context.RunId -replace '[^a-z0-9-]','').ToLowerInvariant()
+        if ($suffix.Length -gt 20) { $suffix = $suffix.Substring($suffix.Length-20) }
+        if ($projectId -ne "s3cpu-$suffix") { throw 'FIREBASE_PROJECT_ID_NOT_DETERMINISTIC' }
+        if ((Get-S3MapValue -Map $resource -Name 'preCreateAbsence') -ne 'PASS') { throw 'FIREBASE_PROJECT_OWNERSHIP_PROOF_MISSING' }
+        $presence = Get-S3FirebaseProjectPresence -Context $Context -ProjectId $projectId
+        if ($presence -eq 'ABSENT') {
+            Set-S3MapValue -Map $resource -Name 'cleanupStatus' -Value 'ALREADY_ABSENT'
+            Write-S3State -Root $Context.Root -State $Context.State
+            return [ordered]@{status='ALREADY_ABSENT';projectId=$projectId}
+        }
+        if ($presence -ne 'EXISTS') { throw 'FIREBASE_PROJECT_PRESENCE_UNVERIFIABLE' }
+    }
     if ((Get-S3MapValue -Map $resource -Name 'cleanupStatus') -eq 'DELETE_REQUESTED') { return [ordered]@{status='ALREADY_DELETE_REQUESTED';projectId=$projectId} }
     if (-not $PSCmdlet.ShouldProcess($projectId,'Delete owned Firebase project')) { return [ordered]@{status='SKIPPED';projectId=$projectId} }
     if ($Context.Mode -eq 'Simulation') {

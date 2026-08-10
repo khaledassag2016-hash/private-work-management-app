@@ -234,7 +234,7 @@ function Invoke-S3Cleanup {
         $result.firebase = [ordered]@{status='FAILED';reason=$safe}
         $result.errors += $safe
     }
-    if ($result.firebase.status -notin @('NOT_CREATED','DELETE_REQUESTED','ALREADY_DELETE_REQUESTED')) { $result.errors += "FIREBASE_CLEANUP_$($result.firebase.status)" }
+    if ($result.firebase.status -notin @('NOT_CREATED','DELETE_REQUESTED','ALREADY_DELETE_REQUESTED','ALREADY_ABSENT')) { $result.errors += "FIREBASE_CLEANUP_$($result.firebase.status)" }
     try { $result.sessions = Invoke-S3OwnedCliSessionCleanup -Context $Context }
     catch {
         $safe = Protect-S3Text $_.Exception.Message
