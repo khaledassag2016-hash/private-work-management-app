@@ -287,6 +287,43 @@ function Get-S3FirebaseProjectPresence {
     return 'UNKNOWN'
 }
 
+function Get-S3FirebaseProjectDisplayName {
+    param([Parameter(Mandatory)][string]$RunId)
+    $prefix = 'S3 CPU '
+    $normalized = ($RunId -replace '[^A-Za-z0-9-]','-').Trim('-')
+    if ([string]::IsNullOrWhiteSpace($normalized)) { $normalized = 'run' }
+    $available = 30 - $prefix.Length
+    if ($normalized.Length -gt $available) {
+        $normalized = $normalized.Substring($normalized.Length - $available)
+    }
+    $displayName = $prefix + $normalized
+    if ($displayName.Length -gt 30) { throw 'FIREBASE_DISPLAY_NAME_INVARIANT_FAILED' }
+    return $displayName
+}
+
+function Assert-S3FirebaseThirdSignupRejected {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword','',Justification='Synthetic one-run password is used only to prove that public Firebase signup is disabled.')]
+    param([Parameter(Mandatory)][string]$ApiKey)
+    $password = Get-S3SyntheticPassword
+    $email = 'p3-' + [guid]::NewGuid().ToString('N') + '@example.invalid'
+    try {
+        Invoke-RestMethod -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$ApiKey" -ContentType 'application/json' -Body (@{email=$email;password=$password;returnSecureToken=$true} | ConvertTo-Json -Compress) -TimeoutSec 90 | Out-Null
+    }
+    catch {
+        $diagnostic = (@([string]$_,[string]$_.Exception.Message) -join ' ')
+        if ($diagnostic -notmatch '(?i)OPERATION_NOT_ALLOWED|ADMIN_ONLY_OPERATION|signup.*disabled') {
+            throw 'FIREBASE_THIRD_SIGNUP_REJECTION_UNPROVEN'
+        }
+        return [ordered]@{status='PASS';rejected=$true;identity='SYNTHETIC_UNREGISTERED'}
+    }
+    finally {
+        $password = $null
+        $email = $null
+        [GC]::Collect()
+    }
+    throw 'FIREBASE_THIRD_SIGNUP_ACCEPTED'
+}
+
 function Invoke-S3FirebaseProvision {
     param([Parameter(Mandatory)]$Context)
     if ($Context.Mode -eq 'Simulation') {
@@ -304,7 +341,7 @@ function Invoke-S3FirebaseProvision {
     $suffix = ($Context.RunId -replace '[^a-z0-9-]','').ToLowerInvariant()
     if ($suffix.Length -gt 20) { $suffix = $suffix.Substring($suffix.Length-20) }
     $projectId = "s3cpu-$suffix"
-    $display = "S3 CPU Gate $($Context.RunId)"
+    $display = Get-S3FirebaseProjectDisplayName -RunId $Context.RunId
     $password1=$null;$password2=$null;$accessToken=$null;$id1=$null;$id2=$null;$apiKey=$null
     try {
         $preCreatePresence = Get-S3FirebaseProjectPresence -Context $Context -ProjectId $projectId
@@ -359,6 +396,7 @@ function Invoke-S3FirebaseProvision {
         New-S3FirebaseAdminUser -ProjectId $projectId -ApiKey $apiKey -Token $accessToken -Uid $uid2 -Email $email2 -Password $password2
         $users = Get-S3FirebaseUser -ProjectId $projectId -Token $accessToken
         $userProof = Assert-S3FirebaseUserSet -Users $users -ExpectedUids @($uid1,$uid2)
+        $thirdSignupProof = Assert-S3FirebaseThirdSignupRejected -ApiKey $apiKey
         $id1 = Get-S3FirebaseIdToken -ApiKey $apiKey -Email $email1 -Password $password1
         $id2 = Get-S3FirebaseIdToken -ApiKey $apiKey -Email $email2 -Password $password2
         $Context.RuntimeSecrets.projectId=$projectId
@@ -390,6 +428,7 @@ function Invoke-S3FirebaseProvision {
             projectInitiallyEmpty=$emptyProof.verified
             userCount=$userProof.count
             providerLinks=$userProof.providerLinks
+            thirdSignupRejected=$thirdSignupProof.rejected
         })
         return [ordered]@{status='PASS';projectId=$projectId;spark=$true;billing=$false;users=2;secrets='MEMORY_ONLY'}
     }
