@@ -288,3 +288,24 @@
 - `Issue #3` remains open. S4 is administratively authorized only as the next stage; no S4 implementation, branch, Gate 0, Gate 1, deployment, or Cloud write has started.
 - `S4_STATUS = AUTHORIZED_NOT_STARTED`.
 - `NEXT_ACTION = WAITING_FOR_SEPARATE_GATE_AUTHORIZATION`.
+
+## S4 Gate 2 — Business Flows + UI + Acceptance — 2026-08-11
+
+- Gate 0: PR #57، Squash SHA `ba69c9e94df46cfd4562b5db54da35dde2907647`.
+- Gate 1: PR #58، final head `af6f1a2bca280438a8b9bf2da7ffdc1a1fb54eae`، Squash SHA `9e3440f9e9dd1e5c91946548f812b4dbda9d7d29`.
+- Gate 2: PR #59، final head `cbd464bbe9d83c9b3da16781b2751a6bf40cca4a`، Squash SHA `4decbe08a35184acb18f4e381c334de6b3664cde`.
+- PR CI على Gate 2 head: run `31531881114` — **SUCCESS**.
+- S2 architecture validation على Gate 2 head: run `31531881221` — **SUCCESS**.
+- Post-merge `S3 CPU Gate Static` على `main@4decbe08a35184acb18f4e381c334de6b3664cde`: run `31532157548` — **SUCCESS**.
+- Acceptance: `AC-01`, `AC-04`, `AC-07`, و`AC-13` مثبتة محليًا وفي Node CI؛ Node suite النهائية `19/19 PASS`.
+- Regression: Foundation **PASS**، S2 **PASS**، Python `80/80 PASS`، Pester `291/291 PASS`، PSScriptAnalyzer **PASS**، secret scan **PASS**، payload integrity وZIP safety **PASS**.
+- أضيفت واجهة عربية RTL لخدمة Workers Static Assets، وتكامل authenticated عبر Worker API، ومسارات Customer/Work/catalog/history/warnings/similar-work، مع failure UX وnegative paths وsynthetic end-to-end acceptance.
+- `FR-006` generic-only semantics و`FR-016` authoritative historical pricing source بقيتا معزولتين بدقة؛ لا يسجل هذا القسم PASS لمرحلة لاحقة.
+- لم يحدث Cloud write أو Firebase write أو D1 cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
+- Issue #3 تبقى **OPEN**، وS5 لم تبدأ، وS4 لم تعلن **COMPLETE**.
+- `S4_GATE0 = COMPLETE`.
+- `S4_GATE1 = COMPLETE`.
+- `S4_GATE2 = COMPLETE`.
+- `S4_STATUS = READY_FOR_FINAL_SUPERVISORY_REVIEW`.
+- `S4_COMPLETE = FALSE`.
+- `NEXT_ACTION = FINAL_SUPERVISORY_REVIEW_OF_S4`.
