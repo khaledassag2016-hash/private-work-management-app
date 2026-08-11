@@ -309,3 +309,24 @@
 - `S4_STATUS = READY_FOR_FINAL_SUPERVISORY_REVIEW`.
 - `S4_COMPLETE = FALSE`.
 - `NEXT_ACTION = FINAL_SUPERVISORY_REVIEW_OF_S4`.
+
+## S4 Gate 2 supervisory repair — 2026-08-11
+
+- Repair base: `be9358627ba5c102078fbd9fb4213ea0b873f2f2`.
+- Repair branch: `s4/gate2-supervisory-repair`.
+- Repair PR: `#61`, merged by Squash at `8ef2be565d07d00af059e23aacb346693302b2e3`.
+- PR `S3 CPU Gate Static`: run `31536256030` — **SUCCESS**.
+- PR `S2 architecture validation`: run `31536255825` — **SUCCESS**.
+- Post-merge `S3 CPU Gate Static` على `main@8ef2be565d07d00af059e23aacb346693302b2e3`: run `31536405587` — **SUCCESS**.
+- `CUSTOMER_STATUS_FACT_DERIVATION = PASS`: الحالات الوقائعية تُشتق server-side من documented facts، ولا يستطيع API/UI اختراع `unpaid` أو `dispute` أو `blocked` أو `frequent_delay` دون fact.
+- `WORK_STATUS_ALLOWLIST = PASS`: allowlist server-side وschema `CHECK`، مع رفض free-form وS5/S6/S7-only statuses.
+- `FACT_TIMESTAMP_VALIDATION = PASS`: canonical UTC ISO timestamps، ورفض malformed/invalid calendar/NaN values مع بقاء history chronological.
+- `OPTIONAL_CUSTOMER_NAME = PASS`: الاسم optional عند عدم توفره، وwhitespace-only يُحفظ كـ`NULL`، مع behavioral UI evidence.
+- `AC_07_PRE_AGREEMENT_WARNING = PASS`: `documented NON_PAYMENT fact -> New Work لنفس Customer -> warning ظاهر قبل submit`، مع no-warning behavior عند غياب fact وحالة صريحة عند فشل القراءة.
+- New supervisory repair suite: `6/6 PASS`، إضافة إلى Gate 1/Gate 2/UI regressions.
+- `S4_GATE0 = COMPLETE`، `S4_GATE1 = COMPLETE`، `S4_GATE2 = COMPLETE`.
+- `S4_STATUS = READY_FOR_FINAL_SUPERVISORY_REVIEW`.
+- `S4_COMPLETE = FALSE`.
+- `Issue #3 = OPEN`.
+- `S5 = NOT_STARTED`، و`Gate 3 = NOT_STARTED`.
+- لم يحدث Cloud write أو Firebase write أو D1 cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
