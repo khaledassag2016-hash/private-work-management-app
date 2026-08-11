@@ -872,7 +872,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $future.Length | Should -BeLessOrEqual 30
     }
 
-    It 'passes a provider-safe display name to Firebase projects create' {
+    It 'passes a provider-safe display name to isolated GCP project create' {
         $c = Get-TestContext Live
         $captured = [Collections.Generic.List[object]]::new()
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
@@ -884,7 +884,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         } -ModuleName Firebase
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*EXPECTED_STOP*'
         $arguments = @($captured[0])
-        $displayIndex = [Array]::IndexOf($arguments,'--display-name')
+        $displayIndex = [Array]::IndexOf($arguments,'--name')
         $displayIndex | Should -BeGreaterThan -1
         ([string]$arguments[$displayIndex + 1]).Length | Should -BeLessOrEqual 30
     }
@@ -1099,16 +1099,16 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $json | Should -Not -Match '(?i)token|password|refreshToken|idToken|accessToken|apiKey|authorization'
     }
 
-    It 'persists Firebase project intent before projects:create' {
+    It 'persists Firebase project intent before isolated GCP project create' {
         $source = Get-Content (Join-Path $SourceRoot 'src\modules\Firebase.psm1') -Raw
         $pending = $source.IndexOf("provisioningStatus='PROJECT_CREATE_PENDING'")
-        $create = $source.IndexOf("'projects:create'")
+        $create = $source.IndexOf("'projects','create'")
         $pending | Should -BeGreaterThan -1
         $pending | Should -BeLessThan $create
         $source.IndexOf('Write-S3State -Root $Context.Root -State $Context.State',$pending) | Should -BeGreaterThan $pending
     }
 
-    It 'preserves a Firebase projects:create stdout diagnostic when stderr is empty' {
+    It 'preserves an isolated GCP create stdout diagnostic when stderr is empty' {
         $c = Get-TestContext Live
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
@@ -1121,7 +1121,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 1 -Exactly
     }
 
-    It 'preserves a Firebase projects:create stderr diagnostic' {
+    It 'preserves an isolated GCP create stderr diagnostic' {
         $c = Get-TestContext Live
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
@@ -1133,7 +1133,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_PROJECT_CREATE_FAILED*FIREBASE_STDERR_DIAGNOSTIC*'
     }
 
-    It 'reports a deterministic failure when Firebase projects:create has no diagnostic' {
+    It 'reports a deterministic failure when isolated GCP create has no diagnostic' {
         $c = Get-TestContext Live
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
@@ -1145,7 +1145,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_PROJECT_CREATE_FAILED_NO_DIAGNOSTIC*'
     }
 
-    It 'redacts sensitive-looking Firebase projects:create diagnostics before surfacing them' {
+    It 'redacts sensitive-looking isolated GCP create diagnostics before surfacing them' {
         $c = Get-TestContext Live
         $firstValue = 'synthetic' + '-primary'
         $secondValue = 'synthetic' + '-secondary'
@@ -1163,17 +1163,23 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $message | Should -Match '\[REDACTED\]'
     }
 
-    It 'continues normally after a successful Firebase projects:create result' {
+    It 'continues normally after separate GCP create and Firebase add results' {
         $c = Get-TestContext Live
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
         Mock Write-S3State {} -ModuleName Firebase
-        Mock Invoke-S3Process {
-            if ($ArgumentList -contains 'projects:create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
-            throw 'STOP_AFTER_PROJECT_CREATE'
+        Mock Wait-S3FirebaseAddReadiness {
+            $c.State.resources.firebase.ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED'
+            $c.State.resources.firebase.provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'
+            [ordered]@{status='PASS';attempts=2}
         } -ModuleName Firebase
-        Mock Assert-S3GoogleNoBilling { throw 'STOP_AFTER_PROJECT_CREATE' } -ModuleName Firebase
-        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*STOP_AFTER_PROJECT_CREATE*'
+        Mock Invoke-S3Process {
+            if ($ArgumentList -contains 'create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            if ($ArgumentList -contains 'projects:addfirebase') { return [pscustomobject]@{ExitCode=0;StdOut='{"status":"success"}';StdErr=''} }
+            throw 'UNEXPECTED_PROCESS'
+        } -ModuleName Firebase
+        Mock Assert-S3GoogleNoBilling { throw 'STOP_AFTER_FIREBASE_ADD' } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*STOP_AFTER_FIREBASE_ADD*'
         $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED'
         Should -Invoke Assert-S3GoogleNoBilling -ModuleName Firebase -Times 1 -Exactly
     }
@@ -1205,7 +1211,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Test-S3FirebaseRunCreatedProject -Context $c -Resource $c.State.resources.firebase -ProjectRecord $record | Should -BeTrue
     }
 
-    It 'records intent and lets projects:create arbitrate ambiguous permission presence' {
+    It 'records intent and lets isolated GCP create arbitrate ambiguous permission presence' {
         $c = Get-TestContext Live
         $events = [Collections.Generic.List[string]]::new()
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
@@ -1218,31 +1224,133 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         } -ModuleName Firebase
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_PROJECT_CREATE_FAILED*PROJECT_ID_UNAVAILABLE*'
         $events[0] | Should -Be 'state:PENDING_CREATE_SUCCESS'
-        $events[1] | Should -Match 'projects:create'
+        $events[1] | Should -Match 'projects create'
         $c.State.resources.firebase.preCreatePresence | Should -Be 'UNKNOWN'
         $c.State.resources.firebase.preCreateAbsence | Should -Be 'UNVERIFIABLE'
         $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_FAILED_UNOWNED'
         $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATE_FAILED'
-        Should -Invoke Invoke-S3Process -ModuleName Firebase -ParameterFilter { $ArgumentList -contains 'projects:create' } -Times 1 -Exactly
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -ParameterFilter { $ArgumentList -contains 'create' -and $ArgumentList -notcontains 'projects:addfirebase' } -Times 1 -Exactly
     }
 
-    It 'retains provider-verified ownership when GCP create succeeds and addFirebase fails' {
+    It 'retains provider-verified ownership when readiness passes and separate addFirebase fails' {
         $c = Get-TestContext Live
         $c.State.startedUtc = '2026-08-03T14:39:00Z'
-        $suffix = ($c.RunId -replace '[^a-z0-9-]','').ToLowerInvariant();if($suffix.Length -gt 20){$suffix=$suffix.Substring($suffix.Length-20)}
-        $projectId = "s3cpu-$suffix"
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
-        Mock Get-S3FirebaseProjectRecord {
-            [ordered]@{status='EXISTS';projectId=$projectId;displayName=(Get-S3FirebaseProjectDisplayName -RunId $c.RunId);projectNumber='256040616628';lifecycleState='ACTIVE';createTime='2026-08-03T14:40:00Z'}
-        } -ModuleName Firebase
         Mock Write-S3State {} -ModuleName Firebase
-        Mock Invoke-S3Process { [pscustomobject]@{ExitCode=2;StdOut='Failed to add Firebase';StdErr='PERMISSION_DENIED'} } -ModuleName Firebase
-        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_ADD_FAILED_AFTER_PROJECT_CREATE*'
+        Mock Wait-S3FirebaseAddReadiness {
+            $c.State.resources.firebase.ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED'
+            $c.State.resources.firebase.provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'
+            $c.State.resources.firebase.providerProjectNumber='256040616628'
+            $c.State.resources.firebase.providerCreateTimeUtc='2026-08-03T14:40:00Z'
+            [ordered]@{status='PASS';attempts=2}
+        } -ModuleName Firebase
+        Mock Invoke-S3Process {
+            if ($ArgumentList -contains 'create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            [pscustomobject]@{ExitCode=2;StdOut='Failed to add Firebase';StdErr='PERMISSION_DENIED'}
+        } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_ADD_FAILED_AFTER_READINESS*'
         $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_SUCCEEDED_PROVIDER_VERIFIED'
         $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED_FIREBASE_ADD_FAILED'
         $c.State.resources.firebase.providerProjectNumber | Should -Be '256040616628'
         $c.State.resources.firebase.providerCreateTimeUtc | Should -Be '2026-08-03T14:40:00Z'
+    }
+
+    It 'requires both IAM and Firebase availableProjects evidence before readiness passes' {
+        $c = Get-TestContext Live
+        $c.State.startedUtc = '2026-08-03T14:39:00Z'
+        $suffix = ($c.RunId -replace '[^a-z0-9-]','').ToLowerInvariant();if($suffix.Length -gt 20){$suffix=$suffix.Substring($suffix.Length-20)}
+        $projectId = "s3cpu-$suffix"
+        $resource = [ordered]@{projectId=$projectId;marker=$c.RunId;ownershipProof='PENDING_CREATE_SUCCESS';provisioningStatus='PROJECT_CREATED_AWAITING_PROVIDER_PROOF'}
+        $c.State.resources.firebase = $resource
+        $script:readinessAttempt = 0
+        $script:readinessClock = [datetime]'2026-08-03T14:40:00Z'
+        Mock Get-S3FirebaseAddReadiness {
+            $script:readinessAttempt++
+            $backendReady = $script:readinessAttempt -ge 2
+            [ordered]@{
+                ready=$backendReady;projectReady=$true;iamReady=$true;firebaseBackendReady=$backendReady
+                projectRecord=[ordered]@{status='EXISTS';projectId=$projectId;displayName=(Get-S3FirebaseProjectDisplayName -RunId $c.RunId);projectNumber='256040616628';lifecycleState='ACTIVE';createTime='2026-08-03T14:40:00Z'}
+            }
+        } -ModuleName Firebase
+        Mock Set-S3FirebaseProviderVerifiedOwnership {
+            $resource.ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED'
+            $resource.provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'
+            $true
+        } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        $proof = Wait-S3FirebaseAddReadiness -Context $c -Resource $resource -DisplayName (Get-S3FirebaseProjectDisplayName -RunId $c.RunId) -TimeoutSeconds 30 -RetryDelaySeconds 1 -Now {$script:readinessClock} -Sleep {param($Seconds)$script:readinessClock=$script:readinessClock.AddSeconds($Seconds)}
+        $proof.status | Should -Be 'PASS'
+        $proof.attempts | Should -Be 2
+        $resource.ownershipProof | Should -Be 'CREATE_SUCCEEDED_PROVIDER_VERIFIED'
+        $resource.iamReady | Should -BeTrue
+        $resource.firebaseBackendReady | Should -BeTrue
+        $resource.readinessStatus | Should -Be 'PASS'
+        $resource.initialFirebaseBackendReady | Should -BeFalse
+        $resource.firebaseBackendReadyAtAttempt | Should -Be 2
+        $resource.iamReadyAtAttempt | Should -Be 1
+        Should -Invoke Set-S3FirebaseProviderVerifiedOwnership -ModuleName Firebase -Times 1 -Exactly
+    }
+
+    It 'times out fail closed when Firebase backend never lists the new project' {
+        $c = Get-TestContext Live
+        $resource = [ordered]@{projectId='s3cpu-timeout-test';marker=$c.RunId;ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED';provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'}
+        $c.State.resources.firebase = $resource
+        $script:timeoutClock = [datetime]'2026-08-03T14:40:00Z'
+        Mock Get-S3FirebaseAddReadiness {
+            [ordered]@{ready=$false;projectReady=$true;iamReady=$true;firebaseBackendReady=$false;projectRecord=[ordered]@{status='EXISTS'}}
+        } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        { Wait-S3FirebaseAddReadiness -Context $c -Resource $resource -DisplayName 'S3 CPU timeout' -TimeoutSeconds 2 -RetryDelaySeconds 1 -Now {$script:timeoutClock} -Sleep {param($Seconds)$script:timeoutClock=$script:timeoutClock.AddSeconds($Seconds)} } | Should -Throw '*FIREBASE_ADD_READINESS_TIMEOUT*'
+        $resource.readinessStatus | Should -Be 'TIMEOUT'
+        $resource.firebaseBackendReady | Should -BeFalse
+    }
+
+    It 'parses only the safe availableProjects readiness schema' {
+        $c = Get-TestContext Live
+        New-Item -ItemType Directory -Path (Join-Path $TestDrive 'helpers'),(Join-Path $TestDrive 'tools\npm\node_modules\firebase-tools') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $TestDrive 'helpers\firebase_available_project.mjs') -Value '// test placeholder' -Encoding UTF8
+        Mock Invoke-S3Process {
+            [pscustomobject]@{ExitCode=0;StdErr='normal progress';StdOut='{"status":"PASS","available":true,"displayNameMatch":true,"pagesScanned":2,"projectCount":7}'}
+        } -ModuleName Firebase
+        $proof = Get-S3FirebaseBackendReadiness -Context $c -ProjectId 's3cpu-readiness-test' -DisplayName 'S3 CPU readiness'
+        $proof.ready | Should -BeTrue
+        $proof.pagesScanned | Should -Be 2
+        $proof.projectCount | Should -Be 7
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -ParameterFilter {$SensitiveOutput -and $ArgumentList -contains 's3cpu-readiness-test'} -Times 1 -Exactly
+    }
+
+    It 'fails structural availableProjects probe errors without retrying them as readiness' {
+        $c = Get-TestContext Live
+        New-Item -ItemType Directory -Path (Join-Path $TestDrive 'helpers'),(Join-Path $TestDrive 'tools\npm\node_modules\firebase-tools') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $TestDrive 'helpers\firebase_available_project.mjs') -Value '// test placeholder' -Encoding UTF8
+        Mock Invoke-S3Process { [pscustomobject]@{ExitCode=20;StdErr='';StdOut='{"status":"ERROR","code":"DISPLAY_NAME_MISMATCH"}'} } -ModuleName Firebase
+        { Get-S3FirebaseBackendReadiness -Context $c -ProjectId 's3cpu-readiness-test' -DisplayName 'S3 CPU readiness' } | Should -Throw '*DISPLAY_NAME_MISMATCH*'
+    }
+
+    It 'retains only a safe numeric status for retryable availableProjects errors' {
+        $c = Get-TestContext Live
+        New-Item -ItemType Directory -Path (Join-Path $TestDrive 'helpers'),(Join-Path $TestDrive 'tools\npm\node_modules\firebase-tools') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $TestDrive 'helpers\firebase_available_project.mjs') -Value '// test placeholder' -Encoding UTF8
+        Mock Invoke-S3Process { [pscustomobject]@{ExitCode=10;StdErr='provider details must not propagate';StdOut='{"status":"ERROR","code":"AVAILABLE_PROJECTS_QUERY_FAILED","httpStatus":500}'} } -ModuleName Firebase
+        $proof = Get-S3FirebaseBackendReadiness -Context $c -ProjectId 's3cpu-readiness-test' -DisplayName 'S3 CPU readiness'
+        $proof.queryStatus | Should -Be 'RETRYABLE_ERROR'
+        $proof.httpStatus | Should -Be 500
+        $proof.ready | Should -BeFalse
+    }
+
+    It 'never invokes addFirebase when readiness fails' {
+        $c = Get-TestContext Live
+        Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        Mock Wait-S3FirebaseAddReadiness { throw 'FIREBASE_ADD_READINESS_TIMEOUT' } -ModuleName Firebase
+        Mock Invoke-S3Process {
+            if ($ArgumentList -contains 'create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            throw 'ADD_MUST_NOT_RUN'
+        } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_ADD_READINESS_TIMEOUT*'
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -ParameterFilter {$ArgumentList -contains 'projects:addfirebase'} -Times 0 -Exactly
     }
 
     It 'recovers a legacy partial-success state only from exact provider metadata' {
@@ -1314,25 +1422,36 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
     }
 
-    It 'persists CREATE_SUCCEEDED ownership before Firebase child provisioning' {
+    It 'persists provider-verified ownership before separate Firebase add' {
         $c = Get-TestContext Live
         $events = [Collections.Generic.List[string]]::new()
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'UNKNOWN' } -ModuleName Firebase
         Mock Write-S3State { [void]$events.Add("state:$($c.State.resources.firebase.ownershipProof)") } -ModuleName Firebase
+        Mock Wait-S3FirebaseAddReadiness {
+            $c.State.resources.firebase.ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED'
+            $c.State.resources.firebase.provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'
+            [void]$events.Add('readiness:CREATE_SUCCEEDED_PROVIDER_VERIFIED')
+            [ordered]@{status='PASS';attempts=2}
+        } -ModuleName Firebase
         Mock Invoke-S3Process {
             [void]$events.Add(($ArgumentList -join ' '))
-            if ($ArgumentList -contains 'projects:create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
-            throw 'STOP_AFTER_PROJECT_STATE'
+            if ($ArgumentList -contains 'create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            if ($ArgumentList -contains 'projects:addfirebase') { return [pscustomobject]@{ExitCode=0;StdOut='{"status":"success"}';StdErr=''} }
+            throw 'UNEXPECTED_PROCESS'
         } -ModuleName Firebase
         Mock Assert-S3GoogleNoBilling { throw 'STOP_AFTER_PROJECT_STATE' } -ModuleName Firebase
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*STOP_AFTER_PROJECT_STATE*'
         $events[0] | Should -Be 'state:PENDING_CREATE_SUCCESS'
-        $events[1] | Should -Match 'projects:create'
-        $events[2] | Should -Be 'state:CREATE_SUCCEEDED'
+        ($events -join '|') | Should -Match 'projects create'
+        $providerStateIndex = $events.IndexOf('readiness:CREATE_SUCCEEDED_PROVIDER_VERIFIED')
+        $addIndex = -1
+        for($i=0;$i -lt $events.Count;$i++){if($events[$i] -match 'projects:addfirebase'){$addIndex=$i;break}}
+        $providerStateIndex | Should -BeGreaterThan -1
+        $addIndex | Should -BeGreaterThan $providerStateIndex
         $c.State.resources.firebase.preCreatePresence | Should -Be 'UNKNOWN'
         $c.State.resources.firebase.preCreateAbsence | Should -Be 'UNVERIFIABLE'
-        $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_SUCCEEDED'
+        $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_SUCCEEDED_PROVIDER_VERIFIED'
         $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED'
     }
 
@@ -1383,16 +1502,22 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'UNKNOWN' } -ModuleName Firebase
         Mock Write-S3State {} -ModuleName Firebase
+        Mock Wait-S3FirebaseAddReadiness {
+            $c.State.resources.firebase.ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED'
+            $c.State.resources.firebase.provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'
+            [ordered]@{status='PASS';attempts=2}
+        } -ModuleName Firebase
         Mock Invoke-S3Process {
-            if ($ArgumentList -contains 'projects:create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
-            throw 'CHILD_PROVISIONING_FAILED'
+            if ($ArgumentList -contains 'create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
+            if ($ArgumentList -contains 'projects:addfirebase') { return [pscustomobject]@{ExitCode=0;StdOut='{"status":"success"}';StdErr=''} }
+            throw 'UNEXPECTED_PROCESS'
         } -ModuleName Firebase
         Mock Assert-S3GoogleNoBilling { throw 'CHILD_PROVISIONING_FAILED' } -ModuleName Firebase
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*CHILD_PROVISIONING_FAILED*'
         $c.State.resources.firebase.projectId | Should -Match '^s3cpu-'
         $c.State.resources.firebase.marker | Should -Be $c.RunId
         $c.State.resources.firebase.preCreatePresence | Should -Be 'UNKNOWN'
-        $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_SUCCEEDED'
+        $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_SUCCEEDED_PROVIDER_VERIFIED'
         $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED'
     }
 

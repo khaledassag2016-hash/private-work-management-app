@@ -17,6 +17,7 @@ $allowedFiles = @(
 )
 $allowedTrees = @(
     @{ Source = 'src\modules'; Target = 'modules' },
+    @{ Source = 'src\helpers'; Target = 'helpers' },
     @{ Source = 'src\python'; Target = 'python' },
     @{ Source = 'src\worker'; Target = 'worker' }
 )
@@ -115,7 +116,7 @@ try {
     foreach ($entry in $allowedTrees) { Copy-S3TreeToStage -Source $entry.Source -Target $entry.Target }
     Copy-S3ManifestPayloadToStage
 
-    foreach ($required in @('Bootstrap.ps1','Initialize-Toolchain.ps1','S3-CpuGate-Orchestrator.ps1','START.cmd','version-manifest.json','modules','python','worker','workspace\repository_payload\tools\s3_cpu_gate')) {
+    foreach ($required in @('Bootstrap.ps1','Initialize-Toolchain.ps1','S3-CpuGate-Orchestrator.ps1','START.cmd','version-manifest.json','modules','helpers','python','worker','workspace\repository_payload\tools\s3_cpu_gate')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stageRoot $required))) { throw "STAGING_REQUIRED_MISSING: $required" }
     }
     $manifest = Get-Content -LiteralPath (Join-Path $stageRoot 'version-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
