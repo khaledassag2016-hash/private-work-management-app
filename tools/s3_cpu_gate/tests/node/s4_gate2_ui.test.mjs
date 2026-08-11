@@ -37,7 +37,8 @@ test('S4 Gate 2 UI includes clear PRICE_UNSET, fact-derived warning, and non-blo
   assert.match(source, /DUPLICATE_CUSTOMER_AMBIGUITY/);
   assert.match(source, /confirm_duplicate/);
   assert.match(source, /#work-customer/);
-  assert.match(source, /next\.parent_work_id = ''/);
+  assert.match(source, /refreshWorkCustomerContext/);
+  assert.match(source, /parent_work_id: ''/);
   assert.match(source, /FACT_SOURCE_REQUIRED/);
   assert.match(source, /AUDIT_EVIDENCE_MISSING/);
   assert.doesNotMatch(source, /risk percentage|AI classification|scoring|error\.message/i);
