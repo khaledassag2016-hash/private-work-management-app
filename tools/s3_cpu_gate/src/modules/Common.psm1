@@ -91,9 +91,20 @@ function Write-S3State {
  [CmdletBinding()] param([Parameter(Mandatory)][string]$Root,[Parameter(Mandatory)]$State)
  $serialized = $State | ConvertTo-Json -Depth 25
  if ($serialized -match '(?i)password|refreshToken|idToken|accessToken|apiKey|Authorization') { throw 'رفض حفظ state.json: احتوى حقلًا حساسًا.' }
- $path = Join-Path $Root 'state.json'; $tmp = "$path.tmp"
- [IO.File]::WriteAllText($tmp,$serialized,[Text.UTF8Encoding]::new($false))
- Move-Item -LiteralPath $tmp -Destination $path -Force
+ $path = Join-Path $Root 'state.json'
+ $tmp = '{0}.{1}.{2}.tmp' -f $path,$PID,[guid]::NewGuid().ToString('N')
+ try {
+  [IO.File]::WriteAllText($tmp,$serialized,[Text.UTF8Encoding]::new($false))
+  for($attempt=1;$attempt -le 40;$attempt++){
+   try { Move-Item -LiteralPath $tmp -Destination $path -Force -ErrorAction Stop; return }
+   catch [IO.IOException] {
+    if($attempt -eq 40){throw}
+    Start-Sleep -Milliseconds 50
+   }
+  }
+ } finally {
+  if(Test-Path -LiteralPath $tmp -PathType Leaf){Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}
+ }
 }
 
 function New-S3Context {
