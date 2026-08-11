@@ -134,9 +134,13 @@ async function ensureActor(env, actorUid) {
 async function parseRequestJson(request) {
   try { return asObject(await request.json()); } catch { throw new DomainError('JSON_INVALID', 400); }
 }
-function auditStatement(env, entityType, entityId, action, actorUid, before, after, runMarker, requestId, createdAt) {
-  return env.DB.prepare(`INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
-    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`).bind(entityType, entityId, action, actorUid, createdAt, before === null ? null : JSON.stringify(before), JSON.stringify(after), runMarker, requestId);
+function auditStatement(env, entityType, entityId, action, actorUid, before, after, runMarker, requestId, createdAt, conditional = false) {
+  const sql = conditional
+    ? `INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+       SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE changes() = 1`
+    : `INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`;
+  return env.DB.prepare(sql).bind(entityType, entityId, action, actorUid, createdAt, before === null ? null : JSON.stringify(before), JSON.stringify(after), runMarker, requestId);
 }
 async function executeBatch(env, statements) {
   return env.DB.batch(statements);
@@ -192,9 +196,9 @@ export async function updateCustomer(env, actorUid, requestId, id, input) {
   const mutation = env.DB.prepare(`UPDATE customers SET name=?1,contact=?2,country=?3,university=?4,specialty=?5,notes=?6,status=?7,updated_by=?8,updated_at=?9,version=version+1
     WHERE id=?10 AND version=?11`).bind(next.name, next.contact, next.country, next.university, next.specialty, next.notes, next.status, actorUid, updatedAt, id, version);
   const after = { ...next, updated_by: actorUid, updated_at: updatedAt, version: version + 1 };
-  const audit = auditStatement(env, 'customer', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt);
+  const audit = auditStatement(env, 'customer', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
   const results = await executeBatch(env, [mutation, audit]);
-  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
   return after;
 }
 
@@ -280,9 +284,9 @@ export async function updateWork(env, actorUid, requestId, id, input) {
   const updatedAt = nowIso();
   const after = { ...before, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, updated_by: actorUid, updated_at: updatedAt, version: version + 1 };
   const mutation = env.DB.prepare(`UPDATE works SET parent_work_id=?1,relationship_kind=?2,title=?3,work_type_key=?4,specialty_key=?5,subject_or_course_code=?6,country=?7,university=?8,status=?9,description=?10,quantity=?11,updated_by=?12,updated_at=?13,version=version+1 WHERE id=?14 AND version=?15`).bind(after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, actorUid, updatedAt, id, version);
-  const audit = auditStatement(env, 'work', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt);
+  const audit = auditStatement(env, 'work', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
   const results = await executeBatch(env, [mutation, audit]);
-  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
   return after;
 }
 

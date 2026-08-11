@@ -148,6 +148,7 @@ test('S4 optimistic version conflict prevents lost update', async () => {
     const updated = await updateCustomer(env, 'uid-two', 'customer-update-1', customer.id, { version: customer.version, name: 'Synthetic Updated Customer' });
     assert.equal(updated.version, 2);
     await assert.rejects(updateCustomer(env, 'uid-one', 'customer-update-2', customer.id, { version: customer.version, name: 'Stale Update' }), /VERSION_CONFLICT/);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE entity_type='customer' AND entity_id=?").get(customer.id).count, 2);
   } finally { database.close(); }
 });
 
