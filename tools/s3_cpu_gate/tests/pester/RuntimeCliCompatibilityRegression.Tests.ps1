@@ -23,4 +23,26 @@ Describe 'Runtime CLI compatibility regressions' {
   $repositorySource | Should -Match "'--state','open'"
   $repositorySource | Should -Not -Match "'--state','all'"
  }
+
+ It 'adds bundled Portable Git OpenSSL directories to the process PATH' {
+  $toolchainModule=Join-Path $ModuleRoot 'Toolchain.psm1'
+  $runtimeRoot=Join-Path $TestDrive 'runtime'
+  $usrBin=Join-Path $runtimeRoot 'tools\git\usr\bin'
+  $mingwBin=Join-Path $runtimeRoot 'tools\git\mingw64\bin'
+  New-Item -ItemType Directory -Path $usrBin,$mingwBin -Force | Out-Null
+  $originalPath=$env:PATH
+  try {
+   $env:PATH='S3_PATH_SENTINEL'
+   Import-Module $toolchainModule -Force
+   Enable-S3LocalToolPath -Root $runtimeRoot
+   $pathEntries=@($env:PATH -split ';')
+   $pathEntries | Should -Contain $usrBin
+   $pathEntries | Should -Contain $mingwBin
+   $pathEntries | Should -Contain 'S3_PATH_SENTINEL'
+  }
+  finally {
+   $env:PATH=$originalPath
+   Remove-Module Toolchain -Force -ErrorAction SilentlyContinue
+  }
+ }
 }

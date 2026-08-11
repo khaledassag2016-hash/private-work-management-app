@@ -23,7 +23,8 @@ $script:ToolDefinitions = [ordered]@{
 function Enable-S3LocalToolPath {
  [CmdletBinding()]param([string]$Root='C:\Users\MC\Desktop\1')
  $paths=@(
-  (Join-Path $Root 'tools\git\cmd'),(Join-Path $Root 'tools\git\bin'),(Join-Path $Root 'tools\gh\bin'),
+  (Join-Path $Root 'tools\git\cmd'),(Join-Path $Root 'tools\git\bin'),
+  (Join-Path $Root 'tools\git\usr\bin'),(Join-Path $Root 'tools\git\mingw64\bin'),(Join-Path $Root 'tools\gh\bin'),
   (Join-Path $Root 'tools\node'),(Join-Path $Root 'tools\npm\node_modules\.bin'),
   (Join-Path $Root 'tools\google-cloud-sdk\bin'),(Join-Path $Root 'python'),(Join-Path $Root 'tools\powershell')
  )
