@@ -45,6 +45,9 @@
     "src/python/report_builder.py",
     "src/python/secret_scan.py",
     "src/worker/schema.sql",
+    "src/worker/assets/app.js",
+    "src/worker/assets/index.html",
+    "src/worker/assets/styles.css",
     "src/worker/src/index.js",
     "tests/pester/Common.Tests.ps1",
     "tests/pester/CpuGate.Tests.ps1",
@@ -59,6 +62,8 @@
     "tests/pester/TestHelper.ps1",
     "tests/node/audit_worker.test.mjs",
     "tests/node/s4_gate1.test.mjs",
+    "tests/node/s4_gate2_acceptance.test.mjs",
+    "tests/node/s4_gate2_ui.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
@@ -71,6 +76,9 @@
     "validation/run_python_tests.py",
     "validation/secret_scan_candidate.py",
     "worker/schema.sql",
+    "worker/assets/app.js",
+    "worker/assets/index.html",
+    "worker/assets/styles.css",
     "worker/src/index.js"
   ]
 }

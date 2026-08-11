@@ -629,7 +629,14 @@ function New-S3WranglerConfig {
     if (-not $PSCmdlet.ShouldProcess($workerDirectory,'Create Wrangler configuration')) { return }
     New-Item -ItemType Directory -Path $workerDirectory -Force | Out-Null
     Copy-Item (Join-Path $Context.Root 'worker\src') $workerDirectory -Recurse -Force
+    $assetsSource = Join-Path $Context.Root 'worker\assets'
+    $assetsConfiguration = $null
+    if (Test-Path -LiteralPath $assetsSource -PathType Container) {
+        Copy-Item $assetsSource $workerDirectory -Recurse -Force
+        $assetsConfiguration = [ordered]@{ directory='assets'; binding='ASSETS'; html_handling='auto-trailing-slash'; not_found_handling='single-page-application' }
+    }
     $configuration = [ordered]@{'$schema'='node_modules/wrangler/config-schema.json';name=$WorkerName;main='src/index.js';compatibility_date='2026-08-01';workers_dev=$true;observability=@{enabled=$true;logs=@{enabled=$true;invocation_logs=$true;head_sampling_rate=1}};vars=@{FIREBASE_PROJECT_ID=$ProjectId;RUN_MARKER=$Context.RunId;TEST_CONTROLS=$(if($TestControls){'enabled'}else{'disabled'});TEST_RESET_NONCE=$TestNonce};d1_databases=@(@{binding='DB';database_name="s3cpu-$($Context.RunId)-d1";database_id=$DatabaseId})}
+    if ($assetsConfiguration) { $configuration.assets = $assetsConfiguration }
     $path = Join-Path $workerDirectory 'wrangler.json'
     $configuration | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $path -Encoding UTF8
     return $path

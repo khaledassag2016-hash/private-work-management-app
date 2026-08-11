@@ -192,6 +192,8 @@ function Get-S3PayloadFile {
  $deploymentRoot=Join-Path $root 'workspace\worker'
  $schema=Join-Path $workerRoot 'schema.sql'
  $source=Join-Path $workerRoot 'src'
+ $assets=Join-Path $workerRoot 'assets'
+ $deploymentAssets=Join-Path $deploymentRoot 'assets'
  $config=Join-Path $deploymentRoot 'wrangler.json'
  $seed=Join-Path $root 'temp\allowlist.sql'
  $paths=switch($Scope){
@@ -200,6 +202,8 @@ function Get-S3PayloadFile {
   'FinalDeployment' {@((Join-Path $deploymentRoot 'src'),$config)}
   'D1Seed' {@($seed)}
  }
+ if($Scope -eq 'PreCloud' -and (Test-Path -LiteralPath $assets -PathType Container)){$paths += $assets}
+ if($Scope -in @('CloudflareExecution','FinalDeployment') -and (Test-Path -LiteralPath $deploymentAssets -PathType Container)){$paths += $deploymentAssets}
  foreach($path in $paths){if(-not(Test-Path -LiteralPath $path)){throw "DEPLOYMENT_PAYLOAD_REQUIRED_PATH_MISSING: $path"}}
  $files=[Collections.Generic.List[IO.FileInfo]]::new()
  foreach($path in $paths){
@@ -208,8 +212,8 @@ function Get-S3PayloadFile {
  }
  if($files.Count -eq 0){throw 'DEPLOYMENT_PAYLOAD_EMPTY'}
  $allowed=@()
- if($Scope -eq 'PreCloud'){$allowed=@('worker\schema.sql','worker\src\')}
- elseif($Scope -in @('CloudflareExecution','FinalDeployment')){$allowed=@('workspace\worker\wrangler.json','workspace\worker\src\')}
+ if($Scope -eq 'PreCloud'){$allowed=@('worker\schema.sql','worker\src\','worker\assets\')}
+ elseif($Scope -in @('CloudflareExecution','FinalDeployment')){$allowed=@('workspace\worker\wrangler.json','workspace\worker\src\','workspace\worker\assets\')}
  elseif($Scope -eq 'D1Seed'){$allowed=@('temp\allowlist.sql')}
  $allCandidates=switch($Scope){
   'PreCloud' {Get-ChildItem -LiteralPath $workerRoot -Recurse -File -Force}
