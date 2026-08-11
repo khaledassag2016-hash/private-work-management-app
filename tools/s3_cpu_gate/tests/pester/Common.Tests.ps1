@@ -19,6 +19,18 @@ Describe 'Common security helpers' {
  It 'cloud resource detector is true for Firebase marker' { $c=Get-TestContext;$c.State.resources.firebase=@{marker=$c.RunId};Test-S3HasOwnedCloudResource $c|Should -BeTrue;$c.State=($c.State|ConvertTo-Json -Depth 20|ConvertFrom-Json);Test-S3HasOwnedCloudResource $c|Should -BeTrue }
  It 'runtime secret clearing removes entries' { $c=Get-TestContext;$c.RuntimeSecrets.token1='secret';Clear-S3RuntimeSecret $c;$c.RuntimeSecrets.Count|Should -Be 0 }
  It 'state serialization guard rejects secret fields' { {$state=@{};$state[('pass'+'word')]='secret';Write-S3State -Root $TestDrive -State $state} | Should -Throw }
+ It 'retries a transient atomic state replacement collision with a unique temp file' {
+  $script:stateMoveAttempts=0;$script:stateTempPaths=[Collections.Generic.List[string]]::new()
+  Mock Move-Item {
+   $script:stateMoveAttempts++
+   [void]$script:stateTempPaths.Add([string]$LiteralPath)
+   if($script:stateMoveAttempts -lt 3){throw [IO.IOException]::new('synthetic reader collision')}
+  } -ModuleName Common
+  {Write-S3State -Root $TestDrive -State ([ordered]@{schemaVersion=2;runId='collision-test';resources=[ordered]@{};results=[ordered]@{};failure=$null})}|Should -Not -Throw
+  $script:stateMoveAttempts|Should -Be 3
+  @($script:stateTempPaths|Select-Object -Unique).Count|Should -Be 1
+  $script:stateTempPaths[0]|Should -Match 'state\.json\.\d+\.[a-f0-9]{32}\.tmp$'
+ }
  It 'scans only the positive allowlisted pre-cloud payload and records its identity' {
   $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'worker\src'),(Join-Path $TestDrive 'python') -Force|Out-Null
   Set-Content (Join-Path $TestDrive 'worker\src\index.js') 'export default {}';Set-Content (Join-Path $TestDrive 'worker\schema.sql') 'SELECT 1;'
