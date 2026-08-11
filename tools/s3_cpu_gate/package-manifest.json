@@ -58,6 +58,7 @@
     "tests/pester/StateMachine.Tests.ps1",
     "tests/pester/TestHelper.ps1",
     "tests/node/audit_worker.test.mjs",
+    "tests/node/s4_gate1.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
