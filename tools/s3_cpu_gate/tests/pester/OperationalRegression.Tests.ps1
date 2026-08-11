@@ -862,6 +862,101 @@ Describe 'S3 Cloudflare paged get regression and D1 support' -Tag 'B5' {
 }
 
 Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
+    It 'keeps Firebase display names deterministic, readable, and within the provider limit' {
+        $current = Get-S3FirebaseProjectDisplayName -RunId 's3cpu-20260811-143004-3deecdda'
+        $future = Get-S3FirebaseProjectDisplayName -RunId ('s3cpu-' + ('future-segment-' * 20) + 'abcdef12')
+        $current | Should -Be (Get-S3FirebaseProjectDisplayName -RunId 's3cpu-20260811-143004-3deecdda')
+        $current | Should -BeLike 'S3 CPU *'
+        $current.Length | Should -BeLessOrEqual 30
+        $future | Should -BeLike 'S3 CPU *abcdef12'
+        $future.Length | Should -BeLessOrEqual 30
+    }
+
+    It 'passes a provider-safe display name to Firebase projects create' {
+        $c = Get-TestContext Live
+        $captured = [Collections.Generic.List[object]]::new()
+        Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        Mock Invoke-S3Process {
+            [void]$captured.Add(@($ArgumentList))
+            [pscustomobject]@{ExitCode=1;StdOut='EXPECTED_STOP';StdErr=''}
+        } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*EXPECTED_STOP*'
+        $arguments = @($captured[0])
+        $displayIndex = [Array]::IndexOf($arguments,'--display-name')
+        $displayIndex | Should -BeGreaterThan -1
+        ([string]$arguments[$displayIndex + 1]).Length | Should -BeLessOrEqual 30
+    }
+
+    It 'accepts only an expected provider rejection as proof that third signup is disabled' {
+        Mock Invoke-RestMethod { throw 'OPERATION_NOT_ALLOWED: signup disabled' } -ModuleName Firebase
+        $proof = Assert-S3FirebaseThirdSignupRejected -ApiKey 'synthetic-api-key'
+        $proof.status | Should -Be 'PASS'
+        $proof.rejected | Should -BeTrue
+    }
+
+    It 'fails closed if Firebase accepts a third public signup' {
+        Mock Invoke-RestMethod { [pscustomobject]@{localId='unexpected-third'} } -ModuleName Firebase
+        { Assert-S3FirebaseThirdSignupRejected -ApiKey 'synthetic-api-key' } | Should -Throw '*FIREBASE_THIRD_SIGNUP_ACCEPTED*'
+    }
+
+    It 'defines DB-generated append-only operational audit with active-actor enforcement' {
+        $schema = Get-Content (Join-Path $SourceRoot 'src\worker\schema.sql') -Raw
+        $schema | Should -Match 'CREATE TABLE IF NOT EXISTS audit_log'
+        $schema | Should -Match 'NEW\.updated_by AND active = 1 AND run_marker = NEW\.run_marker'
+        $schema | Should -Match 'AFTER INSERT ON s3_audit_probe'
+        $schema | Should -Match 'AFTER UPDATE ON s3_audit_probe'
+        $schema | Should -Match 'trg_audit_log_no_update'
+        $schema | Should -Match 'trg_audit_log_no_delete'
+    }
+
+    It 'wires the controlled Worker mutation and live D1 audit acceptance without UI trust' {
+        $worker = Get-Content (Join-Path $SourceRoot 'src\worker\src\index.js') -Raw
+        $cpu = Get-Content (Join-Path $SourceRoot 'src\modules\CpuGate.psm1') -Raw
+        $worker | Should -Match '/__test/audit-mutation'
+        $worker | Should -Match 'env\.DB\.batch'
+        $worker | Should -Match '\.bind\(entityId, valueJson, actorUid, env\.RUN_MARKER, requestId\)'
+        $cpu | Should -Match 'Invoke-S3AuditAcceptance'
+        $cpu | Should -Match 'AUDIT_DB_AUTHORIZATION_BYPASSED'
+        $cpu | Should -Match 'AUDIT_UPDATE_TAMPER_ACCEPTED'
+        $cpu | Should -Match 'AUDIT_DELETE_TAMPER_ACCEPTED'
+    }
+
+    It 'executes the live audit harness for both actors and fail-closed D1 probes' {
+        $c = Get-TestContext Live
+        $c.RuntimeSecrets.uid1 = 'uid-one'
+        $c.RuntimeSecrets.uid2 = 'uid-two'
+        $c.State.resources.cloudflare = [ordered]@{d1Name='synthetic-d1'}
+        Mock Invoke-S3HttpRequest {
+            $value = ($Body | ConvertFrom-Json).value
+            if ($value -eq 'synthetic-denied') { return [pscustomobject]@{status=403;body='{"ok":false}'} }
+            $isBefore = $value -eq 'synthetic-before'
+            $audit = [ordered]@{
+                action=if($isBefore){'CREATE'}else{'UPDATE'}
+                actorUid=if($isBefore){'uid-one'}else{'uid-two'}
+                createdAt='2026-08-11T12:00:00.000Z'
+                before=if($isBefore){$null}else{[ordered]@{value='synthetic-before'}}
+                after=[ordered]@{value=$value}
+                runId=$c.RunId
+            }
+            [pscustomobject]@{status=200;body=([ordered]@{ok=$true;audit=$audit}|ConvertTo-Json -Depth 8 -Compress)}
+        } -ModuleName CpuGate
+        Mock Invoke-S3D1Sql {
+            param($Context,$Sql,[switch]$AllowFailure,[switch]$PassThru)
+            [void]$Context;[void]$Sql;[void]$AllowFailure
+            if ($PassThru) { return [pscustomobject]@{ExitCode=1;StdOut='';StdErr='expected rejection'} }
+        } -ModuleName CpuGate
+        $result = Invoke-S3AuditAcceptance -Context $c -BaseUri 'https://synthetic.workers.dev' -Token1 'token-one' -Token2 'token-two' -Nonce 'synthetic-nonce'
+        $result.status | Should -Be 'PASS'
+        $result.authorizedActors | Should -Be 2
+        $result.dbSide | Should -BeTrue
+        $result.updateRejected | Should -BeTrue
+        $result.deleteRejected | Should -BeTrue
+        Should -Invoke Invoke-S3HttpRequest -ModuleName CpuGate -Times 3 -Exactly
+        Should -Invoke Invoke-S3D1Sql -ModuleName CpuGate -Times 6 -Exactly
+    }
+
     It 'persists the D1 pending intent before invoking d1 create' {
         $source = Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw
         $pending = $source.IndexOf("provisioningStatus='D1_CREATE_PENDING'")

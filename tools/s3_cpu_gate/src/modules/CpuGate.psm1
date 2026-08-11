@@ -34,9 +34,9 @@ function Test-S3CpuDecision {
  return [ordered]@{status=$(if($reasons.Count -eq 0){'PASS'}else{'FAIL'});reasons=@($reasons|Select-Object -Unique|Sort-Object);summaries=$summaries}
 }
 function Invoke-S3HttpRequest {
- param([string]$Uri,[string]$Token,[hashtable]$Headers=@{},[string]$Method='GET')
+ param([string]$Uri,[string]$Token,[hashtable]$Headers=@{},[string]$Method='GET',[AllowNull()][string]$Body=$null)
  $handler=[Net.Http.HttpClientHandler]::new();$client=[Net.Http.HttpClient]::new($handler);$client.Timeout=[TimeSpan]::FromSeconds(60)
- try{$request=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::$Method,$Uri);if($Token){$request.Headers.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$Token)};foreach($key in $Headers.Keys){[void]$request.Headers.TryAddWithoutValidation($key,[string]$Headers[$key])};$stopwatch=[Diagnostics.Stopwatch]::StartNew();$response=$client.Send($request);$stopwatch.Stop();$body=$response.Content.ReadAsStringAsync().GetAwaiter().GetResult();[pscustomobject]@{status=[int]$response.StatusCode;body=Protect-S3Text $body;wall_ms=$stopwatch.Elapsed.TotalMilliseconds}}finally{$client.Dispose();$handler.Dispose()}
+ try{$request=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::$Method,$Uri);if($Token){$request.Headers.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$Token)};foreach($key in $Headers.Keys){[void]$request.Headers.TryAddWithoutValidation($key,[string]$Headers[$key])};if($null -ne $Body){$request.Content=[Net.Http.StringContent]::new($Body,[Text.Encoding]::UTF8,'application/json')};$stopwatch=[Diagnostics.Stopwatch]::StartNew();$response=$client.Send($request);$stopwatch.Stop();$responseBody=$response.Content.ReadAsStringAsync().GetAwaiter().GetResult();[pscustomobject]@{status=[int]$response.StatusCode;body=Protect-S3Text $responseBody;wall_ms=$stopwatch.Elapsed.TotalMilliseconds}}finally{$client.Dispose();$handler.Dispose()}
 }
 function Test-S3NumericTelemetryValue {
  param([AllowNull()][object]$Value)
@@ -123,9 +123,43 @@ function Set-S3WorkerTestVariable {
  $config|ConvertTo-Json -Depth 20|Set-Content $configPath -Encoding UTF8;Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('deploy','--config',$configPath) -WorkingDirectory (Split-Path $configPath) -TimeoutSeconds 600|Out-Null
 }
 function Invoke-S3D1Sql {
- param($Context,[string]$Sql)
+ param($Context,[string]$Sql,[switch]$AllowFailure,[switch]$PassThru)
  $sqlFile=Join-Path $Context.Root ('temp\negative-'+[guid]::NewGuid().ToString('N')+'.sql')
- try{Set-Content $sqlFile $Sql -Encoding UTF8;$cloudflareResource=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';$database=[string](Get-S3MapValue -Map $cloudflareResource -Name 'd1Name');$config=Join-Path $Context.Root 'workspace\worker\wrangler.json';Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$database,'--remote','--file',$sqlFile,'--config',$config,'--yes') -TimeoutSeconds 180|Out-Null}finally{Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue}
+ try{Set-Content $sqlFile $Sql -Encoding UTF8;$cloudflareResource=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';$database=[string](Get-S3MapValue -Map $cloudflareResource -Name 'd1Name');$config=Join-Path $Context.Root 'workspace\worker\wrangler.json';$result=Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$database,'--remote','--file',$sqlFile,'--config',$config,'--yes') -TimeoutSeconds 180 -AllowFailure:$AllowFailure;if($PassThru){return $result}}finally{Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue}
+}
+function Invoke-S3AuditAcceptance {
+ param($Context,[string]$BaseUri,[string]$Token1,[string]$Token2,[string]$Nonce)
+ if([string]::IsNullOrWhiteSpace($Nonce)){throw 'AUDIT_TEST_NONCE_MISSING'}
+ $auditUri="$BaseUri/__test/audit-mutation";$uid1=[string]$Context.RuntimeSecrets.uid1;$uid2=[string]$Context.RuntimeSecrets.uid2
+ function InvokeAudit([string]$UseToken,[string]$RequestId,[string]$Value){
+  $headers=@{'x-s3-test-reset'=$Nonce;'x-s3-run-id'=$Context.RunId;'x-s3-request-id'=$RequestId;'x-s3-scenario'='audit_acceptance'}
+  Invoke-S3HttpRequest -Uri $auditUri -Token $UseToken -Method POST -Headers $headers -Body (@{value=$Value}|ConvertTo-Json -Compress)
+ }
+ function ReadAudit([object]$Response,[string]$ExpectedActor,[string]$ExpectedAction,[AllowNull()][string]$ExpectedBefore,[string]$ExpectedAfter){
+  if($Response.status -ne 200){throw "AUDIT_HTTP_FAILED:$($Response.status)"}
+  try{$payload=$Response.body|ConvertFrom-Json}catch{throw 'AUDIT_RESPONSE_INVALID'}
+  if($payload.ok -ne $true -or [string]$payload.audit.actorUid -ne $ExpectedActor -or [string]$payload.audit.action -ne $ExpectedAction){throw 'AUDIT_ACTOR_OR_ACTION_MISMATCH'}
+  $timestamp=[DateTimeOffset]::MinValue;if(-not[DateTimeOffset]::TryParse([string]$payload.audit.createdAt,[ref]$timestamp)){throw 'AUDIT_TIMESTAMP_INVALID'}
+  if([string]::IsNullOrEmpty($ExpectedBefore)){if($null -ne $payload.audit.before){throw 'AUDIT_BEFORE_MISMATCH'}}elseif([string]$payload.audit.before.value -ne $ExpectedBefore){throw 'AUDIT_BEFORE_MISMATCH'}
+  if([string]$payload.audit.after.value -ne $ExpectedAfter -or [string]$payload.audit.runId -ne $Context.RunId){throw 'AUDIT_AFTER_OR_RUN_MISMATCH'}
+ }
+ $firstRequest=[guid]::NewGuid().ToString('N');$secondRequest=[guid]::NewGuid().ToString('N')
+ ReadAudit (InvokeAudit $Token1 $firstRequest 'synthetic-before') $uid1 'CREATE' $null 'synthetic-before'
+ ReadAudit (InvokeAudit $Token2 $secondRequest 'synthetic-after') $uid2 'UPDATE' 'synthetic-before' 'synthetic-after'
+ $deniedRequest=[guid]::NewGuid().ToString('N')
+ try{Invoke-S3D1Sql -Context $Context -Sql "UPDATE app_users SET active=0 WHERE uid='$uid2' AND run_marker='$($Context.RunId)';";$denied=InvokeAudit $Token2 $deniedRequest 'synthetic-denied';if($denied.status -lt 400){throw 'AUDIT_UNAUTHORIZED_MUTATION_ACCEPTED'}}finally{Invoke-S3D1Sql -Context $Context -Sql "UPDATE app_users SET active=1 WHERE uid='$uid2' AND run_marker='$($Context.RunId)';"}
+ $dbDeniedRequest='db-denied-'+[guid]::NewGuid().ToString('N')
+ $dbDeniedSql="INSERT INTO s3_audit_probe(entity_id,value_json,version,updated_by,changed_at,run_marker,request_id) VALUES ('unauthorized-$($Context.RunId)',json_object('value','synthetic-denied'),1,'uid-unregistered',strftime('%Y-%m-%dT%H:%M:%fZ','now'),'$($Context.RunId)','$dbDeniedRequest');"
+ $dbDenied=Invoke-S3D1Sql -Context $Context -Sql $dbDeniedSql -AllowFailure -PassThru
+ if($dbDenied.ExitCode -eq 0){throw 'AUDIT_DB_AUTHORIZATION_BYPASSED'}
+ $thirdUid='uid-third-'+[guid]::NewGuid().ToString('N')
+ $thirdUser=Invoke-S3D1Sql -Context $Context -Sql "INSERT INTO app_users(uid,role,active,run_marker) VALUES ('$thirdUid','person_1',1,'$($Context.RunId)');" -AllowFailure -PassThru
+ if($thirdUser.ExitCode -eq 0){throw 'D1_MAX_TWO_BYPASSED'}
+ $updateTamper=Invoke-S3D1Sql -Context $Context -Sql "UPDATE audit_log SET action='UPDATE' WHERE run_marker='$($Context.RunId)';" -AllowFailure -PassThru
+ if($updateTamper.ExitCode -eq 0){throw 'AUDIT_UPDATE_TAMPER_ACCEPTED'}
+ $deleteTamper=Invoke-S3D1Sql -Context $Context -Sql "DELETE FROM audit_log WHERE run_marker='$($Context.RunId)';" -AllowFailure -PassThru
+ if($deleteTamper.ExitCode -eq 0){throw 'AUDIT_DELETE_TAMPER_ACCEPTED'}
+ return [ordered]@{status='PASS';authorizedActors=2;who=$true;when=$true;before=$true;after=$true;unauthorizedRejected=$true;thirdUserRejected=$true;maxTwo=$true;updateRejected=$true;deleteRejected=$true;dbSide=$true}
 }
 function Invoke-S3NegativeTest {
  param($Context,[string]$Uri,[string]$Token1,[string]$Token2)
@@ -147,7 +181,7 @@ function Invoke-S3CpuGate {
  param([Parameter(Mandatory)]$Context)
  if($Context.Mode -eq 'Simulation'){
   function MakeRows([int]$Count,[double]$Base,[string]$Cache){$rows=@();for($index=0;$index -lt $Count;$index++){$rows+=[ordered]@{cpu_ms=$Base+(($index%7)*0.07);wall_ms=20+(($index%5)*0.4);outcome='ok';cache_state=$Cache}};return $rows}
-  $payload=[ordered]@{groups=[ordered]@{cache_hit_round_1=MakeRows 100 2.1 'hit';cache_hit_round_2=MakeRows 100 2.2 'hit';cache_miss=MakeRows 20 4.5 'miss'};plan_free=$true;billing_absent=$true;security_reduced=$false;telemetry_official=$true;stable=$true;independent_reproducible_cpu_terminations=0;negativeTests=[ordered]@{uid_not_allowed='PASS';unknown_kid='PASS';modified_signature='PASS';expired='PASS';audience='PASS';issuer='PASS';certificate_fetch='PASS';invalid_cache_metadata='PASS'}}
+  $payload=[ordered]@{groups=[ordered]@{cache_hit_round_1=MakeRows 100 2.1 'hit';cache_hit_round_2=MakeRows 100 2.2 'hit';cache_miss=MakeRows 20 4.5 'miss'};plan_free=$true;billing_absent=$true;security_reduced=$false;telemetry_official=$true;stable=$true;independent_reproducible_cpu_terminations=0;audit=[ordered]@{status='PASS';dbSide=$true};negativeTests=[ordered]@{uid_not_allowed='PASS';unknown_kid='PASS';modified_signature='PASS';expired='PASS';audience='PASS';issuer='PASS';certificate_fetch='PASS';invalid_cache_metadata='PASS'}}
   $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;$payload|ConvertTo-Json -Depth 20|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8;return $decision
  }
  if($Context.Mode -ne 'Live'){return [ordered]@{status='NOT_EXECUTED';reasons=@('PLAN_MODE')}}
@@ -156,6 +190,7 @@ function Invoke-S3CpuGate {
  $accountId=[string](Get-S3MapValue -Map $cloudflare -Name 'accountId');$cloudflareObservabilityToken=[string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareObservabilityToken')
  if(-not $cloudflareObservabilityToken -or -not $accountId){throw 'Cloudflare Observability preflight context غير موجود في الذاكرة.'}
  try{
+  $audit=Invoke-S3AuditAcceptance -Context $Context -BaseUri ([string](Get-S3MapValue -Map $cloudflare -Name 'url')) -Token1 $token1 -Token2 $token2 -Nonce $nonce
   for($index=0;$index -lt 20;$index++){Invoke-S3HttpRequest -Uri $uri -Token $token1|Out-Null}
   $expected1=Invoke-S3TrackedRequestGroup -Uri $uri -Token $token1 -RunId $Context.RunId -Scenario 'cache_hit_round_1' -Count 100
   $telemetry1=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareObservabilityToken -RunId $Context.RunId -Scenario 'cache_hit_round_1' -ExpectedRequests $expected1
@@ -174,7 +209,7 @@ function Invoke-S3CpuGate {
   $negative=Invoke-S3NegativeTest -Context $Context -Uri $uri -Token1 $token1 -Token2 $token2
   Set-S3WorkerTestVariable -Context $Context -Vars @{TEST_CONTROLS='disabled';TEST_RESET_NONCE=$null;EXPECTED_AUDIENCE_OVERRIDE=$null;EXPECTED_ISSUER_PROJECT_OVERRIDE=$null;TEST_NOW_OFFSET_SECONDS=$null;CERT_URL_OVERRIDE=$null;FORCE_CACHE_METADATA_INVALID=$null}
   $group1=@($telemetry1.records|ForEach-Object{$_.cache_state='hit';$_});$group2=@($telemetry2.records|ForEach-Object{$_.cache_state='hit';$_});$misses=@($telemetryMiss.records|ForEach-Object{$_.cache_state='miss';$_})
-  $payload=[ordered]@{run_id=$Context.RunId;groups=[ordered]@{cache_hit_round_1=$group1;cache_hit_round_2=$group2;cache_miss=$misses};plan_free=(Get-S3MapValue -Map $cloudflare -Name 'freePlan');billing_absent=(Get-S3MapValue -Map $cloudflare -Name 'billingAbsent');security_reduced=$false;telemetry_official=$true;telemetry_endpoint='POST /accounts/{account_id}/workers/observability/telemetry/query';stable=$true;independent_reproducible_cpu_terminations=0;negativeTests=$negative}
+  $payload=[ordered]@{run_id=$Context.RunId;groups=[ordered]@{cache_hit_round_1=$group1;cache_hit_round_2=$group2;cache_miss=$misses};plan_free=(Get-S3MapValue -Map $cloudflare -Name 'freePlan');billing_absent=(Get-S3MapValue -Map $cloudflare -Name 'billingAbsent');security_reduced=$false;telemetry_official=$true;telemetry_endpoint='POST /accounts/{account_id}/workers/observability/telemetry/query';stable=$true;independent_reproducible_cpu_terminations=0;audit=$audit;negativeTests=$negative}
   $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;$payload|ConvertTo-Json -Depth 30|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8;return $decision
  }finally{$token1=$null;$token2=$null;$cloudflareObservabilityToken=$null;[GC]::Collect()}
 }

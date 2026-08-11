@@ -91,7 +91,9 @@ jobs:
       - name: Python tests
         run: python tools/s3_cpu_gate/validation/run_python_tests.py --source-root tools/s3_cpu_gate --output phase1-reports/python-tests.json
       - name: Node validation
-        run: node --check tools/s3_cpu_gate/src/worker/src/index.js
+        run: |
+          node --check tools/s3_cpu_gate/src/worker/src/index.js
+          node --test tools/s3_cpu_gate/tests/node/audit_worker.test.mjs
       - name: Secret scan
         run: python tools/s3_cpu_gate/src/python/secret_scan.py tools/s3_cpu_gate
       - name: Payload integrity and ZIP safety

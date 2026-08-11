@@ -82,6 +82,43 @@ async function allowed(env, uid) {
   const row = await env.DB.prepare('SELECT uid, role FROM app_users WHERE uid = ?1 AND active = 1').bind(uid).first();
   return row || null;
 }
+
+export async function applyAuditMutation(env, actorUid, requestId, value) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 128) throw new Error('AUDIT_VALUE_INVALID');
+  if (typeof requestId !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(requestId)) throw new Error('AUDIT_REQUEST_ID_INVALID');
+  const entityId = `acceptance-probe-${env.RUN_MARKER}`;
+  const valueJson = JSON.stringify({ value });
+  const mutation = env.DB.prepare(`
+    INSERT INTO s3_audit_probe(entity_id,value_json,version,updated_by,changed_at,run_marker,request_id)
+    VALUES (?1,?2,1,?3,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?4,?5)
+    ON CONFLICT(entity_id) DO UPDATE SET
+      value_json=excluded.value_json,
+      version=s3_audit_probe.version+1,
+      updated_by=excluded.updated_by,
+      changed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+      run_marker=excluded.run_marker,
+      request_id=excluded.request_id
+  `).bind(entityId, valueJson, actorUid, env.RUN_MARKER, requestId);
+  const evidence = env.DB.prepare(`
+    SELECT action, actor_uid, created_at, before_json, after_json, run_marker, request_id
+    FROM audit_log WHERE request_id = ?1 AND run_marker = ?2
+  `).bind(requestId, env.RUN_MARKER);
+  const batch = await env.DB.batch([mutation, evidence]);
+  const audit = batch?.[1]?.results?.[0];
+  if (!audit || audit.actor_uid !== actorUid || audit.request_id !== requestId || audit.run_marker !== env.RUN_MARKER) {
+    throw new Error('AUDIT_EVIDENCE_MISSING');
+  }
+  return {
+    action: audit.action,
+    actorUid: audit.actor_uid,
+    createdAt: audit.created_at,
+    before: audit.before_json === null ? null : JSON.parse(audit.before_json),
+    after: JSON.parse(audit.after_json),
+    runId: audit.run_marker,
+    requestId: audit.request_id
+  };
+}
+
 export default {
   async fetch(request, env) {
     const requestId = request.headers.get('x-s3-request-id') || crypto.randomUUID();
@@ -95,7 +132,13 @@ export default {
       certificateCache = { expiresAt: 0, certificates: null };
       return Response.json({ ok: true, requestId });
     }
-    if (url.pathname !== '/private/ping') return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
+    const isAuditMutation = url.pathname === '/__test/audit-mutation';
+    if (url.pathname !== '/private/ping' && !isAuditMutation) return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
+    if (isAuditMutation) {
+      if (env.TEST_CONTROLS !== 'enabled') return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
+      if (request.method !== 'POST') return reject(405, 'METHOD_NOT_ALLOWED', requestId, 'none', env.RUN_MARKER, scenario);
+      if (!env.TEST_RESET_NONCE || request.headers.get('x-s3-test-reset') !== env.TEST_RESET_NONCE) return reject(403, 'TEST_CONTROL_DENIED', requestId, 'none', env.RUN_MARKER, scenario);
+    }
     const auth = request.headers.get('authorization') || '';
     if (!auth.startsWith('Bearer ')) return reject(401, 'TOKEN_MISSING', requestId, 'none', env.RUN_MARKER, scenario);
     try {
@@ -103,7 +146,17 @@ export default {
       if (!user) return reject(403, 'UID_NOT_ALLOWED', requestId, verified.cacheState, env.RUN_MARKER, scenario);
       const s3Correlation = { runId, requestId, scenario };
       console.log(JSON.stringify({ event: 'auth_result', requestId, code: 'ALLOW', cacheState: verified.cacheState, allowed: true, runId, scenario, s3Correlation, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) }));
-      return Response.json({ ok: true, requestId, role: user.role });
+      if (!isAuditMutation) return Response.json({ ok: true, requestId, role: user.role });
+      let body;
+      try { body = await request.json(); } catch { return reject(400, 'AUDIT_JSON_INVALID', requestId, verified.cacheState, env.RUN_MARKER, scenario); }
+      try {
+        const audit = await applyAuditMutation(env, verified.claims.sub, requestId, body?.value);
+        return Response.json({ ok: true, requestId, role: user.role, audit });
+      } catch (error) {
+        const code = error instanceof Error && error.message.startsWith('AUDIT_') ? error.message : 'AUDIT_MUTATION_FAILED';
+        const status = code.endsWith('_INVALID') ? 400 : 500;
+        return reject(status, code, requestId, verified.cacheState, env.RUN_MARKER, scenario);
+      }
     } catch (error) {
       const code = error instanceof Error ? error.message : 'AUTH_FAILED';
       return reject(401, code, requestId, 'none', env.RUN_MARKER, scenario);
