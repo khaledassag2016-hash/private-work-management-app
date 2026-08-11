@@ -37,6 +37,7 @@
     "src/modules/Repository.psm1",
     "src/modules/Toolchain.psm1",
     "src/modules/Ui.psm1",
+    "src/helpers/firebase_available_project.mjs",
     "src/python/cpu_stats.py",
     "src/python/offline_simulation.py",
     "src/python/package_verify.py",

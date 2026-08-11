@@ -343,15 +343,172 @@ function Test-S3FirebaseRunCreatedProject {
 
 function Set-S3FirebaseProviderVerifiedOwnership {
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
-    param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)]$Resource,[Parameter(Mandatory)]$ProjectRecord)
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Resource,
+        [Parameter(Mandatory)]$ProjectRecord,
+        [ValidateSet('PROJECT_CREATED_AWAITING_FIREBASE','PROJECT_CREATED_FIREBASE_ADD_FAILED')]
+        [string]$ProvisioningStatus = 'PROJECT_CREATED_FIREBASE_ADD_FAILED'
+    )
     if (-not (Test-S3FirebaseRunCreatedProject -Context $Context -Resource $Resource -ProjectRecord $ProjectRecord)) { return $false }
     if (-not $PSCmdlet.ShouldProcess([string](Get-S3MapValue -Map $Resource -Name 'projectId'),'Record provider-verified Firebase ownership')) { return $false }
     Set-S3MapValue -Map $Resource -Name 'ownershipProof' -Value 'CREATE_SUCCEEDED_PROVIDER_VERIFIED'
-    Set-S3MapValue -Map $Resource -Name 'provisioningStatus' -Value 'PROJECT_CREATED_FIREBASE_ADD_FAILED'
+    Set-S3MapValue -Map $Resource -Name 'provisioningStatus' -Value $ProvisioningStatus
     Set-S3MapValue -Map $Resource -Name 'providerProjectNumber' -Value ([string](Get-S3MapValue -Map $ProjectRecord -Name 'projectNumber'))
     Set-S3MapValue -Map $Resource -Name 'providerCreateTimeUtc' -Value ([string](Get-S3MapValue -Map $ProjectRecord -Name 'createTime'))
     Write-S3State -Root $Context.Root -State $Context.State
     return $true
+}
+
+function Get-S3FirebaseAddRequiredPermission {
+    return @(
+        'firebase.projects.update',
+        'resourcemanager.projects.get',
+        'serviceusage.services.enable',
+        'serviceusage.services.get'
+    )
+}
+
+function Get-S3FirebaseIamReadiness {
+    param(
+        [Parameter(Mandatory)][string]$ProjectId,
+        [Parameter(Mandatory)][string]$Token
+    )
+    $required = @(Get-S3FirebaseAddRequiredPermission)
+    try {
+        $response = Invoke-S3GoogleRest -Method POST -Uri "https://cloudresourcemanager.googleapis.com/v1/projects/${ProjectId}:testIamPermissions" -Token $Token -Body @{permissions=$required}
+        $granted = @(Get-S3OptionalRepeatedArrayProperty -InputObject $response -Name 'permissions' | ForEach-Object {[string]$_})
+        $missing = @($required | Where-Object { $_ -notin $granted })
+        return [ordered]@{queryStatus='PASS';ready=($missing.Count -eq 0);missingPermissions=$missing}
+    }
+    catch {
+        return [ordered]@{queryStatus='RETRYABLE_ERROR';ready=$false;missingPermissions=$required}
+    }
+}
+
+function Get-S3FirebaseBackendReadiness {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$ProjectId,
+        [Parameter(Mandatory)][string]$DisplayName
+    )
+    $helper = Join-Path $Context.Root 'helpers\firebase_available_project.mjs'
+    $firebaseToolsRoot = Join-Path $Context.Root 'tools\npm\node_modules\firebase-tools'
+    if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { throw 'FIREBASE_READINESS_HELPER_MISSING' }
+    if (-not (Test-Path -LiteralPath $firebaseToolsRoot -PathType Container)) { throw 'FIREBASE_TOOLS_ROOT_MISSING' }
+    $result = Invoke-S3Process -Context $Context -FilePath 'node' -ArgumentList @($helper,$firebaseToolsRoot,$ProjectId,$DisplayName) -TimeoutSeconds 90 -AllowFailure -SensitiveOutput
+    try { $record = $result.StdOut | ConvertFrom-Json }
+    catch { throw 'FIREBASE_AVAILABLE_PROJECTS_PROBE_JSON_INVALID' }
+    $status = [string](Get-S3MapValue -Map $record -Name 'status')
+    $code = [string](Get-S3MapValue -Map $record -Name 'code')
+    if ($result.ExitCode -eq 10 -and $status -eq 'ERROR' -and $code -eq 'AVAILABLE_PROJECTS_QUERY_FAILED') {
+        $httpStatus = Get-S3MapValue -Map $record -Name 'httpStatus'
+        if ($null -ne $httpStatus) { $httpStatus = Get-S3RequiredNonNegativeInteger -InputObject $record -Name 'httpStatus' }
+        return [ordered]@{queryStatus='RETRYABLE_ERROR';httpStatus=$httpStatus;ready=$false;pagesScanned=0;projectCount=0}
+    }
+    if ($result.ExitCode -ne 0 -or $status -ne 'PASS') {
+        throw "FIREBASE_AVAILABLE_PROJECTS_PROBE_FAILED:$code"
+    }
+    $available = Get-S3MapValue -Map $record -Name 'available'
+    $displayNameMatch = Get-S3MapValue -Map $record -Name 'displayNameMatch'
+    if ($available -isnot [bool] -or $displayNameMatch -isnot [bool]) { throw 'FIREBASE_AVAILABLE_PROJECTS_PROBE_SCHEMA_INVALID' }
+    $pagesScanned = Get-S3RequiredNonNegativeInteger -InputObject $record -Name 'pagesScanned'
+    $projectCount = Get-S3RequiredNonNegativeInteger -InputObject $record -Name 'projectCount'
+    return [ordered]@{queryStatus='PASS';ready=([bool]$available -and [bool]$displayNameMatch);pagesScanned=$pagesScanned;projectCount=$projectCount}
+}
+
+function Get-S3FirebaseAddReadiness {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Resource,
+        [Parameter(Mandatory)][string]$DisplayName
+    )
+    $projectId = [string](Get-S3MapValue -Map $Resource -Name 'projectId')
+    $projectRecord = Get-S3FirebaseProjectRecord -Context $Context -ProjectId $projectId
+    $projectStatus = [string](Get-S3MapValue -Map $projectRecord -Name 'status')
+    $projectReady = Test-S3FirebaseRunCreatedProject -Context $Context -Resource $Resource -ProjectRecord $projectRecord
+    if ($projectStatus -eq 'EXISTS' -and -not $projectReady) { throw 'FIREBASE_PROVIDER_OWNERSHIP_DRIFT' }
+    if (-not $projectReady) {
+        return [ordered]@{ready=$false;projectReady=$false;iamReady=$false;firebaseBackendReady=$false;iamQueryStatus='NOT_REACHED';firebaseQueryStatus='NOT_REACHED';projectRecord=$projectRecord;missingPermissions=@(Get-S3FirebaseAddRequiredPermission)}
+    }
+    $token = $null
+    try {
+        $token = Get-S3GoogleAccessToken -Context $Context
+        $iam = Get-S3FirebaseIamReadiness -ProjectId $projectId -Token $token
+    }
+    finally {
+        $token = $null
+        [GC]::Collect()
+    }
+    $backend = Get-S3FirebaseBackendReadiness -Context $Context -ProjectId $projectId -DisplayName $DisplayName
+    $ready = [bool]$projectReady -and [bool]$iam.ready -and [bool]$backend.ready
+    return [ordered]@{
+        ready=$ready;projectReady=[bool]$projectReady;iamReady=[bool]$iam.ready;firebaseBackendReady=[bool]$backend.ready
+        iamQueryStatus=[string]$iam.queryStatus;firebaseQueryStatus=[string]$backend.queryStatus
+        firebaseQueryHttpStatus=(Get-S3MapValue -Map $backend -Name 'httpStatus')
+        projectRecord=$projectRecord;missingPermissions=@($iam.missingPermissions)
+        pagesScanned=[int64]$backend.pagesScanned;projectCount=[int64]$backend.projectCount
+    }
+}
+
+function Wait-S3FirebaseAddReadiness {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Resource,
+        [Parameter(Mandatory)][string]$DisplayName,
+        [ValidateRange(0,1800)][int]$TimeoutSeconds = 600,
+        [ValidateRange(0,60)][int]$RetryDelaySeconds = 10,
+        [scriptblock]$Now = {[DateTime]::UtcNow},
+        [scriptblock]$Sleep = {param($Seconds) Start-Sleep -Seconds $Seconds}
+    )
+    $deadline = (& $Now).AddSeconds($TimeoutSeconds)
+    $attempt = 0
+    do {
+        $attempt++
+        $proof = Get-S3FirebaseAddReadiness -Context $Context -Resource $Resource -DisplayName $DisplayName
+        $observedUtc = (& $Now).ToUniversalTime().ToString('o')
+        if ($proof.projectReady -and [string](Get-S3MapValue -Map $Resource -Name 'ownershipProof') -ne 'CREATE_SUCCEEDED_PROVIDER_VERIFIED') {
+            if (-not (Set-S3FirebaseProviderVerifiedOwnership -Context $Context -Resource $Resource -ProjectRecord $proof.projectRecord -ProvisioningStatus 'PROJECT_CREATED_AWAITING_FIREBASE')) {
+                throw 'FIREBASE_PROVIDER_OWNERSHIP_PROOF_FAILED'
+            }
+        }
+        Set-S3MapValue -Map $Resource -Name 'readinessStatus' -Value $(if ($proof.ready) {'PASS'} else {'POLLING'})
+        Set-S3MapValue -Map $Resource -Name 'readinessAttempts' -Value $attempt
+        Set-S3MapValue -Map $Resource -Name 'lastReadinessUtc' -Value $observedUtc
+        Set-S3MapValue -Map $Resource -Name 'projectReady' -Value ([bool]$proof.projectReady)
+        Set-S3MapValue -Map $Resource -Name 'iamReady' -Value ([bool]$proof.iamReady)
+        Set-S3MapValue -Map $Resource -Name 'firebaseBackendReady' -Value ([bool]$proof.firebaseBackendReady)
+        Set-S3MapValue -Map $Resource -Name 'iamReadinessQueryStatus' -Value ([string](Get-S3MapValue -Map $proof -Name 'iamQueryStatus'))
+        Set-S3MapValue -Map $Resource -Name 'firebaseReadinessQueryStatus' -Value ([string](Get-S3MapValue -Map $proof -Name 'firebaseQueryStatus'))
+        Set-S3MapValue -Map $Resource -Name 'firebaseReadinessHttpStatus' -Value (Get-S3MapValue -Map $proof -Name 'firebaseQueryHttpStatus')
+        Set-S3MapValue -Map $Resource -Name 'missingFirebaseAddPermissionCount' -Value (@(Get-S3MapValue -Map $proof -Name 'missingPermissions').Count)
+        Set-S3MapValue -Map $Resource -Name 'firebaseAvailableProjectsPagesScanned' -Value ([int64](Get-S3MapValue -Map $proof -Name 'pagesScanned'))
+        if ($attempt -eq 1) {
+            Set-S3MapValue -Map $Resource -Name 'readinessStartedUtc' -Value $observedUtc
+            Set-S3MapValue -Map $Resource -Name 'initialProjectReady' -Value ([bool]$proof.projectReady)
+            Set-S3MapValue -Map $Resource -Name 'initialIamReady' -Value ([bool]$proof.iamReady)
+            Set-S3MapValue -Map $Resource -Name 'initialFirebaseBackendReady' -Value ([bool]$proof.firebaseBackendReady)
+        }
+        if ($proof.iamReady -and $null -eq (Get-S3MapValue -Map $Resource -Name 'iamReadyAtAttempt')) {
+            Set-S3MapValue -Map $Resource -Name 'iamReadyAtAttempt' -Value $attempt
+            Set-S3MapValue -Map $Resource -Name 'iamReadyAtUtc' -Value $observedUtc
+        }
+        if ($proof.firebaseBackendReady -and $null -eq (Get-S3MapValue -Map $Resource -Name 'firebaseBackendReadyAtAttempt')) {
+            Set-S3MapValue -Map $Resource -Name 'firebaseBackendReadyAtAttempt' -Value $attempt
+            Set-S3MapValue -Map $Resource -Name 'firebaseBackendReadyAtUtc' -Value $observedUtc
+        }
+        Write-S3State -Root $Context.Root -State $Context.State
+        if ($proof.ready) {
+            Set-S3MapValue -Map $Resource -Name 'readyAtUtc' -Value $observedUtc
+            Write-S3State -Root $Context.Root -State $Context.State
+            return [ordered]@{status='PASS';attempts=$attempt;projectReady=$true;iamReady=$true;firebaseBackendReady=$true}
+        }
+        if ((& $Now) -ge $deadline) { break }
+        & $Sleep $RetryDelaySeconds
+    } while ($true)
+    Set-S3MapValue -Map $Resource -Name 'readinessStatus' -Value 'TIMEOUT'
+    Write-S3State -Root $Context.Root -State $Context.State
+    throw 'FIREBASE_ADD_READINESS_TIMEOUT'
 }
 
 function Assert-S3FirebaseThirdSignupRejected {
@@ -409,33 +566,46 @@ function Invoke-S3FirebaseProvision {
         }
         Set-S3MapValue -Map $Context.State.resources -Name 'firebase' -Value $resource
         Write-S3State -Root $Context.Root -State $Context.State
-        $createResult = Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('projects:create',$projectId,'--display-name',$display,'--json','--non-interactive') -TimeoutSeconds 600 -AllowFailure
+        $createResult = Invoke-S3Process -Context $Context -FilePath 'gcloud' -ArgumentList @('projects','create',$projectId,'--name',$display,'--no-enable-cloud-apis','--quiet','--format=json') -TimeoutSeconds 600 -AllowFailure
         if ($createResult.ExitCode -ne 0) {
             $createDiagnostic = Protect-S3Text ((@([string]$createResult.StdOut,[string]$createResult.StdErr) -join "`n").Trim())
             $postFailureProject = Get-S3FirebaseProjectRecord -Context $Context -ProjectId $projectId
-            if (Set-S3FirebaseProviderVerifiedOwnership -Context $Context -Resource $resource -ProjectRecord $postFailureProject) {
-                if ([string]::IsNullOrWhiteSpace($createDiagnostic)) {
-                    throw "FIREBASE_ADD_FAILED_AFTER_PROJECT_CREATE_NO_DIAGNOSTIC: exit=$($createResult.ExitCode)"
+            if (-not (Set-S3FirebaseProviderVerifiedOwnership -Context $Context -Resource $resource -ProjectRecord $postFailureProject -ProvisioningStatus 'PROJECT_CREATED_AWAITING_FIREBASE')) {
+                $postFailureStatus = [string](Get-S3MapValue -Map $postFailureProject -Name 'status')
+                if ($postFailureStatus -eq 'ABSENT') {
+                    Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'CREATE_FAILED_UNOWNED'
+                    Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATE_FAILED'
                 }
-                throw "FIREBASE_ADD_FAILED_AFTER_PROJECT_CREATE: exit=$($createResult.ExitCode): $createDiagnostic"
+                else {
+                    Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'PENDING_CREATE_OUTCOME_UNKNOWN'
+                    Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATE_OUTCOME_UNKNOWN'
+                }
+                Write-S3State -Root $Context.Root -State $Context.State
+                if ([string]::IsNullOrWhiteSpace($createDiagnostic)) {
+                    throw "FIREBASE_PROJECT_CREATE_FAILED_NO_DIAGNOSTIC: exit=$($createResult.ExitCode)"
+                }
+                throw "FIREBASE_PROJECT_CREATE_FAILED: exit=$($createResult.ExitCode): $createDiagnostic"
             }
-            $postFailureStatus = [string](Get-S3MapValue -Map $postFailureProject -Name 'status')
-            if ($postFailureStatus -eq 'ABSENT') {
-                Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'CREATE_FAILED_UNOWNED'
-                Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATE_FAILED'
-            }
-            else {
-                Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'PENDING_CREATE_OUTCOME_UNKNOWN'
-                Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATE_OUTCOME_UNKNOWN'
-            }
-            Write-S3State -Root $Context.Root -State $Context.State
-            if ([string]::IsNullOrWhiteSpace($createDiagnostic)) {
-                throw "FIREBASE_PROJECT_CREATE_FAILED_NO_DIAGNOSTIC: exit=$($createResult.ExitCode)"
-            }
-            throw "FIREBASE_PROJECT_CREATE_FAILED: exit=$($createResult.ExitCode): $createDiagnostic"
         }
-        Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'CREATE_SUCCEEDED'
+        if ([string](Get-S3MapValue -Map $resource -Name 'ownershipProof') -ne 'CREATE_SUCCEEDED_PROVIDER_VERIFIED') {
+            Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATED_AWAITING_PROVIDER_PROOF'
+        }
+        Write-S3State -Root $Context.Root -State $Context.State
+        [void](Wait-S3FirebaseAddReadiness -Context $Context -Resource $resource -DisplayName $display)
+        $addResult = Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('projects:addfirebase',$projectId,'--json','--non-interactive') -TimeoutSeconds 600 -AllowFailure
+        if ($addResult.ExitCode -ne 0) {
+            Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATED_FIREBASE_ADD_FAILED'
+            Write-S3State -Root $Context.Root -State $Context.State
+            $addDiagnostic = Protect-S3Text ((@([string]$addResult.StdOut,[string]$addResult.StdErr) -join "`n").Trim())
+            if ([string]::IsNullOrWhiteSpace($addDiagnostic)) { throw "FIREBASE_ADD_FAILED_AFTER_READINESS_NO_DIAGNOSTIC: exit=$($addResult.ExitCode)" }
+            throw "FIREBASE_ADD_FAILED_AFTER_READINESS: exit=$($addResult.ExitCode): $addDiagnostic"
+        }
+        try { $addResponse = $addResult.StdOut | ConvertFrom-Json }
+        catch { throw 'FIREBASE_ADD_RESPONSE_JSON_INVALID' }
+        if ([string](Get-S3MapValue -Map $addResponse -Name 'status') -ne 'success') { throw 'FIREBASE_ADD_RESPONSE_NOT_SUCCESS' }
+        Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'CREATE_SUCCEEDED_PROVIDER_VERIFIED'
         Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATED'
+        Set-S3MapValue -Map $resource -Name 'firebaseAddedAtUtc' -Value ([DateTime]::UtcNow.ToString('o'))
         Write-S3State -Root $Context.Root -State $Context.State
         $billingProof = Assert-S3GoogleNoBilling -Context $Context -ProjectId $projectId
         $apps = (Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('apps:create','WEB','s3-cpu-gate','--project',$projectId,'--json','--non-interactive') -TimeoutSeconds 300).StdOut | ConvertFrom-Json
