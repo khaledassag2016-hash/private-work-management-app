@@ -93,7 +93,7 @@ jobs:
       - name: Node validation
         run: |
           node --check tools/s3_cpu_gate/src/worker/src/index.js
-          node --test tools/s3_cpu_gate/tests/node/audit_worker.test.mjs tools/s3_cpu_gate/tests/node/s4_gate1.test.mjs tools/s3_cpu_gate/tests/node/s4_gate2_ui.test.mjs
+          node --test tools/s3_cpu_gate/tests/node/audit_worker.test.mjs tools/s3_cpu_gate/tests/node/s4_gate1.test.mjs tools/s3_cpu_gate/tests/node/s4_gate2_acceptance.test.mjs tools/s3_cpu_gate/tests/node/s4_gate2_ui.test.mjs
       - name: Secret scan
         run: python tools/s3_cpu_gate/src/python/secret_scan.py tools/s3_cpu_gate
       - name: Payload integrity and ZIP safety
