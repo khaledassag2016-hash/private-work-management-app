@@ -40,7 +40,7 @@
 | AC-04 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs`: Customer واحد مع عدة Works مستقلة | متحقق في Gate 2 — PR #59 |
 | AC-05 | معيار قبول | S7 | سيناريو قبول AC-05 | مخطط |
 | AC-06 | معيار قبول | S7 | سيناريو قبول AC-06 | مخطط |
-| AC-07 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs`: fact موثق يظهر warning/history قبل الاتفاق الجديد | متحقق في Gate 2 — PR #59 |
+| AC-07 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs` + `s4_gate2_supervisory_repair.test.mjs`: documented fact ثم New Work لنفس Customer مع warning ظاهر قبل submit، وno-warning دون fact | متحقق في Gate 2 supervisory repair — PR #61 |
 | AC-08 | معيار قبول | S8 | سيناريو قبول AC-08 | مخطط |
 | AC-09 | معيار قبول | S8 | سيناريو قبول AC-09 | مخطط |
 | AC-10 | معيار قبول | S8 | سيناريو قبول AC-10 | مخطط |
