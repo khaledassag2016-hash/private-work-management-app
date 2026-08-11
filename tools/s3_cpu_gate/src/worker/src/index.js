@@ -429,6 +429,12 @@ async function handleApi(request, env, requestId, scenario, user) {
   throw new DomainError('NOT_FOUND', 404);
 }
 
+async function serveStaticAsset(request, env) {
+  if (!env.ASSETS || typeof env.ASSETS.fetch !== 'function') return null;
+  const response = await env.ASSETS.fetch(request);
+  return response.status === 404 ? null : response;
+}
+
 export default {
   async fetch(request, env) {
     const requestId = request.headers.get('x-s3-request-id') || crypto.randomUUID();
@@ -436,6 +442,11 @@ export default {
     const requestedRunId = request.headers.get('x-s3-run-id') || '';
     const runId = requestedRunId === env.RUN_MARKER ? requestedRunId : '';
     const url = new URL(request.url);
+    const isStaticAssetRequest = request.method === 'GET' && (url.pathname === '/' || url.pathname.startsWith('/assets/'));
+    if (isStaticAssetRequest) {
+      const staticResponse = await serveStaticAsset(request, env);
+      if (staticResponse) return staticResponse;
+    }
     if (url.pathname === '/__test/reset-cache') {
       if (env.TEST_CONTROLS !== 'enabled') return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
       if (!env.TEST_RESET_NONCE || request.headers.get('x-s3-test-reset') !== env.TEST_RESET_NONCE) return reject(403, 'TEST_CONTROL_DENIED', requestId, 'none', env.RUN_MARKER, scenario);
