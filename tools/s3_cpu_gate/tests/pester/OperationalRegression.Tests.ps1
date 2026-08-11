@@ -1091,13 +1091,24 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Get-S3FirebaseProjectPresence -Context $c -ProjectId 's3cpu-test' | Should -Be 'ABSENT'
     }
 
-    It 'does not permit Firebase project creation after ambiguous permission failure' {
+    It 'records intent and lets projects:create arbitrate ambiguous permission presence' {
         $c = Get-TestContext Live
+        $events = [Collections.Generic.List[string]]::new()
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
         Mock Get-S3FirebaseProjectPresence { 'UNKNOWN' } -ModuleName Firebase
-        Mock Invoke-S3Process { throw 'FIREBASE_CREATE_MUST_NOT_RUN' } -ModuleName Firebase
-        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_PROJECT_ABSENCE_UNVERIFIABLE*'
-        Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
+        Mock Write-S3State { [void]$events.Add("state:$($c.State.resources.firebase.ownershipProof)") } -ModuleName Firebase
+        Mock Invoke-S3Process {
+            [void]$events.Add(($ArgumentList -join ' '))
+            [pscustomobject]@{ExitCode=1;StdOut='';StdErr='PROJECT_ID_UNAVAILABLE'}
+        } -ModuleName Firebase
+        { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*FIREBASE_PROJECT_CREATE_FAILED*PROJECT_ID_UNAVAILABLE*'
+        $events[0] | Should -Be 'state:PENDING_CREATE_SUCCESS'
+        $events[1] | Should -Match 'projects:create'
+        $c.State.resources.firebase.preCreatePresence | Should -Be 'UNKNOWN'
+        $c.State.resources.firebase.preCreateAbsence | Should -Be 'UNVERIFIABLE'
+        $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_FAILED_UNOWNED'
+        $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATE_FAILED'
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -ParameterFilter { $ArgumentList -contains 'projects:create' } -Times 1 -Exactly
     }
 
     It 'does not mark Firebase cleanup already absent after ambiguous permission failure' {
@@ -1111,22 +1122,24 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
     }
 
-    It 'never invokes Firebase project creation when the intent write fails' {
+    It 'never invokes Firebase project creation when UNKNOWN intent write fails' {
         $c = Get-TestContext Live
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
-        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'UNKNOWN' } -ModuleName Firebase
         Mock Write-S3State { throw 'STATE_WRITE_FAILED' } -ModuleName Firebase
         Mock Invoke-S3Process { throw 'FIREBASE_CREATE_MUST_NOT_RUN' } -ModuleName Firebase
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*STATE_WRITE_FAILED*'
+        $c.State.resources.firebase.preCreatePresence | Should -Be 'UNKNOWN'
+        $c.State.resources.firebase.ownershipProof | Should -Be 'PENDING_CREATE_SUCCESS'
         Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
     }
 
-    It 'persists PROJECT_CREATED before Firebase child provisioning' {
+    It 'persists CREATE_SUCCEEDED ownership before Firebase child provisioning' {
         $c = Get-TestContext Live
         $events = [Collections.Generic.List[string]]::new()
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
-        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
-        Mock Write-S3State { [void]$events.Add('state') } -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'UNKNOWN' } -ModuleName Firebase
+        Mock Write-S3State { [void]$events.Add("state:$($c.State.resources.firebase.ownershipProof)") } -ModuleName Firebase
         Mock Invoke-S3Process {
             [void]$events.Add(($ArgumentList -join ' '))
             if ($ArgumentList -contains 'projects:create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
@@ -1134,9 +1147,12 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         } -ModuleName Firebase
         Mock Assert-S3GoogleNoBilling { throw 'STOP_AFTER_PROJECT_STATE' } -ModuleName Firebase
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*STOP_AFTER_PROJECT_STATE*'
-        $events[0] | Should -Be 'state'
+        $events[0] | Should -Be 'state:PENDING_CREATE_SUCCESS'
         $events[1] | Should -Match 'projects:create'
-        $events[2] | Should -Be 'state'
+        $events[2] | Should -Be 'state:CREATE_SUCCEEDED'
+        $c.State.resources.firebase.preCreatePresence | Should -Be 'UNKNOWN'
+        $c.State.resources.firebase.preCreateAbsence | Should -Be 'UNVERIFIABLE'
+        $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_SUCCEEDED'
         $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED'
     }
 
@@ -1153,10 +1169,13 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
     }
 
-    It 'cleans a pending exact Firebase project only with valid intent ownership' {
+    It 'cleans an exact Firebase project after CREATE_SUCCEEDED ownership proof' {
         $c = Get-TestContext Live
         $suffix = ($c.RunId -replace '[^a-z0-9-]','').ToLowerInvariant();if($suffix.Length -gt 20){$suffix=$suffix.Substring($suffix.Length-20)}
-        $resource = [ordered]@{projectId="s3cpu-$suffix";marker=$c.RunId;provisioningStatus='PROJECT_CREATE_PENDING';preCreateAbsence='PASS'}
+        $resource = [ordered]@{
+            projectId="s3cpu-$suffix";marker=$c.RunId;provisioningStatus='PROJECT_CREATED'
+            preCreatePresence='UNKNOWN';preCreateAbsence='UNVERIFIABLE';ownershipProof='CREATE_SUCCEEDED'
+        }
         $c.State.resources.firebase = $resource
         Mock Get-S3FirebaseProjectPresence { 'EXISTS' } -ModuleName Firebase
         Mock Write-S3State {} -ModuleName Firebase
@@ -1179,10 +1198,10 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Should -Invoke Invoke-S3Process -ModuleName Firebase -Times 0 -Exactly
     }
 
-    It 'keeps a Firebase project cleanup-capable after child provisioning fails' {
+    It 'keeps an UNKNOWN-precheck Firebase project cleanup-capable after child provisioning fails' {
         $c = Get-TestContext Live
         Mock Assert-S3PreexistingGoogleCliSession {} -ModuleName Firebase
-        Mock Get-S3FirebaseProjectPresence { 'ABSENT' } -ModuleName Firebase
+        Mock Get-S3FirebaseProjectPresence { 'UNKNOWN' } -ModuleName Firebase
         Mock Write-S3State {} -ModuleName Firebase
         Mock Invoke-S3Process {
             if ($ArgumentList -contains 'projects:create') { return [pscustomobject]@{ExitCode=0;StdOut='created';StdErr=''} }
@@ -1192,6 +1211,8 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         { Invoke-S3FirebaseProvision -Context $c } | Should -Throw '*CHILD_PROVISIONING_FAILED*'
         $c.State.resources.firebase.projectId | Should -Match '^s3cpu-'
         $c.State.resources.firebase.marker | Should -Be $c.RunId
+        $c.State.resources.firebase.preCreatePresence | Should -Be 'UNKNOWN'
+        $c.State.resources.firebase.ownershipProof | Should -Be 'CREATE_SUCCEEDED'
         $c.State.resources.firebase.provisioningStatus | Should -Be 'PROJECT_CREATED'
     }
 

@@ -309,21 +309,27 @@ function Invoke-S3FirebaseProvision {
     try {
         $preCreatePresence = Get-S3FirebaseProjectPresence -Context $Context -ProjectId $projectId
         if ($preCreatePresence -eq 'EXISTS') { throw 'FIREBASE_PROJECT_NAME_ALREADY_EXISTS' }
-        if ($preCreatePresence -ne 'ABSENT') { throw 'FIREBASE_PROJECT_ABSENCE_UNVERIFIABLE' }
+        if ($preCreatePresence -notin @('ABSENT','UNKNOWN')) { throw 'FIREBASE_PROJECT_PRESENCE_INVALID' }
+        $preCreateAbsence = if ($preCreatePresence -eq 'ABSENT') { 'PASS' } else { 'UNVERIFIABLE' }
         $resource = [ordered]@{
             projectId=$projectId;marker=$Context.RunId;billing=$null;users=0
-            provisioningStatus='PROJECT_CREATE_PENDING';cleanupStatus=$null;preCreateAbsence='PASS'
+            provisioningStatus='PROJECT_CREATE_PENDING';cleanupStatus=$null
+            preCreatePresence=$preCreatePresence;preCreateAbsence=$preCreateAbsence
+            ownershipProof='PENDING_CREATE_SUCCESS'
         }
         Set-S3MapValue -Map $Context.State.resources -Name 'firebase' -Value $resource
         Write-S3State -Root $Context.Root -State $Context.State
         $createResult = Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('projects:create',$projectId,'--display-name',$display,'--json','--non-interactive') -TimeoutSeconds 600 -AllowFailure
         if ($createResult.ExitCode -ne 0) {
+            Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'CREATE_FAILED_UNOWNED'
+            Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATE_FAILED'
             $createDiagnostic = Protect-S3Text ((@([string]$createResult.StdOut,[string]$createResult.StdErr) -join "`n").Trim())
             if ([string]::IsNullOrWhiteSpace($createDiagnostic)) {
                 throw "FIREBASE_PROJECT_CREATE_FAILED_NO_DIAGNOSTIC: exit=$($createResult.ExitCode)"
             }
             throw "FIREBASE_PROJECT_CREATE_FAILED: exit=$($createResult.ExitCode): $createDiagnostic"
         }
+        Set-S3MapValue -Map $resource -Name 'ownershipProof' -Value 'CREATE_SUCCEEDED'
         Set-S3MapValue -Map $resource -Name 'provisioningStatus' -Value 'PROJECT_CREATED'
         Write-S3State -Root $Context.Root -State $Context.State
         $billingProof = Assert-S3GoogleNoBilling -Context $Context -ProjectId $projectId
@@ -404,7 +410,10 @@ function Remove-S3FirebaseProject {
         $suffix = ($Context.RunId -replace '[^a-z0-9-]','').ToLowerInvariant()
         if ($suffix.Length -gt 20) { $suffix = $suffix.Substring($suffix.Length-20) }
         if ($projectId -ne "s3cpu-$suffix") { throw 'FIREBASE_PROJECT_ID_NOT_DETERMINISTIC' }
-        if ((Get-S3MapValue -Map $resource -Name 'preCreateAbsence') -ne 'PASS') { throw 'FIREBASE_PROJECT_OWNERSHIP_PROOF_MISSING' }
+        $ownershipProof = [string](Get-S3MapValue -Map $resource -Name 'ownershipProof')
+        $legacyPreCreateAbsence = [string](Get-S3MapValue -Map $resource -Name 'preCreateAbsence')
+        $legacyOwnership = [string]::IsNullOrWhiteSpace($ownershipProof) -and $legacyPreCreateAbsence -eq 'PASS'
+        if ($ownershipProof -ne 'CREATE_SUCCEEDED' -and -not $legacyOwnership) { throw 'FIREBASE_PROJECT_OWNERSHIP_PROOF_MISSING' }
         $presence = Get-S3FirebaseProjectPresence -Context $Context -ProjectId $projectId
         if ($presence -eq 'ABSENT') {
             Set-S3MapValue -Map $resource -Name 'cleanupStatus' -Value 'ALREADY_ABSENT'
