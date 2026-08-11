@@ -65,11 +65,11 @@ Gate 0 repository-only. لا Cloud write، ولا Firebase write، ولا D1 cre
 
 | مجموعة API | authentication | server-side authorization | UI وحده كافٍ؟ |
 |---|---|---|---|
-| Customer | Firebase ID Token صالح | allowlist + customer scope | لا |
-| Work | Firebase ID Token صالح | allowlist + customer/work relation | لا |
-| Work relationship | Firebase ID Token صالح | allowlist + parent/child validation | لا |
-| Catalog mutation | Firebase ID Token صالح | role/policy مسجلة، مع audit | لا |
-| History/warning/similar read | Firebase ID Token صالح | allowlist + نطاق القراءة | لا |
+| Customer | Firebase ID Token صالح | allowlist + سياسة العملية من جهة الخادم، دون افتراض row/customer ownership | لا |
+| Work | Firebase ID Token صالح | allowlist + الدور/العملية المعتمدة + علاقة validated عند الحاجة | لا |
+| Work relationship | Firebase ID Token صالح | allowlist + تحقق relation من جهة الخادم، دون اختراع ownership | لا |
+| Catalog mutation | Firebase ID Token صالح | allowlist/role enforcement الموجود + audit؛ لا admin role جديد | لا |
+| History/warning/similar read | Firebase ID Token صالح | allowlist + سياسة القراءة من جهة الخادم | لا |
 
 رفض المستخدم الثالث، unknown user، invalid signature، unknown `kid`، invalid claims، وdirect D1 access تبقى ضمن regression S3 ولا تعاد كـLive acceptance.
 
@@ -77,15 +77,15 @@ Gate 0 repository-only. لا Cloud write، ولا Firebase write، ولا D1 cre
 
 يستخدم S4 audit infrastructure الموجود ولا ينشئ نظامًا موازيًا. كل mutation ذات أثر على customer أو work أو relationship أو catalog أو documented fact تسجل actor وtimestamp وbefore وafter حيث ينطبق، مع request/correlation marker وفق عقد S3. يبقى السجل append-only وtamper-resistant، ولا يسمح S4 بتقليل ضمانات `audit_log` أو bypassing Worker.
 
-العمليات المخطط لتدقيقها هي: create/update customer، create/update work، change work relationship، catalog mutation، وإضافة أو تعديل documented fact/warning projection. القراءة لا تنتج audit mutation إلا إذا حسمت المتطلبات ذلك لاحقًا؛ لا يخترع Gate 0 قاعدة قراءة جديدة.
+العمليات المخطط لتدقيقها هي: create/update customer، create/update work، change work relationship، catalog mutation، وإضافة أو تعديل documented fact. `CustomerWarningProjection` مشتق deterministic من documented facts وليس mutation مستقلة يحررها المستخدم؛ لذلك يسجل audit mutation للـfact ومصدرها، ولا يحول projection إلى warning يدوي قابل للتعديل. القراءة لا تنتج audit mutation إلا إذا حسمت المتطلبات ذلك لاحقًا؛ لا يخترع Gate 0 قاعدة قراءة جديدة.
 
 يجب أن يفشل التغيير إذا تعذر تسجيل audit، أو أن يثبت transaction boundary أن mutation وaudit نجحا معًا. اختبار Gate 1 يثبت actor/time/before/after، ورفض التلاعب، ورفض actor غير المصرح به، وعدم فقد السجل السابق.
 
 ## 9. Catalog contract
 
-`country`, `specialty`, و`work_type` قيم data-driven وليست enum ثابتًا في source code. لكل قيمة identity ثابتة وdisplay label وuniqueness، وتحدد Gate 1 سياسة active/inactive وreferential integrity قبل البرمجة. لا تُحذف قيمة مستخدمة حذفًا يكسر السجلات؛ التعطيل أو البديل يحتاج عقدًا صريحًا.
+`country`, `specialty`, و`work_type` قيم data-driven وليست enum ثابتًا في source code. لكل قيمة identity ثابتة وdisplay label وuniqueness، وتحدد Gate 1 uniqueness وreferential integrity قبل البرمجة. يتطلب `AC-13` add/read/use دون source-code change؛ أما activate/deactivate أو lifecycle إضافي فليس جزءًا إلزاميًا من S4 إلا إذا أثبته المرجع أو كان ضروريًا لسلامة البيانات، ولا يُنشئ Gate 1 admin role جديدًا.
 
-يجب أن يثبت `AC-13` سيناريو إضافة دولة أو تخصص أو نوع عمل جديد ثم استخدامه **دون تعديل source code**. لا تضيف S4 شاشة إدارة عامة أو صلاحيات إدارية جديدة لم يطلبها المرجع؛ يجب أن تحدد authorization لعملية catalog mutation قبل Gate 1.
+يجب أن يثبت `AC-13` سيناريو إضافة دولة أو تخصص أو نوع عمل جديد ثم استخدامه **دون تعديل source code**. لا تضيف S4 شاشة إدارة عامة أو صلاحيات إدارية جديدة لم يطلبها المرجع. تستخدم catalog mutation server-side allowlist/role enforcement الموجود؛ وإذا بقي تقييد منتج حقيقي غير محسوم، تُعزل mutation المتأثرة فقط دون إيقاف بقية Gate 1.
 
 ## 10. Customer history contract
 
@@ -115,7 +115,7 @@ documented fact -> deterministic warning projection
 | self-parent | رفض صريح |
 | circular relation | رفض بعد كشف cycle |
 | cross-customer parent | رفض لأن customer scope لا يطابق |
-| parent inactive/archived | يعتمد Gate 1 policy صريحة؛ لا افتراض تلقائي |
+| parent inactive/archived | خارج سلوك S4 التنفيذي لأنه lifecycle تابع لـS5؛ لا يكون Gate 1 blocker |
 | duplicate relation | idempotent read أو رفض duplicate دون سجل ثانٍ |
 
 لا ينفذ S4 event history أو status history أو timeline أو archiving behavior؛ هذه حدود S5.
@@ -146,7 +146,7 @@ S4 يعرّف current/basic status representation فقط، بما يكفي لإ�
 
 `FR-016` يخطط لأقل عقد قراءة للعثور على أعمال سابقة مشابهة ومعرفة السعر الذي نُفذت به وتاريخها ونوعها، لكنه لا يبني S6. لذلك Gate 0 يفصل `similar-work read` عن price movements وapprovals وshares وrecalculation.
 
-إذا أثبت Word وجود basic/legacy price field يمكن قراءته دون إنشاء S6، يوثق Gate 1 مصدره بوصفه read-only historical fact. إذا لم يوجد مصدر صالح أو احتاج السلوك إلى price movement model أو قرار منتج جديد، يسجل تحت `UNRESOLVED PRODUCT DECISION`، ولا ينفذ Gate 1 السلوك المتأثر قبل حسمه. لا يُستنتج من أمثلة السعر في المتطلبات أن S4 مخولة ببناء pricing workflow.
+إذا أثبت Word أو البنية الحالية وجود authoritative price source يمكن قراءته دون إنشاء S6، يخطط Gate 1 لقراءته بوصفه read-only historical fact مع بيانات synthetic. إنشاء أو تعديل مصدر السعر يبقى S6. إذا لم يوجد مصدر صالح أو احتاج السلوك إلى قرار منتج حقيقي غير موجود، يعزل الجزء المتأثر تحت `UNRESOLVED PRODUCT DECISION` ويستمر تنفيذ بقية Gate 1؛ لا يُستنتج من أمثلة السعر في المتطلبات أن S4 مخولة ببناء pricing workflow.
 
 ## 16. S5/S6/S7/S8/S9/S11 boundaries
 
@@ -170,7 +170,7 @@ S4 يعرّف current/basic status representation فقط، بما يكفي لإ�
 | FR-001 | إنشاء عميل وحفظ بياناته وتاريخه | هوية وبيانات customer | Customer service/API | create/read/update | duplicate/unauthorized | request/response + audit | S5/S7 | no payment engine | field semantics |
 | FR-002 | ربط العميل بعدة أعمال مستقلة | customer-work relation | Work service | two works same customer | cross-customer/merge | stable IDs and links | S5/S7 | no work merge | none |
 | FR-003 | عمل بلا سعر وقائمة متابعة | `PRICE_UNSET` distinct | Work create + follow-up projection | create unset and list | zero conflation | evidence of preserved work | S6 | no pricing workflow | none |
-| FR-004 | مستقل أو تابع | parent/child relation | relationship validator | independent/child pair | missing/self/cycle/cross-customer | relation result + rejection logs | S5 | no event history | parent archived policy |
+| FR-004 | مستقل أو تابع | parent/child relation | relationship validator | independent/child pair | missing/self/cycle/cross-customer | relation result + rejection logs | S5 | no event history | parent lifecycle خارج S4 |
 | FR-005 | حفظ التفاصيل الأساسية | fields and catalog refs | Work contract | all field combinations | invalid refs | persisted fields + validation | S5/S8 | no history/import | requiredness from Word |
 | FR-006 | منع generic-only when details available | hard/soft distinction | validation layer | detailed vs generic | forbidden hard rejection of allowed missing | validation matrix | S5/S8 | no extra mandatory rules | exact field semantics |
 | FR-014 | warning from history | deterministic projection | fact/warning read model | fact creates warning | warning without fact | warning + evidence source | S7 | no scoring/AI | allowed fact types from Word |
@@ -218,28 +218,30 @@ S4 يعرّف current/basic status representation فقط، بما يكفي لإ�
 
 ## 20. Gate 1 prerequisites
 
-لا يبدأ Gate 1 قبل تحقق جميع الشروط التالية: مراجعة هذا العقد واعتماده؛ وجود implementation location وtest plan وacceptance evidence لكل عنصر في acceptance map؛ حسم requiredness من Word؛ حسم سياسة parent archived؛ حسم مصدر `FR-016` السعري أو تسجيله unresolved؛ حسم authorization لـcatalog mutation؛ تحديد concurrency policy؛ وتحديد شكل audit correlation مع S3.
+بعد دمج Gate 0 يجوز بدء Gate 1. في بدايته يجب مراجعة هذا العقد، وتثبيت implementation location وtest plan وacceptance evidence لكل عنصر في acceptance map. تُحسم requiredness من Word قبل تنفيذ الجزء المتأثر، وتُحسم schema details وconcurrency/version وaudit correlation من البنية الحالية بأقل تغيير متوافق، ولا تعد هذه البنود توقفًا إشرافيًا ما لم يظهر تعارض حقيقي. parent archived خارج سلوك S4 لأنه lifecycle تابع لـS5، ولا يكون Gate 1 blocker. يبقى `FR-016` read-only؛ فإذا وُجد authoritative price source يخطط Gate 1 لقراءته فقط، وإذا احتاج السلوك مصدرًا أو قرارًا غير موجود يعزل الجزء المتأثر دون إيقاف بقية Gate 1. تستخدم catalog mutation allowlist/role enforcement الموجود، ولا يُخترع admin role جديد؛ وأي قرار منتج حقيقي غير موجود يعزل mutation المتأثرة فقط.
 
 كما يجب أن يكون Gate 1 PR منفصلًا ومحصورًا في implementation S4، مع schema/migration review، API tests، server-side authorization tests، audit tests، synthetic-only data، وعدم Cloud deployment إلا بتفويض مستقل لاحق. Gate 1 لا يبدأ من branch جديد قبل مراجعة ودمج Gate 0؛ يبدأ من merge SHA الناتج.
 
 ## 21. Unresolved decisions
 
+تفصل Gate 1 بين قرارات تقنية يمكن حسمها ذاتيًا من Word أو من البنية الحالية في بدايتها، وقرارات منتج حقيقية غير موجودة في المرجع. القرارات التقنية لا توقف Gate 1؛ تُوثق قبل تنفيذ الجزء المتأثر. أما القرار المنتج الحقيقي فيعزل السلوك المتأثر فقط ولا يوقف بقية Gate 1، ولا تُخترع قاعدة بديلة.
+
 العناصر التالية لا تُحسم في Gate 0 ولا تتحول إلى قواعد تنفيذية:
 
 | القرار | سبب بقائه غير محسوم |
 |---|---|
-| required/optional/required-if-known لكل حقول `FR-005/FR-006` | يجب مطابقة Word الحاكم حرفيًا عند Gate 1 |
-| مصدر basic/legacy price لـ`FR-016` | منع تسرب S6 إلى S4 |
-| taxonomy الدقيق للوقائع التي تنتج warnings | يجب ألا يتجاوز ما يثبته Word |
-| سياسة catalog mutation authorization | لا توجد حاجة لاختراع admin feature |
-| parent archived behavior | يتطلب قرار lifecycle لا يسمح Gate 0 باختراعه |
-| concurrency/version policy | تُحدد مع schema/API في Gate 1 |
-| شكل correlation marker مع audit S3 | يجب الحفاظ على البنية القائمة |
+| required/optional/required-if-known لكل حقول `FR-005/FR-006` | يُحسم من Word في بداية Gate 1 قبل الجزء المتأثر؛ لا يتحول available/known إلى hard reject بلا سند |
+| مصدر authoritative price لـ`FR-016` | read-only في S4؛ يعزل الجزء المتأثر إذا لم يوجد مصدر معتمد ولا يبني S6 |
+| taxonomy الوقائع التي تنتج warnings | يجب ألا يتجاوز ما يثبته Word؛ يعزل projection المتأثرة إن بقي غموض حقيقي |
+| سياسة catalog mutation authorization | تستخدم allowlist/role enforcement الموجود؛ لا admin role جديد، وتعزل mutation فقط عند حاجة قرار منتج |
+| parent archived behavior | خارج سلوك S4 وضمن lifecycle لاحق؛ لا يكون Gate 1 blocker |
+| concurrency/version policy | قرار تقني من البنية الحالية في بداية Gate 1 |
+| شكل correlation marker مع audit S3 | قرار تقني يحافظ على البنية الحالية في بداية Gate 1 |
 | `Q-001` إلى `Q-004` | قرارات لاحقة تخص S6/S7 ولا يجوز افتراضها |
 
 ## 22. Forbidden assumptions
 
-لا يُفترض أن `PRICE_ZERO` يساوي `PRICE_UNSET`. لا يُفترض أن كل قيمة مفقودة hard error. لا يُفترض أن parent/child يبرر دمج السجلات. لا يُفترض أن warning يمكن إنشاؤه يدويًا. لا يُفترض وجود price history صالح لـ`FR-016` خارج S6. لا يُفترض أن S3 Live مكتملة أو أن D1/Worker/Audit أو CPU/Telemetry اجتازت؛ `D-008` يمنع ذلك. لا يُفترض وجود بيانات تاريخية قابلة للاستيراد. لا يُفترض أن قائمة ثابتة في source code تحقق `AC-13`. لا يُفترض أن UI authorization يحمي API. لا يُفترض rounding أو payment أو settlement أو approval behavior.
+لا يُفترض أن `PRICE_ZERO` يساوي `PRICE_UNSET`. لا يُفترض أن كل قيمة مفقودة hard error. لا يُفترض أن parent/child يبرر دمج السجلات. لا يُفترض أن warning يمكن إنشاؤه يدويًا. لا يُفترض وجود price source صالح لـ`FR-016` داخل S4؛ وإذا كان authoritative source موجودًا فالمسموح قراءة فقط. لا يُفترض أن S3 Live مكتملة أو أن D1/Worker/Audit أو CPU/Telemetry اجتازت؛ `D-008` يمنع ذلك. لا يُفترض وجود بيانات تاريخية قابلة للاستيراد. لا يُفترض أن قائمة ثابتة في source code تحقق `AC-13`. لا يُفترض أن UI authorization يحمي API. لا يُفترض rounding أو payment أو settlement أو approval behavior.
 
 ## 23. Planned PR structure
 
