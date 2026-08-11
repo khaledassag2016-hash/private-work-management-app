@@ -128,7 +128,7 @@ test('S4 catalogs are data-driven and facts produce deterministic warnings and h
     await assert.rejects(createCatalogValue(env, 'uid-one', 'catalog-duplicate-1', 'country', { value_key: 'SA', label: 'Duplicate' }), /CATALOG_DUPLICATE/);
     const customer = await createCustomer(env, 'uid-one', 'customer-create-5', customerInput());
     const work = await createWork(env, 'uid-two', 'work-create-5', workInput(customer.id));
-    const fact = await createDocumentedFact(env, 'uid-one', 'fact-create-1', { customer_id: customer.id, work_id: work.id, fact_type: 'NON_PAYMENT', source_ref: 'synthetic-payment-record-1', happened_at: '2026-01-02T00:00:00Z', details: { note: 'synthetic unpaid fact' } });
+    const fact = await createDocumentedFact(env, 'uid-one', 'fact-create-1', { customer_id: customer.id, work_id: work.id, fact_type: 'NON_PAYMENT', source_ref: 'synthetic-payment-record-1', happened_at: '2026-01-02T00:00:00.000Z', details: { note: 'synthetic unpaid fact' } });
     const history = await getCustomerHistory(env, customer.id);
     const warnings = await getCustomerWarnings(env, customer.id);
     assert.equal(history.length, 1);

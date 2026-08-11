@@ -101,6 +101,24 @@ async function allowed(env, uid) {
 }
 
 function nowIso() { return new Date().toISOString(); }
+const CUSTOMER_STATUS_FACT_MAP = Object.freeze({ NON_PAYMENT: 'unpaid', DELAY: 'frequent_delay', BLOCKED: 'blocked', DISPUTE: 'dispute' });
+const WORK_STATUS_ALLOWLIST = Object.freeze([
+  'NEW_REQUEST',
+  'REQUIREMENT_REVIEW',
+  'NEEDS_PRICING',
+  'WAITING_CLIENT_RESPONSE',
+  'NEEDS_FOLLOW_UP',
+  'AGREED',
+  'IN_PROGRESS',
+  'WAITING_CUSTOMER_INFO',
+  'WAITING_REVIEW',
+  'REVISION_REQUIRED',
+  'PAUSED',
+  'CANCELLED_BEFORE_EXECUTION',
+  'PARTIALLY_STOPPED',
+  'COMPLETED',
+  'DELIVERED',
+]);
 function newId(prefix) { return `${prefix}-${crypto.randomUUID()}`; }
 function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 function requiredString(value, code) {
@@ -108,9 +126,27 @@ function requiredString(value, code) {
   return value.trim();
 }
 function optionalString(value, code) {
-  if (value === undefined || value === null || value === '') return null;
+  if (value === undefined || value === null) return null;
   if (typeof value !== 'string') throw new DomainError(code, 400);
-  return value.trim();
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+function canonicalFactTimestamp(value) {
+  const raw = requiredString(value, 'FACT_TIME_REQUIRED');
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})Z$/.test(raw)) throw new DomainError('FACT_TIME_INVALID', 400);
+  const date = new Date(raw);
+  if (!Number.isFinite(date.getTime()) || date.toISOString() !== raw) throw new DomainError('FACT_TIME_INVALID', 400);
+  return raw;
+}
+function validateCustomerStatus(value) {
+  const status = value === undefined ? 'normal' : requiredString(value, 'CUSTOMER_STATUS_INVALID');
+  if (status !== 'normal') throw new DomainError('CUSTOMER_STATUS_DERIVED', 400);
+  return status;
+}
+function validateWorkStatus(value, fallback = 'NEW_REQUEST') {
+  const status = value === undefined ? fallback : requiredString(value, 'WORK_STATUS_INVALID');
+  if (!WORK_STATUS_ALLOWLIST.includes(status)) throw new DomainError('WORK_STATUS_INVALID', 400);
+  return status;
 }
 function positiveVersion(value) {
   if (!Number.isInteger(value) || value < 1) throw new DomainError('VERSION_REQUIRED', 400);
@@ -148,6 +184,15 @@ async function executeBatch(env, statements) {
 function customerAfter(input, id, actorUid, createdAt) {
   return { id, name: input.name ?? null, contact: input.contact ?? null, country: input.country ?? null, university: input.university ?? null, specialty: input.specialty ?? null, notes: input.notes ?? null, status: input.status ?? 'normal', created_by: actorUid, created_at: createdAt, updated_by: actorUid, updated_at: createdAt, version: 1 };
 }
+async function getCustomerRaw(env, id) {
+  const row = await env.DB.prepare('SELECT * FROM customers WHERE id = ?1').bind(id).first();
+  if (!row) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
+  return row;
+}
+async function projectCustomerStatus(env, row) {
+  const fact = await env.DB.prepare('SELECT fact_type FROM documented_facts WHERE customer_id=?1 ORDER BY happened_at DESC,id DESC LIMIT 1').bind(row.id).first();
+  return { ...row, status: CUSTOMER_STATUS_FACT_MAP[fact?.fact_type] || 'normal' };
+}
 
 export async function createCustomer(env, actorUid, requestId, input) {
   await ensureActor(env, actorUid);
@@ -157,7 +202,7 @@ export async function createCustomer(env, actorUid, requestId, input) {
   const university = optionalString(input.university, 'CUSTOMER_UNIVERSITY_INVALID');
   const specialty = optionalString(input.specialty, 'CUSTOMER_SPECIALTY_INVALID');
   const notes = optionalString(input.notes, 'CUSTOMER_NOTES_INVALID');
-  const status = input.status === undefined ? 'normal' : requiredString(input.status, 'CUSTOMER_STATUS_INVALID');
+  const status = validateCustomerStatus(input.status);
   if (country) await catalogExists(env, 'country', country);
   if (specialty) await catalogExists(env, 'specialty', specialty);
   const id = newId('customer'); const createdAt = nowIso();
@@ -166,30 +211,31 @@ export async function createCustomer(env, actorUid, requestId, input) {
     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?9,?10,1)`).bind(id, name, contact, country, university, specialty, notes, status, actorUid, createdAt);
   const audit = auditStatement(env, 'customer', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
   await executeBatch(env, [mutation, audit]);
-  return after;
+  return projectCustomerStatus(env, after);
 }
 
 export async function getCustomer(env, id) {
-  const row = await env.DB.prepare('SELECT * FROM customers WHERE id = ?1').bind(id).first();
-  if (!row) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
-  return row;
+  return projectCustomerStatus(env, await getCustomerRaw(env, id));
 }
 
 export async function listCustomers(env, query = '') {
   const q = typeof query === 'string' ? query.trim() : '';
-  if (!q) return (await env.DB.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 100').all()).results || [];
-  return (await env.DB.prepare('SELECT * FROM customers WHERE name LIKE ?1 OR university LIKE ?1 OR specialty LIKE ?1 ORDER BY created_at DESC LIMIT 100').bind(`%${q}%`).all()).results || [];
+  const result = !q
+    ? (await env.DB.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 100').all()).results || []
+    : (await env.DB.prepare('SELECT * FROM customers WHERE name LIKE ?1 OR university LIKE ?1 OR specialty LIKE ?1 ORDER BY created_at DESC LIMIT 100').bind(`%${q}%`).all()).results || [];
+  return Promise.all(result.map(row => projectCustomerStatus(env, row)));
 }
 
 export async function updateCustomer(env, actorUid, requestId, id, input) {
   await ensureActor(env, actorUid);
-  const before = await getCustomer(env, id);
+  const before = await getCustomerRaw(env, id);
   const version = positiveVersion(input.version);
   if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
   const next = { ...before };
-  for (const key of ['name', 'contact', 'country', 'university', 'specialty', 'notes', 'status']) {
-    if (input[key] !== undefined) next[key] = key === 'status' ? requiredString(input[key], 'CUSTOMER_STATUS_INVALID') : optionalString(input[key], `CUSTOMER_${key.toUpperCase()}_INVALID`);
+  for (const key of ['name', 'contact', 'country', 'university', 'specialty', 'notes']) {
+    if (input[key] !== undefined) next[key] = optionalString(input[key], `CUSTOMER_${key.toUpperCase()}_INVALID`);
   }
+  next.status = validateCustomerStatus(input.status);
   if (next.country) await catalogExists(env, 'country', next.country);
   if (next.specialty) await catalogExists(env, 'specialty', next.specialty);
   const updatedAt = nowIso();
@@ -199,7 +245,7 @@ export async function updateCustomer(env, actorUid, requestId, id, input) {
   const audit = auditStatement(env, 'customer', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
   const results = await executeBatch(env, [mutation, audit]);
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
-  return after;
+  return projectCustomerStatus(env, after);
 }
 
 async function validateWorkInput(env, input, current = null) {
@@ -216,7 +262,7 @@ async function validateWorkInput(env, input, current = null) {
   else if (input.quantity === null) quantity = null;
   else if (Number.isInteger(input.quantity) && input.quantity >= 1) quantity = input.quantity;
   else throw new DomainError('QUANTITY_INVALID', 400);
-  const status = input.status === undefined && current ? current.status : (input.status === undefined ? 'NEW_REQUEST' : requiredString(input.status, 'WORK_STATUS_INVALID'));
+  const status = validateWorkStatus(input.status, current?.status || 'NEW_REQUEST');
   const parentWorkId = input.parent_work_id === undefined && current ? current.parent_work_id : optionalString(input.parent_work_id, 'PARENT_WORK_INVALID');
   const relationshipKind = input.relationship_kind === undefined && current ? current.relationship_kind : (input.relationship_kind === undefined ? 'INDEPENDENT' : requiredString(input.relationship_kind, 'RELATIONSHIP_KIND_INVALID').toUpperCase());
   if (!['INDEPENDENT', 'CHILD'].includes(relationshipKind)) throw new DomainError('RELATIONSHIP_KIND_INVALID', 400);
@@ -324,7 +370,7 @@ export async function createDocumentedFact(env, actorUid, requestId, input) {
   const factType = requiredString(input.fact_type, 'FACT_TYPE_REQUIRED');
   if (!['NON_PAYMENT', 'DELAY', 'BLOCKED', 'DISPUTE'].includes(factType)) throw new DomainError('FACT_TYPE_UNSUPPORTED', 400);
   const sourceRef = requiredString(input.source_ref, 'FACT_SOURCE_REQUIRED');
-  const happenedAt = requiredString(input.happened_at, 'FACT_TIME_REQUIRED');
+  const happenedAt = canonicalFactTimestamp(input.happened_at);
   const details = asObject(input.details);
   const id = newId('fact'); const createdAt = nowIso();
   const after = { id, customer_id: customerId, work_id: workId, fact_type: factType, source_ref: sourceRef, details_json: details, happened_at: happenedAt, created_by: actorUid, created_at: createdAt, version: 1 };
