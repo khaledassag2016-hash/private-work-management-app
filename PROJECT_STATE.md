@@ -266,3 +266,25 @@
 - Current main `35fb31cd406784d75e5eb43613a1a1900a66c5aa` is **NOT promoted to stable merely because it is the current main tip**.
 - Issue #2: **OPEN**. S3: **INCOMPLETE**. Live CPU Gate: **NOT COMPLETED**.
 - This administrative update performs: **NO STABLE REF MOVEMENT**, **NO TAG CREATION**, **NO CLOUD WRITE**, **NO FIREBASE WRITE**, **NO CLOUDFLARE WRITE**, **NO DEPLOYMENT**, **NO BILLING OPERATION**, **NO SECRET OPERATION**, **NO DIRECT MAIN EDIT**, and **NO FORCE-PUSH**.
+
+## S3 administrative closure and supervised transition to S4 — 2026-08-11
+
+- PR #55 — `Fix Firebase readiness probe authentication` — final head: `b07c4f75bad84c5393c7a9eacb2652661011bb83`.
+- PR #55 was merged by Squash at `083c3c6aa215e0ca1b8e4ac190b0b370d0ce1a63`.
+- Final-head `S3 CPU Gate Static` after merge: run `31519959705` — **SUCCESS**.
+- The final Live Run was `s3cpu-20260811-205953-6d729287`.
+- Live result: `FIREBASE_ADD_READINESS_TIMEOUT` after Firebase Management REST returned HTTP `403` across `25` readiness attempts.
+- Firebase project creation, IAM readiness, and provider ownership proof were successful; `firebaseBackendReady` remained `false`.
+- D1 / Worker / Audit and CPU / Telemetry were `NOT_REACHED`; no PASS is recorded for any of them.
+- The attached final evidence was reviewed: `state.json` matches the Run ID, repository commit, Firebase readiness timeout, HTTP `403`, attempt count, ownership proof, and cleanup intent. `resource-destruction.md` records Cloudflare `NOT_CREATED`, Firebase `DELETE_REQUESTED`, environment `PASS`, temp and runtime-secret clearing, and zero cleanup errors.
+- The `state.json` snapshot remains at the last persisted checkpoint `40_PRE_CLOUD_GATE`; the terminal failure is recorded in its `failure` and resource result fields and is not converted into a success state.
+- `SECTION1_CLOSED = FALSE`.
+- `S3_COMPLETE = FALSE`.
+- `S3_STATUS = CLOSED-BLOCKED/DEFERRED`.
+- The administrative closure is a supervised exception under which the current S3 execution cycle is closed as blocked/deferred because the approved Free/no-billing Live path exhausted its bounded attempt and encountered a provider readiness blocker. This does not claim that unexecuted D1 / Worker / Audit or CPU / Telemetry acceptance passed.
+- No further S3 Live Run or automatic S3 repair is authorized within this cycle. Reopening S3 Cloud acceptance requires a separate supervisory decision.
+- D-006 and D-007 remain unchanged. No stable ref was moved, created, or deleted.
+- `Issue #2` remains open until the administrative closure PR is merged and the explicit closure comment is posted.
+- `Issue #3` remains open. S4 is administratively authorized only as the next stage; no S4 implementation, branch, Gate 0, Gate 1, deployment, or Cloud write has started.
+- `S4_STATUS = AUTHORIZED_NOT_STARTED`.
+- `NEXT_ACTION = WAITING_FOR_SEPARATE_GATE_AUTHORIZATION`.
