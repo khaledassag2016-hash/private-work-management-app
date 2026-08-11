@@ -34,7 +34,11 @@ test('S4 Gate 2 UI includes clear PRICE_UNSET, fact-derived warning, and non-blo
   assert.match(source, /لن يُنشأ تحذير يدوي/);
   assert.match(source, /دون منع حفظ المعلومة المفقودة/);
   assert.match(source, /لم تعرض تفاصيل داخلية/);
-  assert.doesNotMatch(source, /risk percentage|AI classification|scoring/i);
+  assert.match(source, /DUPLICATE_CUSTOMER_AMBIGUITY/);
+  assert.match(source, /confirm_duplicate/);
+  assert.match(source, /FACT_SOURCE_REQUIRED/);
+  assert.match(source, /AUDIT_EVIDENCE_MISSING/);
+  assert.doesNotMatch(source, /risk percentage|AI classification|scoring|error\.message/i);
 });
 
 test('S4 Gate 2 Worker serves only requested static assets before auth while private API remains fail-closed', async () => {

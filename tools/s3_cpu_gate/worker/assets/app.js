@@ -33,6 +33,18 @@ const labels = {
   WORK_COUNTRY_REQUIRED: 'الدولة مطلوبة لكل عمل.',
   JSON_INVALID: 'تعذر قراءة بيانات الطلب. أعد المحاولة.',
   NETWORK_ERROR: 'تعذر الاتصال بالخدمة. تحقق من الشبكة ثم أعد المحاولة.',
+  HTTP_401: 'انتهت الجلسة أو يلزم تسجيل الدخول مجددًا.',
+  HTTP_403: 'لا تملك صلاحية تنفيذ هذه العملية.',
+  HTTP_404: 'السجل المطلوب غير موجود أو لم يعد متاحًا.',
+  HTTP_409: 'توجد حالة تعارض. حدّث البيانات ثم أعد المحاولة.',
+  MALFORMED_RESPONSE: 'تعذر التحقق من استجابة الخدمة بأمان. لم تُحفظ أي بيانات جديدة.',
+  FACT_SOURCE_REQUIRED: 'يلزم إدخال مصدر أو دليل للواقعة قبل حفظها.',
+  FACT_TIME_REQUIRED: 'يلزم إدخال وقت الواقعة الموثقة.',
+  CROSS_CUSTOMER_WORK: 'العمل المختار لا يتبع العميل الحالي.',
+  CATALOG_KIND_INVALID: 'نوع القائمة المطلوب غير مدعوم.',
+  AUDIT_EVIDENCE_MISSING: 'تعذر إثبات سجل التدقيق للعملية؛ لم تُعتمد النتيجة.',
+  PRICING_OUT_OF_SCOPE: 'تعديل السعر خارج نطاق هذه الواجهة في S4.',
+  DUPLICATE_CUSTOMER_AMBIGUITY: 'يوجد عميل باسم مماثل. راجع السجل قبل حفظ عميل جديد.',
   INTERNAL_ERROR: 'تعذر إكمال العملية بأمان. لم تعرض تفاصيل داخلية.',
 };
 
@@ -181,7 +193,10 @@ function modalMarkup() {
   return `<div class="dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><header class="dialog-head"><h2 id="dialog-title">${({ customer: data.id ? 'تعديل بيانات العميل' : 'إضافة عميل', work: data.id ? 'تعديل العمل' : 'إضافة عمل', catalog: 'إضافة قيمة للقائمة', fact: 'إضافة واقعة موثقة' }[type])}</h2><button class="close" data-action="close-modal" type="button" aria-label="إغلاق">×</button></header>${type === 'customer' ? customerForm(data) : type === 'work' ? workForm(data) : type === 'catalog' ? catalogForm(data) : factForm(data)}</section></div>`;
 }
 function options(kind, selected) { return `<option value="">— اختر عند توفر المعلومة —</option>${(state.catalogs[kind] || []).filter(item => item.active).map(item => `<option value="${escapeHtml(item.value_key)}" ${item.value_key === selected ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}`; }
-function customerForm(customer = {}) { return `<form id="customer-form"><input type="hidden" name="id" value="${escapeHtml(customer.id || '')}"/><input type="hidden" name="version" value="${escapeHtml(customer.version || '')}"/><div class="form-grid"><div class="field"><label>اسم العميل <span class="required">*</span></label><input class="input" name="name" value="${escapeHtml(customer.name || '')}" required/><span class="hint">إلزامي عند توفره وفق المرجع.</span></div><div class="field"><label>رقم التواصل</label><input class="input" name="contact" value="${escapeHtml(customer.contact || '')}" inputmode="tel"/></div><div class="field"><label>الدولة</label><select class="select" name="country">${options('country', customer.country)}</select></div><div class="field"><label>الجامعة</label><input class="input" name="university" value="${escapeHtml(customer.university || '')}"/><span class="hint">اختيارية عند عدم توفرها.</span></div><div class="field"><label>التخصص</label><select class="select" name="specialty">${options('specialty', customer.specialty)}</select><span class="hint">أدخله عند معرفته، دون منع حفظ المعلومة المفقودة.</span></div><div class="field"><label>الحالة الحالية</label><select class="select" name="status"><option value="normal" ${customer.status === 'normal' ? 'selected' : ''}>طبيعي</option><option value="needs_caution" ${customer.status === 'needs_caution' ? 'selected' : ''}>يحتاج حذر</option><option value="frequent_delay" ${customer.status === 'frequent_delay' ? 'selected' : ''}>تأخر متكرر</option><option value="partial_payment" ${customer.status === 'partial_payment' ? 'selected' : ''}>دفع جزئي</option><option value="unpaid" ${customer.status === 'unpaid' ? 'selected' : ''}>لم يدفع</option><option value="blocked" ${customer.status === 'blocked' ? 'selected' : ''}>حظر/انقطاع</option><option value="dispute" ${customer.status === 'dispute' ? 'selected' : ''}>نزاع</option><option value="discontinued" ${customer.status === 'discontinued' ? 'selected' : ''}>متوقف</option></select></div><div class="field full"><label>ملاحظات</label><textarea class="textarea" name="notes">${escapeHtml(customer.notes || '')}</textarea></div></div><div class="form-actions"><button class="button" type="submit">حفظ</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`; }
+function customerForm(customer = {}) {
+  const duplicates = state.modal?.duplicateCandidates || [];
+  const duplicateNotice = duplicates.length ? `<section class="notice warning" style="margin-bottom:1rem"><div><strong>يوجد عميل باسم مماثل.</strong><br/>${duplicates.map(item => `${escapeHtml(item.name || 'عميل دون اسم')} — ${escapeHtml(item.university || 'جامعة غير متاحة')}`).join('<br/>')}<br/><label><input type="checkbox" name="confirm_duplicate" value="yes" required/> راجعت السجلات وأؤكد أن هذا عميل جديد مستقل.</label></div></section>` : '';
+  return `<form id="customer-form">${duplicateNotice}<input type="hidden" name="id" value="${escapeHtml(customer.id || '')}"/><input type="hidden" name="version" value="${escapeHtml(customer.version || '')}"/><div class="form-grid"><div class="field"><label>اسم العميل <span class="required">*</span></label><input class="input" name="name" value="${escapeHtml(customer.name || '')}" required/><span class="hint">إلزامي عند توفره وفق المرجع.</span></div><div class="field"><label>رقم التواصل</label><input class="input" name="contact" value="${escapeHtml(customer.contact || '')}" inputmode="tel"/></div><div class="field"><label>الدولة</label><select class="select" name="country">${options('country', customer.country)}</select></div><div class="field"><label>الجامعة</label><input class="input" name="university" value="${escapeHtml(customer.university || '')}"/><span class="hint">اختيارية عند عدم توفرها.</span></div><div class="field"><label>التخصص</label><select class="select" name="specialty">${options('specialty', customer.specialty)}</select><span class="hint">أدخله عند معرفته، دون منع حفظ المعلومة المفقودة.</span></div><div class="field"><label>الحالة الحالية</label><select class="select" name="status"><option value="normal" ${customer.status === 'normal' ? 'selected' : ''}>طبيعي</option><option value="needs_caution" ${customer.status === 'needs_caution' ? 'selected' : ''}>يحتاج حذر</option><option value="frequent_delay" ${customer.status === 'frequent_delay' ? 'selected' : ''}>تأخر متكرر</option><option value="partial_payment" ${customer.status === 'partial_payment' ? 'selected' : ''}>دفع جزئي</option><option value="unpaid" ${customer.status === 'unpaid' ? 'selected' : ''}>لم يدفع</option><option value="blocked" ${customer.status === 'blocked' ? 'selected' : ''}>حظر/انقطاع</option><option value="dispute" ${customer.status === 'dispute' ? 'selected' : ''}>نزاع</option><option value="discontinued" ${customer.status === 'discontinued' ? 'selected' : ''}>متوقف</option></select></div><div class="field full"><label>ملاحظات</label><textarea class="textarea" name="notes">${escapeHtml(customer.notes || '')}</textarea></div></div><div class="form-actions"><button class="button" type="submit">حفظ</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`; }
 function workForm(work = {}) {
   const customerId = work.customer_id || state.modal?.customerId || state.selectedCustomer?.id || '';
   const customerWorks = state.works.filter(item => item.customer_id === customerId && item.id !== work.id);
@@ -227,7 +242,32 @@ function bindModalForms() {
   document.querySelector('#fact-form')?.addEventListener('submit', submitFact);
   document.querySelector('#relationship-kind')?.addEventListener('change', event => { const field = document.querySelector('#parent-field'); field.hidden = event.target.value !== 'CHILD'; });
 }
-async function submitCustomer(event) { event.preventDefault(); const values = formObject(event.currentTarget); const body = { name: values.name, contact: nullable(values.contact), country: nullable(values.country), university: nullable(values.university), specialty: nullable(values.specialty), status: values.status, notes: nullable(values.notes) }; await submitFlow(async () => { const result = values.id ? await api(`/api/customers/${encodeURIComponent(values.id)}`, { method: 'PATCH', body: { ...body, version: Number(values.version) } }) : await api('/api/customers', { method: 'POST', body }); state.modal = null; await loadDashboard(); if (values.id) await openCustomer(result.id); else { state.view = 'customer'; await openCustomer(result.id); } toast('تم حفظ بيانات العميل.', ''); }); }
+async function submitCustomer(event) {
+  event.preventDefault();
+  const values = formObject(event.currentTarget);
+  const body = { name: values.name, contact: nullable(values.contact), country: nullable(values.country), university: nullable(values.university), specialty: nullable(values.specialty), status: values.status, notes: nullable(values.notes) };
+  await submitFlow(async () => {
+    if (!values.id && values.confirm_duplicate !== 'yes' && body.name) {
+      const candidates = await api(`/api/customers${queryString({ q: body.name })}`);
+      const normalizedName = body.name.trim().toLocaleLowerCase('ar');
+      const duplicates = candidates.filter(customer => String(customer.name || '').trim().toLocaleLowerCase('ar') === normalizedName);
+      if (duplicates.length) {
+        state.modal = { type: 'customer', data: body, duplicateCandidates: duplicates };
+        render();
+        toast(errorMessage('DUPLICATE_CUSTOMER_AMBIGUITY'), 'error');
+        return;
+      }
+    }
+    const result = values.id
+      ? await api(`/api/customers/${encodeURIComponent(values.id)}`, { method: 'PATCH', body: { ...body, version: Number(values.version) } })
+      : await api('/api/customers', { method: 'POST', body });
+    state.modal = null;
+    await loadDashboard();
+    if (values.id) await openCustomer(result.id);
+    else { state.view = 'customer'; await openCustomer(result.id); }
+    toast('تم حفظ بيانات العميل.', '');
+  });
+}
 async function submitWork(event) { event.preventDefault(); const values = formObject(event.currentTarget); const body = { customer_id: values.customer_id, title: values.title, country: values.country, university: nullable(values.university), specialty_key: nullable(values.specialty_key), work_type_key: nullable(values.work_type_key), subject_or_course_code: nullable(values.subject_or_course_code), status: values.status, quantity: values.quantity ? Number(values.quantity) : null, relationship_kind: values.relationship_kind, parent_work_id: values.relationship_kind === 'CHILD' ? nullable(values.parent_work_id) : null, description: nullable(values.description) }; await submitFlow(async () => { const result = values.id ? await api(`/api/works/${encodeURIComponent(values.id)}`, { method: 'PATCH', body: { ...body, version: Number(values.version) } }) : await api('/api/works', { method: 'POST', body }); state.modal = null; await loadDashboard(); await openWork(result.id); toast(values.id ? 'تم تحديث العمل.' : 'تم إنشاء العمل بسعر غير محدد.', ''); }); }
 async function submitCatalog(event) { event.preventDefault(); const values = formObject(event.currentTarget); await submitFlow(async () => { await api(`/api/catalog/${encodeURIComponent(values.kind)}`, { method: 'POST', body: { value_key: values.value_key, label: values.label } }); state.modal = null; await loadCatalogs(); render(); toast('أضيفت القيمة وأصبحت متاحة دون تعديل source code.', ''); }); }
 async function submitFact(event) { event.preventDefault(); const values = formObject(event.currentTarget); await submitFlow(async () => { await api('/api/facts', { method: 'POST', body: { customer_id: state.selectedCustomer.id, work_id: nullable(values.work_id), fact_type: values.fact_type, source_ref: values.source_ref, happened_at: new Date(values.happened_at).toISOString(), details: values.details ? { note: values.details } : {} } }); state.modal = null; await openCustomer(state.selectedCustomer.id); toast('تم حفظ الواقعة؛ سيظهر التحذير المشتق عند انطباقه.', ''); }); }
