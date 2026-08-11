@@ -137,6 +137,13 @@ try {
                 Copy-Item -LiteralPath $file.FullName -Destination $target -Force
             }
         }
+        $payloadStage = Join-Path $stageRoot 'workspace\repository_payload\tools\s3_cpu_gate'
+        $payloadDestination = Join-Path $RuntimeRoot 'workspace\repository_payload\tools\s3_cpu_gate'
+        if (Test-Path -LiteralPath $payloadDestination) {
+            Remove-Item -LiteralPath $payloadDestination -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $payloadDestination) -Force | Out-Null
+        Copy-Item -LiteralPath $payloadStage -Destination $payloadDestination -Recurse -Force
         [ordered]@{ status = 'PASS'; sourceRoot = $sourceRoot; runtimeRoot = $RuntimeRoot; stagedAtUtc = [DateTime]::UtcNow.ToString('o'); statePreserved = $true } |
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $RuntimeRoot 'config\runtime-staging.json') -Encoding UTF8
     }
