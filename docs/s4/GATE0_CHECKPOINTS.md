@@ -5,9 +5,9 @@
 | Checkpoint | المحتوى | commit |
 |---|---|---|
 | A | تثبيت baseline `main@207e53d5279f89ff3833e28d76ff3aa85708a3d5`، بصمة Word، ونطاق S4 | `1e16d1bc5366eb830c367fcecbc2f66b3c060038` |
-| B | domain/security/boundary contract: Customer/Work، parent/child، data constraints، authorization، audit، catalog، وحدود S5–S11 | يُسجل بعد commit هذا checkpoint |
-| C | acceptance/traceability/regression/failure contract، unresolved decisions، وGate 1 prerequisites | يُسجل بعد commit هذا checkpoint |
-| D | final validation، scope review، secret/no-real-data review، وPR-ready state | يُسجل قبل إنشاء PR |
+| B | domain/security/boundary contract: Customer/Work، parent/child، data constraints، authorization، audit، catalog، وحدود S5–S11 | `1e16d1bc5366eb830c367fcecbc2f66b3c060038` |
+| C | acceptance/traceability/regression/failure contract، unresolved decisions، وGate 1 prerequisites | `1e16d1bc5366eb830c367fcecbc2f66b3c060038` |
+| D | final validation، scope review، secret/no-real-data review، وPR-ready state | يُسجل في commit الإنهاء بعد اكتمال الفحوص |
 
 ## قواعد checkpoints
 
