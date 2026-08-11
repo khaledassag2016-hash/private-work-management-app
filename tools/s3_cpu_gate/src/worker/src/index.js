@@ -1,11 +1,27 @@
 const DEFAULT_CERT_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
 let certificateCache = { expiresAt: 0, certificates: null };
 
+class DomainError extends Error {
+  constructor(code, status = 400) {
+    super(code);
+    this.name = 'DomainError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
 function reject(status, code, requestId, cacheState = 'none', runMarker = '', scenario = '') {
   const s3Correlation = { runId: runMarker, requestId, scenario };
   console.log(JSON.stringify({ event: 'auth_result', requestId, code, cacheState, allowed: false, runId: runMarker, scenario, s3Correlation }));
   return Response.json({ ok: false, code, requestId }, { status });
 }
+
+function jsonError(error, requestId, runMarker = '', scenario = '') {
+  const code = error instanceof DomainError ? error.code : 'INTERNAL_ERROR';
+  const status = error instanceof DomainError ? error.status : 500;
+  return reject(status, code, requestId, 'none', runMarker, scenario);
+}
+
 function b64urlBytes(value) {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
   const raw = atob(padded); const bytes = new Uint8Array(raw.length);
@@ -78,9 +94,260 @@ async function verifyJwt(token, env) {
   if (typeof claims.sub !== 'string' || !claims.sub) throw new Error('SUB_INVALID');
   return { claims, cacheState: certSet.state };
 }
+
 async function allowed(env, uid) {
   const row = await env.DB.prepare('SELECT uid, role FROM app_users WHERE uid = ?1 AND active = 1').bind(uid).first();
   return row || null;
+}
+
+function nowIso() { return new Date().toISOString(); }
+function newId(prefix) { return `${prefix}-${crypto.randomUUID()}`; }
+function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+function requiredString(value, code) {
+  if (typeof value !== 'string' || value.trim() === '') throw new DomainError(code, 400);
+  return value.trim();
+}
+function optionalString(value, code) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') throw new DomainError(code, 400);
+  return value.trim();
+}
+function positiveVersion(value) {
+  if (!Number.isInteger(value) || value < 1) throw new DomainError('VERSION_REQUIRED', 400);
+  return value;
+}
+function allowedCatalogKind(kind) {
+  if (!['country', 'specialty', 'work_type'].includes(kind)) throw new DomainError('CATALOG_KIND_INVALID', 400);
+  return kind;
+}
+async function catalogExists(env, kind, key) {
+  if (!key) return true;
+  const row = await env.DB.prepare('SELECT id FROM catalog_values WHERE kind = ?1 AND value_key = ?2 AND active = 1').bind(kind, key).first();
+  if (!row) throw new DomainError('CATALOG_VALUE_INVALID', 400);
+  return true;
+}
+async function ensureActor(env, actorUid) {
+  const user = await allowed(env, actorUid);
+  if (!user) throw new DomainError('UID_NOT_ALLOWED', 403);
+  return user;
+}
+async function parseRequestJson(request) {
+  try { return asObject(await request.json()); } catch { throw new DomainError('JSON_INVALID', 400); }
+}
+function auditStatement(env, entityType, entityId, action, actorUid, before, after, runMarker, requestId, createdAt, conditional = false) {
+  const sql = conditional
+    ? `INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+       SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE changes() = 1`
+    : `INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`;
+  return env.DB.prepare(sql).bind(entityType, entityId, action, actorUid, createdAt, before === null ? null : JSON.stringify(before), JSON.stringify(after), runMarker, requestId);
+}
+async function executeBatch(env, statements) {
+  return env.DB.batch(statements);
+}
+function customerAfter(input, id, actorUid, createdAt) {
+  return { id, name: input.name ?? null, contact: input.contact ?? null, country: input.country ?? null, university: input.university ?? null, specialty: input.specialty ?? null, notes: input.notes ?? null, status: input.status ?? 'normal', created_by: actorUid, created_at: createdAt, updated_by: actorUid, updated_at: createdAt, version: 1 };
+}
+
+export async function createCustomer(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const name = optionalString(input.name, 'CUSTOMER_NAME_INVALID');
+  const contact = optionalString(input.contact, 'CUSTOMER_CONTACT_INVALID');
+  const country = optionalString(input.country, 'CUSTOMER_COUNTRY_INVALID');
+  const university = optionalString(input.university, 'CUSTOMER_UNIVERSITY_INVALID');
+  const specialty = optionalString(input.specialty, 'CUSTOMER_SPECIALTY_INVALID');
+  const notes = optionalString(input.notes, 'CUSTOMER_NOTES_INVALID');
+  const status = input.status === undefined ? 'normal' : requiredString(input.status, 'CUSTOMER_STATUS_INVALID');
+  if (country) await catalogExists(env, 'country', country);
+  if (specialty) await catalogExists(env, 'specialty', specialty);
+  const id = newId('customer'); const createdAt = nowIso();
+  const after = customerAfter({ name, contact, country, university, specialty, notes, status }, id, actorUid, createdAt);
+  const mutation = env.DB.prepare(`INSERT INTO customers(id,name,contact,country,university,specialty,notes,status,created_by,created_at,updated_by,updated_at,version)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?9,?10,1)`).bind(id, name, contact, country, university, specialty, notes, status, actorUid, createdAt);
+  const audit = auditStatement(env, 'customer', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
+  await executeBatch(env, [mutation, audit]);
+  return after;
+}
+
+export async function getCustomer(env, id) {
+  const row = await env.DB.prepare('SELECT * FROM customers WHERE id = ?1').bind(id).first();
+  if (!row) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
+  return row;
+}
+
+export async function listCustomers(env, query = '') {
+  const q = typeof query === 'string' ? query.trim() : '';
+  if (!q) return (await env.DB.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 100').all()).results || [];
+  return (await env.DB.prepare('SELECT * FROM customers WHERE name LIKE ?1 OR university LIKE ?1 OR specialty LIKE ?1 ORDER BY created_at DESC LIMIT 100').bind(`%${q}%`).all()).results || [];
+}
+
+export async function updateCustomer(env, actorUid, requestId, id, input) {
+  await ensureActor(env, actorUid);
+  const before = await getCustomer(env, id);
+  const version = positiveVersion(input.version);
+  if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
+  const next = { ...before };
+  for (const key of ['name', 'contact', 'country', 'university', 'specialty', 'notes', 'status']) {
+    if (input[key] !== undefined) next[key] = key === 'status' ? requiredString(input[key], 'CUSTOMER_STATUS_INVALID') : optionalString(input[key], `CUSTOMER_${key.toUpperCase()}_INVALID`);
+  }
+  if (next.country) await catalogExists(env, 'country', next.country);
+  if (next.specialty) await catalogExists(env, 'specialty', next.specialty);
+  const updatedAt = nowIso();
+  const mutation = env.DB.prepare(`UPDATE customers SET name=?1,contact=?2,country=?3,university=?4,specialty=?5,notes=?6,status=?7,updated_by=?8,updated_at=?9,version=version+1
+    WHERE id=?10 AND version=?11`).bind(next.name, next.contact, next.country, next.university, next.specialty, next.notes, next.status, actorUid, updatedAt, id, version);
+  const after = { ...next, updated_by: actorUid, updated_at: updatedAt, version: version + 1 };
+  const audit = auditStatement(env, 'customer', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
+  const results = await executeBatch(env, [mutation, audit]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
+  return after;
+}
+
+async function validateWorkInput(env, input, current = null) {
+  const title = input.title === undefined && current ? current.title : requiredString(input.title, 'WORK_TITLE_REQUIRED');
+  const customerId = input.customer_id === undefined && current ? current.customer_id : requiredString(input.customer_id, 'CUSTOMER_ID_REQUIRED');
+  const country = input.country === undefined && current ? current.country : requiredString(input.country, 'WORK_COUNTRY_REQUIRED');
+  const workTypeKey = input.work_type_key === undefined && current ? current.work_type_key : optionalString(input.work_type_key, 'WORK_TYPE_INVALID');
+  const specialtyKey = input.specialty_key === undefined && current ? current.specialty_key : optionalString(input.specialty_key, 'SPECIALTY_INVALID');
+  const subject = input.subject_or_course_code === undefined && current ? current.subject_or_course_code : optionalString(input.subject_or_course_code, 'SUBJECT_INVALID');
+  const university = input.university === undefined && current ? current.university : optionalString(input.university, 'UNIVERSITY_INVALID');
+  const description = input.description === undefined && current ? current.description : optionalString(input.description, 'DESCRIPTION_INVALID');
+  let quantity;
+  if (input.quantity === undefined) quantity = current ? current.quantity : null;
+  else if (input.quantity === null) quantity = null;
+  else if (Number.isInteger(input.quantity) && input.quantity >= 1) quantity = input.quantity;
+  else throw new DomainError('QUANTITY_INVALID', 400);
+  const status = input.status === undefined && current ? current.status : (input.status === undefined ? 'NEW_REQUEST' : requiredString(input.status, 'WORK_STATUS_INVALID'));
+  const parentWorkId = input.parent_work_id === undefined && current ? current.parent_work_id : optionalString(input.parent_work_id, 'PARENT_WORK_INVALID');
+  const relationshipKind = input.relationship_kind === undefined && current ? current.relationship_kind : (input.relationship_kind === undefined ? 'INDEPENDENT' : requiredString(input.relationship_kind, 'RELATIONSHIP_KIND_INVALID').toUpperCase());
+  if (!['INDEPENDENT', 'CHILD'].includes(relationshipKind)) throw new DomainError('RELATIONSHIP_KIND_INVALID', 400);
+  if (relationshipKind === 'INDEPENDENT' && parentWorkId) throw new DomainError('PARENT_FOR_INDEPENDENT', 400);
+  if (relationshipKind === 'CHILD' && !parentWorkId) throw new DomainError('PARENT_REQUIRED', 400);
+  const customer = await env.DB.prepare('SELECT id FROM customers WHERE id=?1').bind(customerId).first();
+  if (!customer) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
+  await catalogExists(env, 'country', country);
+  if (workTypeKey) await catalogExists(env, 'work_type', workTypeKey);
+  if (specialtyKey) await catalogExists(env, 'specialty', specialtyKey);
+  if (parentWorkId) {
+    if (current && parentWorkId === current.id) throw new DomainError('SELF_PARENT', 400);
+    const parent = await env.DB.prepare('SELECT id,customer_id,parent_work_id FROM works WHERE id=?1').bind(parentWorkId).first();
+    if (!parent) throw new DomainError('PARENT_NOT_FOUND', 404);
+    if (parent.customer_id !== customerId) throw new DomainError('CROSS_CUSTOMER_PARENT', 400);
+    const visited = new Set(); let cursor = parent;
+    while (cursor?.parent_work_id) {
+      if (visited.has(cursor.id)) throw new DomainError('PARENT_CYCLE', 400);
+      visited.add(cursor.id);
+      if (current && cursor.parent_work_id === current.id) throw new DomainError('PARENT_CYCLE', 400);
+      cursor = await env.DB.prepare('SELECT id,parent_work_id FROM works WHERE id=?1').bind(cursor.parent_work_id).first();
+    }
+  }
+  return { title, customerId, country, workTypeKey, specialtyKey, subject, university, description, quantity, status, parentWorkId, relationshipKind };
+}
+
+export async function createWork(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const validated = await validateWorkInput(env, input);
+  const priceState = input.price_state === undefined ? 'PRICE_UNSET' : requiredString(input.price_state, 'PRICE_STATE_INVALID');
+  if (!['PRICE_UNSET', 'PRICE_ZERO'].includes(priceState)) throw new DomainError('PRICE_STATE_INVALID', 400);
+  if (priceState === 'PRICE_ZERO' && input.price_minor_units !== 0) throw new DomainError('PRICE_ZERO_VALUE_REQUIRED', 400);
+  if (priceState === 'PRICE_UNSET' && input.price_minor_units !== undefined && input.price_minor_units !== null) throw new DomainError('PRICE_UNSET_VALUE_FORBIDDEN', 400);
+  const id = newId('work'); const createdAt = nowIso();
+  const after = { id, customer_id: validated.customerId, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, price_state: priceState, price_minor_units: priceState === 'PRICE_ZERO' ? 0 : null, created_by: actorUid, created_at: createdAt, updated_by: actorUid, updated_at: createdAt, version: 1 };
+  const mutation = env.DB.prepare(`INSERT INTO works(id,customer_id,parent_work_id,relationship_kind,title,work_type_key,specialty_key,subject_or_course_code,country,university,status,description,quantity,price_state,price_minor_units,created_by,created_at,updated_by,updated_at,version)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?16,?17,1)`).bind(id, after.customer_id, after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, after.price_state, after.price_minor_units, actorUid, createdAt);
+  const audit = auditStatement(env, 'work', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
+  await executeBatch(env, [mutation, audit]);
+  return after;
+}
+
+export async function getWork(env, id) {
+  const row = await env.DB.prepare('SELECT * FROM works WHERE id = ?1').bind(id).first();
+  if (!row) throw new DomainError('WORK_NOT_FOUND', 404);
+  return row;
+}
+
+export async function listWorks(env, query = {}) {
+  const clauses = []; const values = [];
+  for (const [key, value] of [['customer_id', query.customer_id], ['status', query.status], ['country', query.country], ['work_type_key', query.work_type_key], ['specialty_key', query.specialty_key]]) {
+    if (value) { values.push(value); clauses.push(`${key} = ?${values.length}`); }
+  }
+  const sql = `SELECT * FROM works ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT 200`;
+  return (await env.DB.prepare(sql).bind(...values).all()).results || [];
+}
+
+export async function updateWork(env, actorUid, requestId, id, input) {
+  await ensureActor(env, actorUid);
+  const before = await getWork(env, id);
+  const version = positiveVersion(input.version);
+  if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
+  if (input.price_state !== undefined || input.price_minor_units !== undefined) throw new DomainError('PRICING_OUT_OF_SCOPE', 400);
+  const validated = await validateWorkInput(env, { ...input, customer_id: before.customer_id }, before);
+  const updatedAt = nowIso();
+  const after = { ...before, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, updated_by: actorUid, updated_at: updatedAt, version: version + 1 };
+  const mutation = env.DB.prepare(`UPDATE works SET parent_work_id=?1,relationship_kind=?2,title=?3,work_type_key=?4,specialty_key=?5,subject_or_course_code=?6,country=?7,university=?8,status=?9,description=?10,quantity=?11,updated_by=?12,updated_at=?13,version=version+1 WHERE id=?14 AND version=?15`).bind(after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, actorUid, updatedAt, id, version);
+  const audit = auditStatement(env, 'work', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
+  const results = await executeBatch(env, [mutation, audit]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
+  return after;
+}
+
+export async function listCatalog(env, kind) {
+  allowedCatalogKind(kind);
+  return (await env.DB.prepare('SELECT * FROM catalog_values WHERE kind=?1 ORDER BY active DESC,label').bind(kind).all()).results || [];
+}
+
+export async function createCatalogValue(env, actorUid, requestId, kind, input) {
+  await ensureActor(env, actorUid);
+  allowedCatalogKind(kind);
+  const valueKey = requiredString(input.value_key, 'CATALOG_VALUE_REQUIRED');
+  const label = requiredString(input.label, 'CATALOG_LABEL_REQUIRED');
+  const existing = await env.DB.prepare('SELECT id FROM catalog_values WHERE kind=?1 AND value_key=?2').bind(kind, valueKey).first();
+  if (existing) throw new DomainError('CATALOG_DUPLICATE', 409);
+  const id = newId('catalog'); const createdAt = nowIso();
+  const after = { id, kind, value_key: valueKey, label, active: 1, created_by: actorUid, created_at: createdAt };
+  const mutation = env.DB.prepare('INSERT INTO catalog_values(id,kind,value_key,label,active,created_by,created_at) VALUES (?1,?2,?3,?4,1,?5,?6)').bind(id, kind, valueKey, label, actorUid, createdAt);
+  const audit = auditStatement(env, 'catalog_value', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
+  await executeBatch(env, [mutation, audit]);
+  return after;
+}
+
+export async function createDocumentedFact(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const customerId = requiredString(input.customer_id, 'CUSTOMER_ID_REQUIRED');
+  const customer = await env.DB.prepare('SELECT id FROM customers WHERE id=?1').bind(customerId).first();
+  if (!customer) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
+  const workId = optionalString(input.work_id, 'WORK_ID_INVALID');
+  if (workId) {
+    const work = await env.DB.prepare('SELECT id,customer_id FROM works WHERE id=?1').bind(workId).first();
+    if (!work) throw new DomainError('WORK_NOT_FOUND', 404);
+    if (work.customer_id !== customerId) throw new DomainError('CROSS_CUSTOMER_WORK', 400);
+  }
+  const factType = requiredString(input.fact_type, 'FACT_TYPE_REQUIRED');
+  if (!['NON_PAYMENT', 'DELAY', 'BLOCKED', 'DISPUTE'].includes(factType)) throw new DomainError('FACT_TYPE_UNSUPPORTED', 400);
+  const sourceRef = requiredString(input.source_ref, 'FACT_SOURCE_REQUIRED');
+  const happenedAt = requiredString(input.happened_at, 'FACT_TIME_REQUIRED');
+  const details = asObject(input.details);
+  const id = newId('fact'); const createdAt = nowIso();
+  const after = { id, customer_id: customerId, work_id: workId, fact_type: factType, source_ref: sourceRef, details_json: details, happened_at: happenedAt, created_by: actorUid, created_at: createdAt, version: 1 };
+  const mutation = env.DB.prepare('INSERT INTO documented_facts(id,customer_id,work_id,fact_type,source_ref,details_json,happened_at,created_by,created_at,version) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,1)').bind(id, customerId, workId, factType, sourceRef, JSON.stringify(details), happenedAt, actorUid, createdAt);
+  const audit = auditStatement(env, 'documented_fact', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
+  await executeBatch(env, [mutation, audit]);
+  return after;
+}
+
+export async function getCustomerHistory(env, customerId) {
+  await getCustomer(env, customerId);
+  return (await env.DB.prepare('SELECT id,work_id,fact_type,source_ref,details_json,happened_at,created_by,created_at FROM documented_facts WHERE customer_id=?1 ORDER BY happened_at ASC,id ASC').bind(customerId).all()).results || [];
+}
+
+export async function getCustomerWarnings(env, customerId) {
+  await getCustomer(env, customerId);
+  return (await env.DB.prepare('SELECT fact_id,customer_id,work_id,warning_type,source_ref,happened_at,details_json FROM customer_warning_projection WHERE customer_id=?1 ORDER BY happened_at ASC,fact_id ASC').bind(customerId).all()).results || [];
+}
+
+export async function getSimilarWorks(env, workId) {
+  const work = await getWork(env, workId);
+  return (await env.DB.prepare(`SELECT id,customer_id,title,work_type_key,specialty_key,country,university,status,price_state,price_minor_units,created_at
+    FROM works WHERE id <> ?1 AND country = ?2 AND (?3 IS NULL OR work_type_key = ?3) AND (?4 IS NULL OR specialty_key = ?4) ORDER BY created_at DESC LIMIT 50`).bind(workId, work.country, work.work_type_key, work.specialty_key).all()).results || [];
 }
 
 export async function applyAuditMutation(env, actorUid, requestId, value) {
@@ -108,15 +375,58 @@ export async function applyAuditMutation(env, actorUid, requestId, value) {
   if (!audit || audit.actor_uid !== actorUid || audit.request_id !== requestId || audit.run_marker !== env.RUN_MARKER) {
     throw new Error('AUDIT_EVIDENCE_MISSING');
   }
-  return {
-    action: audit.action,
-    actorUid: audit.actor_uid,
-    createdAt: audit.created_at,
-    before: audit.before_json === null ? null : JSON.parse(audit.before_json),
-    after: JSON.parse(audit.after_json),
-    runId: audit.run_marker,
-    requestId: audit.request_id
-  };
+  return { action: audit.action, actorUid: audit.actor_uid, createdAt: audit.created_at, before: audit.before_json === null ? null : JSON.parse(audit.before_json), after: JSON.parse(audit.after_json), runId: audit.run_marker, requestId: audit.request_id };
+}
+
+async function readAuthorized(request, env, requestId, scenario) {
+  const auth = request.headers.get('authorization') || '';
+  if (!auth.startsWith('Bearer ')) throw new DomainError('TOKEN_MISSING', 401);
+  try {
+    const verified = await verifyJwt(auth.slice(7), env);
+    const user = await allowed(env, verified.claims.sub);
+    if (!user) throw new DomainError('UID_NOT_ALLOWED', 403);
+    const requestedRunId = request.headers.get('x-s3-run-id') || '';
+    const runId = requestedRunId === env.RUN_MARKER ? requestedRunId : '';
+    const s3Correlation = { runId, requestId, scenario };
+    console.log(JSON.stringify({ event: 'auth_result', requestId, code: 'ALLOW', cacheState: verified.cacheState, allowed: true, runId, scenario, s3Correlation, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) }));
+    return { user, cacheState: verified.cacheState };
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    throw new DomainError(error instanceof Error ? error.message : 'AUTH_FAILED', 401);
+  }
+}
+
+async function handleApi(request, env, requestId, scenario, user) {
+  const url = new URL(request.url); const parts = url.pathname.split('/').filter(Boolean);
+  const method = request.method.toUpperCase(); const body = method === 'POST' || method === 'PATCH' ? await parseRequestJson(request) : {};
+  if (parts[1] === 'customers' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listCustomers(env, url.searchParams.get('q') || '') , requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createCustomer(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'customers' && parts.length >= 3) {
+    const customerId = decodeURIComponent(parts[2]);
+    if (parts[3] === 'history' && method === 'GET') return Response.json({ ok: true, data: await getCustomerHistory(env, customerId), requestId });
+    if (parts[3] === 'warnings' && method === 'GET') return Response.json({ ok: true, data: await getCustomerWarnings(env, customerId), requestId });
+    if (parts.length === 3 && method === 'GET') return Response.json({ ok: true, data: await getCustomer(env, customerId), requestId });
+    if (parts.length === 3 && method === 'PATCH') return Response.json({ ok: true, data: await updateCustomer(env, user.uid, requestId, customerId, body), requestId });
+  }
+  if (parts[1] === 'works' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listWorks(env, Object.fromEntries(url.searchParams.entries())), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createWork(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'works' && parts.length >= 3) {
+    const workId = decodeURIComponent(parts[2]);
+    if (parts[3] === 'similar' && method === 'GET') return Response.json({ ok: true, data: await getSimilarWorks(env, workId), requestId });
+    if (parts.length === 3 && method === 'GET') return Response.json({ ok: true, data: await getWork(env, workId), requestId });
+    if (parts.length === 3 && method === 'PATCH') return Response.json({ ok: true, data: await updateWork(env, user.uid, requestId, workId, body), requestId });
+  }
+  if (parts[1] === 'catalog' && parts.length === 3) {
+    const kind = decodeURIComponent(parts[2]);
+    if (method === 'GET') return Response.json({ ok: true, data: await listCatalog(env, kind), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createCatalogValue(env, user.uid, requestId, kind, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'facts' && parts.length === 2 && method === 'POST') return Response.json({ ok: true, data: await createDocumentedFact(env, user.uid, requestId, body), requestId }, { status: 201 });
+  throw new DomainError('NOT_FOUND', 404);
 }
 
 export default {
@@ -133,33 +443,23 @@ export default {
       return Response.json({ ok: true, requestId });
     }
     const isAuditMutation = url.pathname === '/__test/audit-mutation';
-    if (url.pathname !== '/private/ping' && !isAuditMutation) return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
+    if (url.pathname !== '/private/ping' && !isAuditMutation && !url.pathname.startsWith('/api/')) return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
     if (isAuditMutation) {
       if (env.TEST_CONTROLS !== 'enabled') return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
       if (request.method !== 'POST') return reject(405, 'METHOD_NOT_ALLOWED', requestId, 'none', env.RUN_MARKER, scenario);
       if (!env.TEST_RESET_NONCE || request.headers.get('x-s3-test-reset') !== env.TEST_RESET_NONCE) return reject(403, 'TEST_CONTROL_DENIED', requestId, 'none', env.RUN_MARKER, scenario);
     }
-    const auth = request.headers.get('authorization') || '';
-    if (!auth.startsWith('Bearer ')) return reject(401, 'TOKEN_MISSING', requestId, 'none', env.RUN_MARKER, scenario);
     try {
-      const verified = await verifyJwt(auth.slice(7), env); const user = await allowed(env, verified.claims.sub);
-      if (!user) return reject(403, 'UID_NOT_ALLOWED', requestId, verified.cacheState, env.RUN_MARKER, scenario);
-      const s3Correlation = { runId, requestId, scenario };
-      console.log(JSON.stringify({ event: 'auth_result', requestId, code: 'ALLOW', cacheState: verified.cacheState, allowed: true, runId, scenario, s3Correlation, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) }));
-      if (!isAuditMutation) return Response.json({ ok: true, requestId, role: user.role });
-      let body;
-      try { body = await request.json(); } catch { return reject(400, 'AUDIT_JSON_INVALID', requestId, verified.cacheState, env.RUN_MARKER, scenario); }
-      try {
-        const audit = await applyAuditMutation(env, verified.claims.sub, requestId, body?.value);
-        return Response.json({ ok: true, requestId, role: user.role, audit });
-      } catch (error) {
-        const code = error instanceof Error && error.message.startsWith('AUDIT_') ? error.message : 'AUDIT_MUTATION_FAILED';
-        const status = code.endsWith('_INVALID') ? 400 : 500;
-        return reject(status, code, requestId, verified.cacheState, env.RUN_MARKER, scenario);
+      const auth = await readAuthorized(request, env, requestId, scenario);
+      if (url.pathname === '/private/ping') return Response.json({ ok: true, requestId, role: auth.user.role });
+      if (isAuditMutation) {
+        const body = await parseRequestJson(request);
+        const audit = await applyAuditMutation(env, auth.user.uid, requestId, body.value);
+        return Response.json({ ok: true, requestId, role: auth.user.role, audit });
       }
+      return await handleApi(request, env, requestId, scenario, auth.user);
     } catch (error) {
-      const code = error instanceof Error ? error.message : 'AUTH_FAILED';
-      return reject(401, code, requestId, 'none', env.RUN_MARKER, scenario);
+      return jsonError(error, requestId, runId, scenario);
     }
   }
 };

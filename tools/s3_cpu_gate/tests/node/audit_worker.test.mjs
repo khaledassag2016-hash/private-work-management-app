@@ -10,11 +10,12 @@ const schemaPath = fileURLToPath(new URL('../../src/worker/schema.sql', import.m
 class D1Statement {
   constructor(database, sql) {
     this.database = database;
-    this.sql = sql;
+    this.parameterMap = [];
+    this.sql = sql.replace(/\?(\d+)/g, (_, index) => { this.parameterMap.push(Number(index)); return '?'; });
     this.values = [];
   }
   bind(...values) {
-    this.values = values;
+    this.values = this.parameterMap.length ? this.parameterMap.map(index => values[index - 1]) : values;
     return this;
   }
   first() {
@@ -52,8 +53,8 @@ class D1Database {
 function fixture() {
   const database = new DatabaseSync(':memory:');
   database.exec(readFileSync(schemaPath, 'utf8'));
-  database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?1,?2,1,?3)').run('uid-one', 'person_1', 'run-test');
-  database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?1,?2,1,?3)').run('uid-two', 'person_2', 'run-test');
+  database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('uid-one', 'person_1', 'run-test');
+  database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('uid-two', 'person_2', 'run-test');
   return { database, env: { DB: new D1Database(database), RUN_MARKER: 'run-test' } };
 }
 
@@ -88,7 +89,7 @@ test('database rejects unauthorized mutation and preserves the maximum-two invar
     );
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM audit_log').get().count, 0);
     assert.throws(
-      () => database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?1,?2,1,?3)').run('uid-three', 'person_1', 'run-test'),
+      () => database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('uid-three', 'person_1', 'run-test'),
       /maximum two active users/
     );
   } finally {
