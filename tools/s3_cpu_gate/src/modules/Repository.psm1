@@ -69,6 +69,36 @@ function Invoke-S3RepositoryGate {
  return $result
 }
 
+function Test-S3CurrentMainContainsRepositoryPayload {
+ param([Parameter(Mandatory)]$Context)
+ $repoPath=Join-Path $Context.Root 'repository'
+ $payloadPath=Join-Path $Context.Root 'workspace\repository_payload'
+ if(-not(Test-Path -LiteralPath $repoPath -PathType Container)){throw 'REPOSITORY_PATH_MISSING'}
+ if(-not(Test-Path -LiteralPath $payloadPath -PathType Container)){throw 'REPOSITORY_PAYLOAD_MISSING'}
+ $branch=(Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('branch','--show-current')).StdOut.Trim()
+ if($branch -ne 'main'){throw "CURRENT_BRANCH_NOT_MAIN: $branch"}
+ $status=(Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('status','--porcelain')).StdOut.Trim()
+ if($status){throw 'Git working tree غير نظيفة قبل إثبات current main.'}
+ $head=(Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('rev-parse','HEAD')).StdOut.Trim()
+ $originMain=(Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('rev-parse','origin/main')).StdOut.Trim()
+ if([string]::IsNullOrWhiteSpace($head) -or $head -ne $originMain){throw 'CURRENT_MAIN_NOT_AT_ORIGIN_MAIN'}
+ $payloadRoot=[IO.Path]::GetFullPath($payloadPath)
+ $repositoryRoot=[IO.Path]::GetFullPath($repoPath)
+ $payloadFiles=@(Get-ChildItem -LiteralPath $payloadRoot -Recurse -Force -File)
+ if($payloadFiles.Count -eq 0){throw 'REPOSITORY_PAYLOAD_EMPTY'}
+ foreach($file in $payloadFiles){
+  if($file.LinkType){throw "REPOSITORY_PAYLOAD_LINK_NOT_ALLOWED: $($file.FullName)"}
+  $relative=$file.FullName.Substring($payloadRoot.Length).TrimStart('\','/')
+  $target=[IO.Path]::GetFullPath((Join-Path $repositoryRoot $relative))
+  if(-not $target.StartsWith($repositoryRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "REPOSITORY_PAYLOAD_PATH_INVALID: $relative"}
+  if(-not(Test-Path -LiteralPath $target -PathType Leaf)){return $false}
+  $targetFile=Get-Item -LiteralPath $target
+  if($targetFile.LinkType){throw "REPOSITORY_TARGET_LINK_NOT_ALLOWED: $relative"}
+  if((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash){return $false}
+ }
+ return $true
+}
+
 function Invoke-S3BranchAndDraftPr {
  param([Parameter(Mandatory)]$Context)
  if($Context.Mode -eq 'Plan'){return [ordered]@{status='PLANNED';branch=$script:Branch;draftPr=$null;ci='NOT_RUN'}}
@@ -77,10 +107,13 @@ function Invoke-S3BranchAndDraftPr {
   Set-S3MapValue -Map $Context.State.resources -Name 'draftPr' -Value ([ordered]@{number=999;url='https://example.invalid/mock';marker=$Context.RunId})
   return [ordered]@{status='SIMULATED';branch=$script:Branch;draftPr=999;ci='SIMULATED_PASS'}
  }
+ $repoPath=Join-Path $Context.Root 'repository'
+ if(Test-S3CurrentMainContainsRepositoryPayload -Context $Context){
+  return [ordered]@{status='NO_DIFF_CURRENT_MAIN';branch=$null;draftPr=$null;url=$null;ci='NOT_REQUIRED';currentMain='PASS'}
+ }
  if(-not (Confirm-S3Arabic 'إنشاء فرع وDraft PR' "سيُنشأ فرع S3 واحد وDraft Pull Request واحدة فقط بعد نجاح بوابات S1 وS2.`nلن يتم الدمج أو إغلاق Issue #2.`nاختر متابعة أو إلغاء.")){
   throw 'ألغى المستخدم إنشاء الفرع وDraft PR.'
  }
- $repoPath=Join-Path $Context.Root 'repository'
  $existing=@((Invoke-S3Process -Context $Context -FilePath 'gh' -ArgumentList @('pr','list','--repo',$script:Repo,'--head',$script:Branch,'--state','open','--json','number,state,isDraft,url') -AllowFailure).StdOut|ConvertFrom-Json)
  if($existing.Count -gt 1){throw 'أكثر من PR للفرع؛ توقف.'}
  if($existing.Count -eq 1){
@@ -99,7 +132,7 @@ function Invoke-S3BranchAndDraftPr {
   Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('add','--all')|Out-Null
   $changed=(Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('status','--porcelain')).StdOut.Trim()
   if(-not $changed){
-   return [ordered]@{status='NO_DIFF_CURRENT_MAIN';branch=$script:Branch;draftPr=$null;url=$null;ci='NOT_REQUIRED';currentMain='PASS'}
+   throw 'BRANCH_HAS_NO_STAGED_DIFF_AFTER_CURRENT_MAIN_MISMATCH'
   }
   Invoke-S3Process -Context $Context -FilePath 'git' -WorkingDirectory $repoPath -ArgumentList @('commit','-m','S3: add mandatory CPU gate tooling')|Out-Null
   Assert-S3NoSecret -Context $Context -Path $repoPath

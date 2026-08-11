@@ -1,23 +1,58 @@
-BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
+﻿BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
 
 Describe 'Live readiness regression guards' {
     It 'does not create an empty PR when current main already contains the payload' {
         $context = Get-TestContext 'Live'
-        New-Item -ItemType Directory -Path (Join-Path $context.Root 'repository\.git') -Force | Out-Null
-        Mock Confirm-S3Arabic { $true } -ModuleName Repository
-        Mock Assert-S3NoSecret {} -ModuleName Repository
+        $repositoryFile = Join-Path $context.Root 'repository\tools\s3_cpu_gate\payload.txt'
+        $payloadFile = Join-Path $context.Root 'workspace\repository_payload\tools\s3_cpu_gate\payload.txt'
+        New-Item -ItemType Directory -Path (Split-Path $repositoryFile),(Split-Path $payloadFile) -Force | Out-Null
+        Set-Content -LiteralPath $repositoryFile -Value 'current-main-payload' -NoNewline
+        Set-Content -LiteralPath $payloadFile -Value 'current-main-payload' -NoNewline
+        Mock Confirm-S3Arabic { throw 'CONFIRMATION_MUST_NOT_RUN' } -ModuleName Repository
         Mock Invoke-S3Process {
-            param($ArgumentList)
+            param($FilePath,$ArgumentList)
             $arguments = @($ArgumentList)
-            if ($arguments -contains 'pr') { return [pscustomobject]@{ ExitCode = 0; StdOut = '[]'; StdErr = '' } }
-            if ($arguments -contains 'show-ref') { return [pscustomobject]@{ ExitCode = 1; StdOut = ''; StdErr = '' } }
+            if ($FilePath -ne 'git') { throw "UNEXPECTED_PROCESS: $FilePath $($arguments -join ' ')" }
+            if (($arguments -join ' ') -eq 'branch --show-current') { return [pscustomobject]@{ ExitCode = 0; StdOut = 'main'; StdErr = '' } }
             if ($arguments -contains 'status') { return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' } }
-            return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' }
+            if (($arguments -join ' ') -in @('rev-parse HEAD','rev-parse origin/main')) { return [pscustomobject]@{ ExitCode = 0; StdOut = 'merged-main-sha'; StdErr = '' } }
+            throw "UNEXPECTED_GIT_PROCESS: $($arguments -join ' ')"
         } -ModuleName Repository
         $result = Invoke-S3BranchAndDraftPr $context
         $result.status | Should -Be 'NO_DIFF_CURRENT_MAIN'
+        $result.currentMain | Should -Be 'PASS'
+        $result.branch | Should -BeNullOrEmpty
         $result.draftPr | Should -BeNullOrEmpty
+        Should -Invoke Confirm-S3Arabic -ModuleName Repository -Times 0
+        Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $ArgumentList[0] -eq 'switch' } -Times 0
+        Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $ArgumentList -contains 'commit' } -Times 0
         Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $ArgumentList -contains 'push' } -Times 0
+        Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $FilePath -eq 'gh' -and $ArgumentList[0] -eq 'pr' } -Times 0
+    }
+
+    It 'keeps Draft PR confirmation fail-closed when the payload differs from current main' {
+        $context = Get-TestContext 'Live'
+        $repositoryFile = Join-Path $context.Root 'repository\tools\s3_cpu_gate\payload.txt'
+        $payloadFile = Join-Path $context.Root 'workspace\repository_payload\tools\s3_cpu_gate\payload.txt'
+        New-Item -ItemType Directory -Path (Split-Path $repositoryFile),(Split-Path $payloadFile) -Force | Out-Null
+        Set-Content -LiteralPath $repositoryFile -Value 'current-main-payload' -NoNewline
+        Set-Content -LiteralPath $payloadFile -Value 'required-new-payload' -NoNewline
+        Mock Confirm-S3Arabic { $false } -ModuleName Repository
+        Mock Invoke-S3Process {
+            param($FilePath,$ArgumentList)
+            $arguments = @($ArgumentList)
+            if ($FilePath -ne 'git') { throw "UNEXPECTED_PROCESS: $FilePath $($arguments -join ' ')" }
+            if (($arguments -join ' ') -eq 'branch --show-current') { return [pscustomobject]@{ ExitCode = 0; StdOut = 'main'; StdErr = '' } }
+            if ($arguments -contains 'status') { return [pscustomobject]@{ ExitCode = 0; StdOut = ''; StdErr = '' } }
+            if (($arguments -join ' ') -in @('rev-parse HEAD','rev-parse origin/main')) { return [pscustomobject]@{ ExitCode = 0; StdOut = 'merged-main-sha'; StdErr = '' } }
+            throw "UNEXPECTED_GIT_PROCESS: $($arguments -join ' ')"
+        } -ModuleName Repository
+        { Invoke-S3BranchAndDraftPr $context } | Should -Throw '*ألغى المستخدم*'
+        Should -Invoke Confirm-S3Arabic -ModuleName Repository -Times 1
+        Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $ArgumentList[0] -eq 'switch' } -Times 0
+        Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $ArgumentList -contains 'commit' } -Times 0
+        Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $ArgumentList -contains 'push' } -Times 0
+        Should -Invoke Invoke-S3Process -ModuleName Repository -ParameterFilter { $FilePath -eq 'gh' -and $ArgumentList[0] -eq 'pr' } -Times 0
     }
 
     It 'keeps staging script inside the package allowlist' {
@@ -28,6 +63,10 @@ Describe 'Live readiness regression guards' {
         $setup | Should -Match 'Copy-S3ManifestPayloadToStage'
         $setup | Should -Match '\$packageManifest\.files'
         $setup | Should -Not -Match 'Source\s*=\s*\.'
+        $setup | Should -Match 'payloadStage\s*=\s*Join-Path\s+\$stageRoot\s+''workspace\\repository_payload\\tools\\s3_cpu_gate'''
+        $setup | Should -Match 'payloadDestination\s*=\s*Join-Path\s+\$RuntimeRoot\s+''workspace\\repository_payload\\tools\\s3_cpu_gate'''
+        $setup | Should -Match 'Remove-Item -LiteralPath \$payloadDestination -Recurse -Force'
+        $setup | Should -Match 'Copy-Item -LiteralPath \$payloadStage -Destination \$payloadDestination -Recurse -Force'
     }
 
     It 'refuses every non-final runtime state before staging' {
@@ -53,7 +92,7 @@ Describe 'Live readiness regression guards' {
 
     It 'keeps the Pester acceptance count at the approved suite size' {
         $validation = Get-Content (Join-Path $SourceRoot 'build\Invoke-Phase1PowerShellValidation.ps1') -Raw
-  $validation | Should -Match '\$expectedPesterCount\s*=\s*278'
+  $validation | Should -Match '\$expectedPesterCount\s*=\s*279'
         $validation | Should -Match '\$result\.TotalCount\s+-eq\s+\$expectedPesterCount'
         $validation | Should -Match '\$result\.PassedCount\s+-eq\s+\$expectedPesterCount'
     }
