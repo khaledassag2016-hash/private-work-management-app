@@ -241,6 +241,15 @@ function bindModalForms() {
   document.querySelector('#catalog-form')?.addEventListener('submit', submitCatalog);
   document.querySelector('#fact-form')?.addEventListener('submit', submitFact);
   document.querySelector('#relationship-kind')?.addEventListener('change', event => { const field = document.querySelector('#parent-field'); field.hidden = event.target.value !== 'CHILD'; });
+  document.querySelector('#work-customer')?.addEventListener('change', event => {
+    const form = document.querySelector('#work-form');
+    if (!form) return;
+    const next = formObject(form);
+    next.customer_id = event.target.value;
+    next.parent_work_id = '';
+    state.modal = { type: 'work', data: next, customerId: event.target.value };
+    render();
+  });
 }
 async function submitCustomer(event) {
   event.preventDefault();
