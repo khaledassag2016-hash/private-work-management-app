@@ -41,6 +41,16 @@ test('S4 Gate 2 UI includes clear PRICE_UNSET, fact-derived warning, and non-blo
   assert.doesNotMatch(source, /risk percentage|AI classification|scoring|error\.message/i);
 });
 
+test('S4 Gate 2 UI exposes only the approved catalog, history, documented-fact warning, and similar-work read flows', () => {
+  const source = readFileSync(appPath, 'utf8');
+  assert.match(source, /\/api\/customers\/\$\{encodeURIComponent\(customerId\)\}\/history/);
+  assert.match(source, /\/api\/customers\/\$\{encodeURIComponent\(customerId\)\}\/warnings/);
+  assert.match(source, /\/api\/works\/\$\{encodeURIComponent\(workId\)\}\/similar/);
+  assert.match(source, /\/api\/catalog\/\$\{encodeURIComponent\(values\.kind\)\}/);
+  assert.match(source, /warning projection|واقعة موثقة/);
+  assert.doesNotMatch(source, /price movement|settlement|payment engine|title history|archive lifecycle/i);
+});
+
 test('S4 Gate 2 Worker serves only requested static assets before auth while private API remains fail-closed', async () => {
   const env = {
     RUN_MARKER: 'run-gate2',
