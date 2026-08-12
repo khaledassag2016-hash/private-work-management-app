@@ -126,9 +126,9 @@
 
 `customer.status` محايد/non-authoritative؛ فلا توجد latest-wins أو priority أو delay count أو risk score. تبقى `FR_006_GENERIC_TITLE = SUPERVISORY_DECISION_REQUIRED` لأن Word لا يقدم taxonomy تنفيذية. تبقى `FR_016_EXECUTED_PRICE_SOURCE = LATER_STAGE_DEPENDENCY / SUPERVISORY_DECISION_REQUIRED`، وتبقى `P_06_FINANCIAL_PORTION = LATER_STAGE_DEPENDENCY (S7)`. هذه حدود وقرارات إشرافية مطلوبة، لا Product Decisions جديدة.
 
-## 11. Final handoff fields
+## 11. Historical Gate 3 handoff and current repair fields
 
-| Field | Final merged-main value |
+| Field | Historical/current value |
 | --- | --- |
 | `S4_GATE3` | `READY_FOR_FINAL_SUPERVISORY_APPROVAL` |
 | `GATE3_BASE_SHA` | `1020773ccf5dbb2fc28581d98fc68a3954cfdc23` |
@@ -139,17 +139,17 @@
 | `GATE3_ADMIN_PR` | `#64` — docs-only final-state record |
 | `GATE3_ADMIN_SQUASH_SHA` | `bcf6d1bc5b48caf04239d434be9a74456513aeb1` |
 | `S4_FINAL_REPAIR_BASE_SHA` | `bcf6d1bc5b48caf04239d434be9a74456513aeb1` |
-| `FULL_TEST_RESULTS` | Final repair local Node `31/31 PASS`; full Foundation/S2/Python/secret/integrity regression pending final run |
-| `FULL_REGRESSION_RESULTS` | Local regression PASS; PR final-head and post-merge CI PASS |
+| `FULL_TEST_RESULTS` | Local final-repair regression PASS: Foundation، S2، Python `80/80`، Node `31/31`، secret scan، integrity، diff check |
+| `FULL_REGRESSION_RESULTS` | Local full regression PASS؛ final-repair PR final-head وpost-merge CI سيُسجلان بعد الدمج |
 | `SECURITY_AUDIT` | PASS within repository/local synthetic scope |
 | `AUDIT_AUDIT` | PASS: append-only/atomic evidence retained; Gate 3 soft warning excluded from audit after-state |
 | `REAL_DATA_SCAN` | PASS by scope review; synthetic only |
 | `SECRET_SCAN` | PASS |
 | `SCOPE_AUDIT` | PASS; no S5/S6/S7 leakage introduced |
-| `FINAL_HEAD_CI` | PASS — PR #63 run `31582032995` (S3 CPU Gate Static), Foundation run `31582033018`, S2 run `31582033063` |
-| `POST_MERGE_CI` | PASS — main run `31582176576` (S3 CPU Gate Static) and Foundation run `31582176570` |
+| `FINAL_HEAD_CI` | Historical PR #63 PASS؛ final-repair PR CI pending |
+| `POST_MERGE_CI` | Historical PR #63/admin CI PASS؛ final-repair post-merge pending |
 | `TRACEABILITY_MATRIX` | Updated for Gate 3 and deferred boundaries |
-| `PROJECT_STATE` | SHA history corrected; final repair records its own base only until it is merged |
+| `PROJECT_STATE` | `S4_FINAL_REPAIR = IN_PROGRESS`؛ `S4_COMPLETE = FALSE`؛ `Issue #3 = OPEN`؛ `S5 = NOT_STARTED` |
 | `FINAL_EVIDENCE` | This document, corrected for Gate 3/admin SHA history and final-repair boundaries |
 | `ISSUE_3_COMMENT` | UPDATED after merged-main verification; Issue #3 remains OPEN |
 
