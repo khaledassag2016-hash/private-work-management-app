@@ -357,7 +357,7 @@ export async function createWork(env, actorUid, requestId, input) {
   if (priceState === 'PRICE_UNSET' && input.price_minor_units !== undefined && input.price_minor_units !== null) throw new DomainError('PRICE_UNSET_VALUE_FORBIDDEN', 400);
   const id = newId('work'); const createdAt = nowIso();
   const confirmedAt = input.confirmed_at === undefined || input.confirmed_at === null ? null : canonicalEventTimestamp(input.confirmed_at);
-  await prbEnsureWorkAffectedPeriods(env, null, confirmedAt, createdAt);
+  await prbEnsureWorkAffectedPeriods(env, null, confirmedAt);
   const after = { id, customer_id: validated.customerId, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, price_state: priceState, price_minor_units: priceState === 'PRICE_ZERO' ? 0 : null, created_by: actorUid, created_at: createdAt, updated_by: actorUid, updated_at: createdAt, confirmed_at: confirmedAt, version: 1 };
   const mutation = env.DB.prepare(`INSERT INTO works(id,customer_id,parent_work_id,relationship_kind,title,work_type_key,specialty_key,subject_or_course_code,country,university,status,description,quantity,price_state,price_minor_units,created_by,created_at,updated_by,updated_at,confirmed_at,version)
     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?16,?17,?18,1)`).bind(id, after.customer_id, after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, after.price_state, after.price_minor_units, actorUid, createdAt, confirmedAt);
@@ -397,7 +397,7 @@ export async function updateWork(env, actorUid, requestId, id, input) {
   await ensureActor(env, actorUid);
   const before = await getWorkRaw(env, id);
   const nextConfirmedAt = input.confirmed_at === undefined ? (before.confirmed_at ?? null) : (input.confirmed_at === null ? null : canonicalEventTimestamp(input.confirmed_at));
-  await prbEnsureWorkAffectedPeriods(env, before.confirmed_at ?? null, nextConfirmedAt, before.created_at);
+  await prbEnsureWorkAffectedPeriods(env, before.confirmed_at ?? null, nextConfirmedAt);
   const version = positiveVersion(input.version);
   if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
   if (input.price_state !== undefined || input.price_minor_units !== undefined) throw new DomainError('PRICING_OUT_OF_SCOPE', 400);
@@ -1365,8 +1365,8 @@ async function prbEnsurePeriodOpen(env, effectiveAt) {
     throw error;
   }
 }
-async function prbEnsureWorkAffectedPeriods(env, oldConfirmedAt, newConfirmedAt, createdAt) {
-  const keys = [...new Set([createdAt, oldConfirmedAt, newConfirmedAt].filter(value => typeof value === 'string' && value.length >= 7).map(value => value.slice(0, 7)))];
+async function prbEnsureWorkAffectedPeriods(env, oldConfirmedAt, newConfirmedAt) {
+  const keys = [...new Set([oldConfirmedAt, newConfirmedAt].filter(value => typeof value === 'string' && value.length >= 7).map(value => value.slice(0, 7)))];
   if (!keys.length) return;
   try {
     const closed = await env.DB.prepare(`SELECT s.id FROM settlement_snapshots s
@@ -1462,9 +1462,9 @@ function prbInClause(values) { return values.map(() => '?').join(','); }
 async function prbSettlementComponents(env, bounds) {
   const works = (await env.DB.prepare(`SELECT id,confirmed_at FROM works WHERE confirmed_at>=?1 AND confirmed_at<?2 ORDER BY confirmed_at ASC,id ASC`).bind(bounds.start, bounds.end).all()).results || [];
   const cumulativeRow = (await env.DB.prepare(`SELECT COUNT(*) AS count,
-      (SELECT period_key FROM settlement_snapshots WHERE state='CLOSED' AND unresolved_code IS NULL AND final_balance_halalas IS NOT NULL AND period_end<=?2 ORDER BY period_end DESC,version DESC LIMIT 1) AS prior_period_key,
-      (SELECT version FROM settlement_snapshots WHERE state='CLOSED' AND unresolved_code IS NULL AND final_balance_halalas IS NOT NULL AND period_end<=?2 ORDER BY period_end DESC,version DESC LIMIT 1) AS prior_version,
-      (SELECT final_balance_halalas FROM settlement_snapshots WHERE state='CLOSED' AND unresolved_code IS NULL AND final_balance_halalas IS NOT NULL AND period_end<=?2 ORDER BY period_end DESC,version DESC LIMIT 1) AS prior_final_balance
+      (SELECT s.period_key FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_period_key,
+      (SELECT s.version FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_version,
+      (SELECT s.final_balance_halalas FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_final_balance
     FROM works WHERE confirmed_at<?1`).bind(bounds.end, bounds.start).first()) || { count: 0, prior_period_key: null, prior_version: null, prior_final_balance: null };
   const cumulative = cumulativeRow.count || 0;
   const ids = works.map(row => row.id);

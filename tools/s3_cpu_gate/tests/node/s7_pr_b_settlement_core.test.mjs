@@ -209,7 +209,9 @@ test('PR-B closed-period cross-stage mutations are blocked across Work, S6 appro
     const reversalReq = await createPaymentReversalRequest(env, 'uid-one', 'prb-cross-stage-reversal-request', work.id, { version: 3, payment_id: payment.payment.id, reason: 'Synthetic pending reversal' });
     seedClosedSnapshot(database, '2026-08', 'prb-cross-stage-seed');
 
-    await assert.rejects(createWork(env, 'uid-one', 'prb-cross-stage-work-create', { customer_id: customer.id, title: 'Blocked Work', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT', university: 'Synthetic University' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
+    const unconfirmedWork = await createWork(env, 'uid-one', 'prb-cross-stage-work-create', { customer_id: customer.id, title: 'Unconfirmed Work Outside Settlement', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT', university: 'Synthetic University' });
+    assert.equal(unconfirmedWork.confirmed_at, null);
+    await assert.rejects(createWork(env, 'uid-one', 'prb-cross-stage-work-confirmed-create', { customer_id: customer.id, title: 'Blocked Confirmed Work', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT', university: 'Synthetic University', confirmed_at: '2026-08-20T00:00:00.000Z' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
     await assert.rejects(updateWork(env, 'uid-one', 'prb-cross-stage-work-update', work.id, { version: 3, description: 'Blocked update' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
     await assert.rejects(createClientPayment(env, 'uid-one', 'prb-cross-stage-payment-after-close', work.id, { version: 3, amount_riyals: '10.00', effective_at: '2026-08-12T14:00:00.000Z', payment_method: 'BANK_TRANSFER' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
     await assert.rejects(createPaymentReversalRequest(env, 'uid-one', 'prb-cross-stage-reversal-after-close', work.id, { version: 3, payment_id: payment.payment.id, reason: 'Blocked reversal' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
@@ -234,6 +236,10 @@ test('PR-B D-014 confirmation month inclusion/exclusion and old/new closed guard
     assert.equal((await getSettlementPreview(env, '2026-09', settlementInput())).work_count, 1);
     assert.equal(database.prepare('SELECT confirmed_at FROM works WHERE id=?').get(unconfirmed.id).confirmed_at, null);
     seedClosedSnapshot(database, '2026-08', 'd014-closed-aug');
+    const unconfirmedAfterClose = await createWork(env, 'uid-one', 'd014-unconfirmed-after-close', { customer_id: customer.id, title: 'Unconfirmed After Closed Month', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT', university: 'Synthetic University' });
+    const editedUnconfirmed = await updateWork(env, 'uid-one', 'd014-edit-unconfirmed-after-close', unconfirmedAfterClose.id, { version: unconfirmedAfterClose.version, description: 'Still outside settlement until confirmed' });
+    assert.equal(editedUnconfirmed.confirmed_at, null);
+    await assert.rejects(updateWork(env, 'uid-one', 'd014-confirm-unconfirmed-into-closed', unconfirmedAfterClose.id, { version: editedUnconfirmed.version, confirmed_at: '2026-08-20T00:00:00.000Z' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
     await assert.rejects(updateWork(env, 'uid-one', 'd014-sep-to-aug', september.id, { version: september.version, confirmed_at: '2026-08-15T00:00:00.000Z' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
     await assert.rejects(updateWork(env, 'uid-one', 'd014-aug-to-sep', work.id, { version: work.version, confirmed_at: '2026-09-15T00:00:00.000Z' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
     await assert.rejects(createWork(env, 'uid-one', 'd014-create-closed-aug', { customer_id: customer.id, title: 'Closed Confirmation Work', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT', university: 'Synthetic University', confirmed_at: '2026-08-20T00:00:00.000Z' }), /CLOSED_PERIOD_MUTATION_FORBIDDEN/);
@@ -270,6 +276,26 @@ test('PR-B D-015 first settlement prior is zero and next settlement carries late
     const firstClosed = await closeSettlement(env, 'uid-one', 'd015-carry-close-aug', '2026-08', settlementInput());
     const nextPreview = await getSettlementPreview(env, '2026-09', settlementInput());
     assert.equal(nextPreview.prior_balance_halalas, 125825); assert.equal(nextPreview.prior_balance_authority, 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT'); assert.equal(nextPreview.final_balance_halalas, 132650); assert.equal(firstClosed.final_balance_halalas, 125825);
+  } finally { database.close(); }
+});
+
+test('PR-B D-015 reopened prior snapshots are invalid until re-closed and latest valid carry resumes', async () => {
+  const { database, env } = fixture();
+  try {
+    const { work } = await setupWork(env, 'D015 Reopened Prior'); await price(env, work, 'd015-reopened-prior');
+    const first = await closeSettlement(env, 'uid-one', 'd015-reopened-prior-close-aug', '2026-08', settlementInput());
+    assert.equal(first.final_balance_halalas, 125825);
+    const reopen = await createSettlementReopenRequest(env, 'uid-one', 'd015-reopened-prior-request', '2026-08', { reason: 'Synthetic prior invalidation' });
+    await approveSettlementReopenRequest(env, 'uid-two', 'd015-reopened-prior-approve', '2026-08', reopen.id);
+    const beforeReclose = await getSettlementPreview(env, '2026-09', settlementInput());
+    assert.equal(beforeReclose.prior_balance_halalas, 0); assert.equal(beforeReclose.prior_balance_authority, 'ZERO_NO_PRIOR_SETTLEMENT'); assert.equal(beforeReclose.final_balance_halalas, 6825);
+    await createInterPartyTransfer(env, 'uid-one', 'd015-reopened-prior-transfer', { amount_riyals: '10.00', effective_at: '2026-08-20T00:00:00.000Z', from_party: 'person_1', to_party: 'person_2', fee_payer: 'person_1' });
+    const reclosed = await closeSettlement(env, 'uid-two', 'd015-reopened-prior-reclose-aug', '2026-08', settlementInput());
+    assert.equal(reclosed.version, 2); assert.equal(reclosed.final_balance_halalas, 124825);
+    const afterReclose = await getSettlementPreview(env, '2026-09', settlementInput());
+    assert.equal(afterReclose.prior_balance_halalas, 124825); assert.equal(afterReclose.prior_balance_authority, 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT'); assert.equal(afterReclose.final_balance_halalas, 131650);
+    const nextClosed = await closeSettlement(env, 'uid-one', 'd015-reopened-prior-close-sep', '2026-09', settlementInput());
+    assert.equal(nextClosed.prior_balance_halalas, 124825); assert.equal(nextClosed.final_balance_halalas, 131650);
   } finally { database.close(); }
 });
 
