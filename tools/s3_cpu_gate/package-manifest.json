@@ -45,11 +45,13 @@
     "src/python/report_builder.py",
     "src/python/secret_scan.py",
     "src/worker/schema.sql",
+    "src/worker/schema_s6.sql",
     "src/worker/assets/app.js",
     "src/worker/assets/index.html",
     "src/worker/assets/styles.css",
     "src/worker/src/index.js",
     "src/worker/migrations/0005_s5_domain_data_api.sql",
+    "src/worker/migrations/0006_s6_financial_core.sql",
     "tests/pester/Common.Tests.ps1",
     "tests/pester/CpuGate.Tests.ps1",
     "tests/pester/FirebaseProtoJsonRecordsCount.Tests.ps1",
@@ -70,6 +72,7 @@
     "tests/node/s4_final_supervisory_repair.test.mjs",
     "tests/node/s5_pr_a_domain_data_api.test.mjs",
     "tests/node/s5_pr_b_ui_flows.test.mjs",
+    "tests/node/s6_pr_a_financial_core.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
@@ -82,10 +85,12 @@
     "validation/run_python_tests.py",
     "validation/secret_scan_candidate.py",
     "worker/schema.sql",
+    "worker/schema_s6.sql",
     "worker/assets/app.js",
     "worker/assets/index.html",
     "worker/assets/styles.css",
     "worker/src/index.js",
-    "worker/migrations/0005_s5_domain_data_api.sql"
+    "worker/migrations/0005_s5_domain_data_api.sql",
+    "worker/migrations/0006_s6_financial_core.sql"
   ]
 }
