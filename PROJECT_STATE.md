@@ -330,3 +330,24 @@
 - `Issue #3 = OPEN`.
 - `S5 = NOT_STARTED`، و`Gate 3 = NOT_STARTED`.
 - لم يحدث Cloud write أو Firebase write أو D1 cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
+
+
+## S4 Gate 3 — Final verification in progress — 2026-08-12
+
+- قاعدة Gate 3: `main@1020773ccf5dbb2fc28581d98fc68a3954cfdc23`.
+- الفرع الحالي: `s4/gate3-final-verification`.
+- Checkpoint A: `f0c698908efa131bd20cf6efc912b819b53783f9` — residual audit.
+- Checkpoint B: `c575614797d608337225eb6f11481c60c8a64f4f` — fail-closed pre-agreement context وFR-015 history.
+- Checkpoint C: `e32d9d002c7fc5d6ba3477e31845dc3a46ef8f42` — DELAY neutral، FR-006 soft warnings، Gate 3 tests وCI registration.
+- `S4_GATE0 = COMPLETE`.
+- `S4_GATE1 = COMPLETE`.
+- `S4_GATE2 = COMPLETE`.
+- `S4_GATE3 = FINAL_VERIFICATION_IN_PROGRESS`.
+- `S4_STATUS = FINAL_VERIFICATION_IN_PROGRESS`.
+- `S4_COMPLETE = FALSE`.
+- `Issue #3 = OPEN`.
+- `S5 = NOT_STARTED`.
+- Local final regression: Foundation **PASS**، S2 **PASS**، Python `80/80 PASS`، Node `28/28 PASS`، Secret Scan **PASS**، Payload Integrity/ZIP Safety **PASS**، و`git diff --check` **PASS**.
+- `FR-006` مسجل بحدود soft-warning فقط؛ `FR-015` **PASS**؛ `FR-016` **PARTIAL/DEFERRED**؛ `P-06` S4 portion **PASS** وfinancial dealings **DEFERRED TO S7**.
+- لم يحدث Cloud write أو Firebase write أو D1 Cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
+- Gate 3 PR وfinal-head CI وmerged-main verification لم تُسجل بعد؛ لا يُسجل merge SHA قبل الدمج الفعلي.

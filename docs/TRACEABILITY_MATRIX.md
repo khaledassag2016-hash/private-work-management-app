@@ -9,7 +9,7 @@
 | FR-003 | متطلب وظيفي | S4 | Acceptance AC-01: Work بلا سعر محفوظ كـ PRICE_UNSET ويظهر للمتابعة | متحقق في Gate 2 — PR #59 |
 | FR-004 | متطلب وظيفي | S4 | independent/child، parent filtering، missing/self/cycle/cross-customer negative tests | متحقق في Gate 2 — PR #59 |
 | FR-005 | متطلب وظيفي | S4 | حقول country/university/specialty/work type/subject/title في Work UI وAPI | متحقق في Gate 2 — PR #59 |
-| FR-006 | متطلب وظيفي | S4 | required/optional/missing-detail UX مع عزل soft warnings؛ generic-only semantics غير محسومة معزولة | متحقق جزئيًا/معزول في Gate 2 — PR #59 |
+| FR-006 | متطلب وظيفي | S4 | required/optional/missing-detail UX مع `soft_warnings` server-side للـ`university` و`specialty_key`؛ لا hard rejection للبيانات المفقودة؛ generic-only semantics غير محسومة | **جزئي — S4 soft-warning portion متحقق في Gate 3؛ generic-title semantics غير محسومة** |
 | FR-007 | متطلب وظيفي | S5 | اختبار وظيفي موثق لـ FR-007 في المرحلة S5 | مخطط |
 | FR-008 | متطلب وظيفي | S5 | اختبار وظيفي موثق لـ FR-008 في المرحلة S5 | مخطط |
 | FR-009 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-009 في المرحلة S6 | مخطط |
@@ -18,8 +18,8 @@
 | FR-012 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-012 في المرحلة S7 | مخطط |
 | FR-013 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-013 في المرحلة S7 | مخطط |
 | FR-014 | متطلب وظيفي | S4 | AC-07: documented fact يولد warning projection مع source/date | متحقق في Gate 2 — PR #59 |
-| FR-015 | متطلب وظيفي | S4 | Customer history read يعرض الوقائع التي يوفرها backend فقط | متحقق في Gate 2 — PR #59 |
-| FR-016 | متطلب وظيفي | S4 | similar-work read فقط؛ historical authoritative pricing source معزول لمرحلة لاحقة | متحقق جزئيًا/معزول في Gate 2 — PR #59 |
+| FR-015 | متطلب وظيفي | S4 | `/warnings` + `/history` ضمن pre-agreement context، وعرض fact type/source/date قبل New Work submit | **PASS — Gate 3 final verification** |
+| FR-016 | متطلب وظيفي | S4 | similar-work read فقط؛ لا يوجد داخل S4 authoritative executed-price source، لذلك لا يُدّعى اكتمال الجزء السعري | **جزئي — similar-work S4 portion متحقق؛ authoritative price source DEFERRED** |
 | FR-017 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-017 في المرحلة S6 بعد حسم Q-001 | مخطط |
 | FR-018 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-018 في المرحلة S7 | مخطط |
 | FR-019 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-019 في المرحلة S7 | مخطط |
@@ -40,7 +40,7 @@
 | AC-04 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs`: Customer واحد مع عدة Works مستقلة | متحقق في Gate 2 — PR #59 |
 | AC-05 | معيار قبول | S7 | سيناريو قبول AC-05 | مخطط |
 | AC-06 | معيار قبول | S7 | سيناريو قبول AC-06 | مخطط |
-| AC-07 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs` + `s4_gate2_supervisory_repair.test.mjs`: documented fact ثم New Work لنفس Customer مع warning ظاهر قبل submit، وno-warning دون fact | متحقق في Gate 2 supervisory repair — PR #61 |
+| AC-07 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs` + `s4_gate2_supervisory_repair.test.mjs`: loading/error يمنعان submit، retry يفعّل، warning/history ظاهران قبل submit، وverified-none يسمح بالمتابعة | **PASS — Gate 3 fail-closed final verification** |
 | AC-08 | معيار قبول | S8 | سيناريو قبول AC-08 | مخطط |
 | AC-09 | معيار قبول | S8 | سيناريو قبول AC-09 | مخطط |
 | AC-10 | معيار قبول | S8 | سيناريو قبول AC-10 | مخطط |
@@ -53,7 +53,7 @@
 | P-03 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
 | P-04 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
 | P-05 | قرار معتمد | S5/S6 | اختبار الإلغاء أو الأرشفة وعدم الحذف في S5، واختبار تعديل السعر والموافقتين في S6 | مخطط |
-| P-06 | قرار معتمد | S4 | Customer identity/metadata، روابط الأعمال، الوقائع الموثقة، والتحذيرات في UI/API | متحقق في Gate 2 — PR #59 |
+| P-06 | قرار معتمد | S4 | **S4 portion PASS:** Customer identity/metadata، duplicate no-merge، روابط الأعمال، documented facts، history، warnings في UI/API؛ **financial dealings DEFERRED TO S7** | **S4 portion PASS؛ financial dealings DEFERRED TO S7** |
 | P-07 | قرار معتمد | S11 | مراجعة قاعدة العمل واختبار أثرها في S11 | مخطط |
 | S-01 | سيناريو | S6 | اختبار السعر الأساسي والإضافات والنتيجة 1800 | مخطط |
 | S-02 | سيناريو | S5/S6 | اختبار تاريخ العنوان وتكلفة التغيير | مخطط |
