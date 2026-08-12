@@ -13,6 +13,10 @@ const appSource = readFileSync(appPath, 'utf8');
 
 function createUiHarness(fetchImpl) {
   const root = { innerHTML: '', parentNode: null };
+  class FormDataShim {
+    constructor(form) { this.form = form; }
+    entries() { return Object.entries(this.form?.values || {}); }
+  }
   const document = {
     body: { append() {} },
     createElement() { return { className: '', textContent: '', parentNode: null, append() {}, remove() {}, addEventListener() {} }; },
@@ -27,6 +31,7 @@ function createUiHarness(fetchImpl) {
     fetch: fetchImpl,
     Headers,
     Response,
+    FormData: FormDataShim,
     URL,
     URLSearchParams,
     Intl,
@@ -58,13 +63,15 @@ test('supervisory UI behavior: optional customer name and controlled work status
   assert.doesNotMatch(workMarkup, /name="status" value=/);
 });
 
-test('supervisory UI behavior: AC-07 warning is visible before submit and absent without a fact', async () => {
+test('supervisory UI behavior: AC-07 and FR-015 render verified warnings and history before New Work submit', async () => {
   const calls = [];
   const { root, testApi } = createUiHarness(async (url) => {
-    calls.push(String(url));
-    const data = String(url).endsWith('/customer-with-warning/warnings')
+    const path = String(url); calls.push(path);
+    const data = path.endsWith('/customer-with-warning/warnings')
       ? [{ warning_type: 'NON_PAYMENT', source_ref: 'synthetic-before-agreement', happened_at: '2026-08-01T12:00:00.000Z' }]
-      : [];
+      : path.endsWith('/customer-with-warning/history')
+        ? [{ fact_type: 'NON_PAYMENT', source_ref: 'synthetic-history-reference', happened_at: '2026-08-01T12:00:00.000Z' }]
+        : [];
     return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'content-type': 'application/json' } });
   });
   await settle();
@@ -74,13 +81,20 @@ test('supervisory UI behavior: AC-07 warning is visible before submit and absent
 
   await testApi.openNewWork('customer-with-warning');
   assert.equal(calls.some(url => url.endsWith('/api/customers/customer-with-warning/warnings')), true);
+  assert.equal(calls.some(url => url.endsWith('/api/customers/customer-with-warning/history')), true);
+  assert.match(root.innerHTML, /data-pre-agreement-context="verified"/);
   assert.match(root.innerHTML, /data-pre-agreement-warning="present"/);
+  assert.match(root.innerHTML, /data-pre-agreement-history="present"/);
   assert.match(root.innerHTML, /synthetic-before-agreement/);
-  assert.match(root.innerHTML, /قبل إنشاء العمل/);
+  assert.match(root.innerHTML, /synthetic-history-reference/);
+  assert.equal(testApi.preAgreementCanSubmitNewWork('customer-with-warning'), true);
+  assert.doesNotMatch(testApi.workForm({ customer_id: 'customer-with-warning' }), /type="submit" disabled/);
 
   await testApi.openNewWork('customer-without-warning');
   assert.match(root.innerHTML, /data-pre-agreement-warning="none"/);
+  assert.match(root.innerHTML, /data-pre-agreement-history="none"/);
   assert.doesNotMatch(root.innerHTML, /synthetic-before-agreement/);
+  assert.equal(testApi.preAgreementCanSubmitNewWork('customer-without-warning'), true);
 });
 
 class D1Statement {
@@ -171,14 +185,49 @@ test('supervisory domain: happened_at is canonical, invalid dates are rejected, 
   } finally { database.close(); }
 });
 
-test('supervisory UI behavior: warning read failure is explicit and never rendered as no-warning', async () => {
-  const { root, testApi } = createUiHarness(async () => new Response(JSON.stringify({ ok: false, code: 'HTTP_503' }), { status: 503, headers: { 'content-type': 'application/json' } }));
+test('supervisory UI behavior: loading and read failure block New Work submit, then retry enables it only after verified context', async () => {
+  const calls = [];
+  let mode = 'loading';
+  let resolveWarnings; let resolveHistory;
+  const success = data => new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const { root, testApi } = createUiHarness(async (url, options = {}) => {
+    const path = String(url); calls.push({ path, method: options.method || 'GET' });
+    if (path.endsWith('/warnings')) {
+      if (mode === 'loading') return new Promise(resolve => { resolveWarnings = () => resolve(success([])); });
+      if (mode === 'error') return new Response(JSON.stringify({ ok: false, code: 'HTTP_503' }), { status: 503, headers: { 'content-type': 'application/json' } });
+      return success([]);
+    }
+    if (path.endsWith('/history')) {
+      if (mode === 'loading') return new Promise(resolve => { resolveHistory = () => resolve(success([])); });
+      return success([]);
+    }
+    return success([]);
+  });
   await settle();
   const state = testApi.getState();
   state.auth.status = 'signed_in';
   state.auth.tokenProvider = { getToken: async () => 'synthetic-token' };
-  await testApi.openNewWork('customer-warning-fetch-fails');
-  assert.match(root.innerHTML, /data-pre-agreement-warning="error"/);
-  assert.doesNotMatch(root.innerHTML, /data-pre-agreement-warning="none"/);
-  assert.match(root.innerHTML, /تعذر تحميل الوقائع الموثقة/);
+  const workValues = { customer_id: 'customer-context', title: 'Synthetic work', country: 'SYN_COUNTRY', status: 'NEW_REQUEST', relationship_kind: 'INDEPENDENT', quantity: '', university: '', specialty_key: '', work_type_key: '', subject_or_course_code: '', parent_work_id: '', description: '' };
+  const pending = testApi.openNewWork('customer-context');
+  await settle();
+  assert.match(root.innerHTML, /data-pre-agreement-context="loading"/);
+  assert.match(testApi.workForm({ customer_id: 'customer-context' }), /type="submit" disabled/);
+  assert.equal(testApi.preAgreementCanSubmitNewWork('customer-context'), false);
+  await testApi.submitWork({ preventDefault() {}, currentTarget: { values: workValues } });
+  assert.equal(calls.some(call => call.path.endsWith('/api/works') && call.method === 'POST'), false);
+  mode = 'success'; resolveWarnings(); resolveHistory(); await pending;
+  assert.equal(testApi.preAgreementCanSubmitNewWork('customer-context'), true);
+  assert.doesNotMatch(testApi.workForm({ customer_id: 'customer-context' }), /type="submit" disabled/);
+
+  mode = 'error';
+  await testApi.openNewWork('customer-error');
+  assert.match(root.innerHTML, /data-pre-agreement-context="error"/);
+  assert.doesNotMatch(root.innerHTML, /data-pre-agreement-context="verified"/);
+  assert.match(testApi.workForm({ customer_id: 'customer-error' }), /type="submit" disabled/);
+  assert.equal(testApi.preAgreementCanSubmitNewWork('customer-error'), false);
+  mode = 'success';
+  await testApi.refreshWorkCustomerContext('customer-error', {});
+  assert.equal(testApi.preAgreementCanSubmitNewWork('customer-error'), true);
+  assert.match(root.innerHTML, /data-pre-agreement-context="verified"/);
+  assert.doesNotMatch(testApi.workForm({ customer_id: 'customer-error' }), /type="submit" disabled/);
 });
