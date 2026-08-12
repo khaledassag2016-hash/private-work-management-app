@@ -389,3 +389,20 @@
 - `S5 = NOT_STARTED`.
 - `FINAL_MAIN_SHA` لا يسجل في هذا القسم قبل دمج PR الإصلاح؛ سيغير الدمج الرأس ويُسجل `REPAIR_SQUASH_SHA` في تعليق Issue #3 وتسليم الإصلاح فقط.
 - لم يحدث Cloud write أو Firebase write أو D1 Cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
+
+
+## S4 administrative closure — 2026-08-12
+
+- `S4_COMPLETE = TRUE`
+- `S4_STATUS = CLOSED_COMPLETE`
+- `ISSUE_3 = READY_TO_CLOSE`
+- `S5 = NOT_STARTED`
+- `S5_STATUS = AUTHORIZED_TO_START_AFTER_ISSUE_3_CLOSURE`
+- `Q_001..Q_004 = RESOLVED` (via D-009 to D-012)
+- `NEXT_ACTION = START_S5_UNDER_SEPARATE_S5_DELEGATION`
+- `D-009` (Q-001): تغيير النسبة الاستثنائية لعمل معين يتطلب موافقة الحسابين المختلفين، مع حفظ السبب والطالب والموافق والتوقيت وسجل التدقيق. لا يستطيع مقدم الطلب اعتماد طلبه بوصفه الموافقة الثانية.
+- `D-010` (Q-002): تصحيح أو إلغاء دفعة مسجلة يتم بقيد عكسي موثق، دون حذف أو تعديل يمحو القيد الأصلي، مع سبب وموافقة الحسابين المختلفين وسجل تدقيق كامل.
+- `D-011` (Q-003): اعتماد إقفال شهري ناعم للتسويات. بعد الإقفال لا تعدل الفترة المقفلة بصورة عادية. إعادة الفتح استثنائية وتتطلب موافقة الحسابين المختلفين مع السبب والطالب والموافق والتوقيت وسجل التدقيق. لا حذف أو إعادة كتابة للتاريخ.
+- `D-012` (Q-004): عند ناتج مالي يحتوي كسور هللة، يكون التقريب إلى أقرب هللة، وعند التعادل الدقيق 0.5 هللة يستخدم half-up إلى الهللة التالية. تبقى القيم المخزنة أعدادًا صحيحة من الهللات وفق D-006.
+- الحدود المغلقة إشرافيًا: `FR-006` soft-warning portion = PASS (generic-title deferred)، `FR-016` read boundary = PASS (price source deferred to S6)، `P-06` S4 portion = PASS (financial dealings deferred to S7).
+- لم يحدث Cloud write أو Firebase write أو D1 Cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
