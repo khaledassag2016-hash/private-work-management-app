@@ -1028,10 +1028,15 @@ export async function createClientPayment(env, actorUid, requestId, workId, inpu
   const id = newId('payment');
   const createdAt = nowIso();
   const after = { id, work_id: workId, amount_halalas: amountHalalas, effective_at: effectiveAt, payment_method: paymentMethod, note, received_by: receivedBy, recorded_by: actorUid, created_at: createdAt, work_version: version, request_id: requestId };
-  const workMutation = env.DB.prepare(`UPDATE works SET version=version+1, updated_by=?1, updated_at=?2 WHERE id=?3 AND version=?4`).bind(actorUid, createdAt, workId, version);
+  const workMutation = env.DB.prepare(`UPDATE works SET version=version+1, updated_by=?1, updated_at=?2
+    WHERE id=?3 AND version=?4`).bind(actorUid, createdAt, workId, version);
   const paymentMutation = env.DB.prepare(`INSERT INTO client_payments(id,work_id,amount_halalas,effective_at,payment_method,note,received_by,recorded_by,created_at,work_version,request_id)
-    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`).bind(id, workId, amountHalalas, effectiveAt, paymentMethod, note, receivedBy, actorUid, createdAt, version, requestId);
-  const audit = auditStatement(env, 'client_payment', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, `${requestId}:payment`, createdAt);
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11
+    WHERE EXISTS (SELECT 1 FROM works WHERE id=?12 AND version=?13 AND updated_by=?14 AND updated_at=?15)`)
+    .bind(id, workId, amountHalalas, effectiveAt, paymentMethod, note, receivedBy, actorUid, createdAt, version, requestId, workId, version + 1, actorUid, createdAt);
+  const audit = auditStatementWhen(env, 'client_payment', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, `${requestId}:payment`, createdAt,
+    'EXISTS (SELECT 1 FROM client_payments WHERE id=?10 AND request_id=?11) AND EXISTS (SELECT 1 FROM works WHERE id=?12 AND version=?13 AND updated_by=?14 AND updated_at=?15)',
+    [id, requestId, workId, version + 1, actorUid, createdAt]);
   const results = await executeBatch(env, [workMutation, paymentMutation, audit]);
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
   return { payment: after, financials: await getWorkFinancials(env, workId), idempotent_replay: false };

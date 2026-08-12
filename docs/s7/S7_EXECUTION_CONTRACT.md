@@ -69,17 +69,26 @@ The S7 internal D1 read budget is at most 40 queries per Worker invocation, with
 
 ## Requirement and risk traceability
 
+The exact mandatory test names below are the review contract. The names are intentionally copied verbatim from `tests/node/s7_pr_a_payments.test.mjs` so a missing or renamed requirement is review-visible.
+
 | Requirement or risk | Test file and exact test | Required assertions and layer |
 |---|---|---|
-| Integer money and deterministic parsing | `tests/node/s7_pr_a_payments.test.mjs` — `S7 money parsing rejects malformed, over-precision, and unsafe amounts before mutation` | Domain: exact halalas, rejection, zero database mutation |
-| One Work and multiple payments | `s7_pr_a_payments.test.mjs` — `S7 records irregular payments for one Work and reaches zero` | Domain: immutable rows, accumulated approved paid, exact remaining zero |
-| Zero and partial payment / AC-06 | `s7_pr_a_payments.test.mjs` — `S7 zero and partial collection stay separate from execution` | Domain: unpaid/partial descriptors, unchanged execution status |
-| S6 price authority | `s7_pr_a_payments.test.mjs` — `S7 consumes approved S6 current price` | Domain: approved `price_movements` value used; legacy sentinel ignored |
-| D-010 both directions | `s7_pr_a_payments.test.mjs` — `S7 reversal requires other-account approval in both directions` | Domain: U1→U2 and U2→U1, self-approval rejection, pending no effect |
-| Reversal replay/stale/mismatch | `s7_pr_a_payments.test.mjs` — `S7 reversal races and stale mismatches fail closed` | Domain: exactly one reversal, no duplicate audit, zero side effects on reject |
-| Append-only and migration | `s7_pr_a_payments.test.mjs` — `S7 migration preserves S6 rows and payment audit guards` | Migration: historical rows, trigger/index validity, update/delete rejection |
-| API/SPA envelope | `s7_pr_a_payments.test.mjs` — `S7 API exposes payment and reversal envelopes` | Worker HTTP: `{ok,data,requestId}` and normalized errors |
-| No N+1 | `s7_pr_a_query_budget.test.mjs` — `S7 financial reads remain bounded with large payment fixtures` | Instrumented D1: fixed count, reset immediately before read, no row-wise growth |
+| Positive integer-money parsing and invalid-input rejection | `tests/node/s7_pr_a_payments.test.mjs` — `S7 money parsing accepts positive canonical amounts and rejects malformed, over-precision, unsafe, and zero amounts before mutation` | Domain: exact halalas, positive acceptance, rejection, zero database mutation |
+| One-Work payments and collection closure | `tests/node/s7_pr_a_payments.test.mjs` — `S7 multiple payments derive approved paid and zero remaining without changing execution status` | Domain: irregular immutable facts, exact remaining zero, execution-status separation |
+| Overpayment fail-closed policy | `tests/node/s7_pr_a_payments.test.mjs` — `S7 overpayment is fail-closed and leaves no payment mutation` | Domain: unresolved overpayment edge rejects before persistence |
+| Stale/concurrent payment atomicity | `tests/node/s7_pr_a_payments.test.mjs` — `S7 actual stale and concurrent Work races leave no partial payment or audit` | Domain/transaction: one winner, one loser, one Work version increment, one payment, one audit |
+| Idempotency | `tests/node/s7_pr_a_payments.test.mjs` — `S7 idempotency replays one payment without a second Work update or audit row` | Domain: same request replay and cross-Work request-id reuse fail closed |
+| Unauthorized and mismatch boundaries | `tests/node/s7_pr_a_payments.test.mjs` — `S7 stale unauthorized and mismatch payment attempts fail closed` | Domain: unauthorized actor, stale Work version, payment/Work mismatch, zero side effects |
+| Audit atomicity | `tests/node/s7_pr_a_payments.test.mjs` — `S7 audit failure rolls back Work version and payment with no partial audit effect` | Transaction: audit abort rolls back Work update, payment row, and audit row |
+| Completed unpaid/partial collection | `tests/node/s7_pr_a_payments.test.mjs` — `S7 completed unpaid and partial collection remain separate from execution status` | Domain: completed Work may be unpaid/partial without status mutation |
+| D-010 corrected payment | `tests/node/s7_pr_a_payments.test.mjs` — `S7 corrected payment is a new fact after approved reversal` | Domain: original retained, approved reversal applied, corrected payment has new identity |
+| S6 price authority and price boundaries | `tests/node/s7_pr_a_payments.test.mjs` — `S7 S6 price authority rejects PRICE_UNSET and legacy sentinel but accepts approved zero-price truth` | Domain: approved `price_movements` authority, `PRICE_UNSET`, zero-price truth, no fake payment |
+| D-010 both directions | `tests/node/s7_pr_a_payments.test.mjs` — `S7 reversal requires other-account approval in both directions and pending has no effect` | Domain: U1→U2 and U2→U1, self-approval rejection, pending no effect |
+| Reversal stale/unauthorized/mismatch | `tests/node/s7_pr_a_payments.test.mjs` — `S7 stale unauthorized and mismatch reversal attempts fail closed` | Domain: stale request and mismatched payment/Work fail closed |
+| Archive history preservation | `tests/node/s7_pr_a_payments.test.mjs` — `S7 archive approval preserves append-only archive history` | Domain: S5 archive history retained and append-only |
+| Migration preservation | `tests/node/s7_pr_a_payments.test.mjs` — `S7 migration preservation retains S6 rows and installs append-only payment audit guards` | Migration: historical rows, audit entity types, trigger/index validity, update/delete rejection |
+| D1 query and bind budgets | `tests/node/s7_pr_a_payments.test.mjs` — `S7 D1 query and bind budgets remain bounded for large payment history` | Instrumented D1: fixed query counts, max bind width ≤100, no row-wise growth, measured output |
+| Reversal API envelope | `tests/node/s7_pr_a_payments.test.mjs` — `S7 reversal API exposes payment and reversal envelopes` | Worker HTTP: `{ok,data,requestId}`, reversal request, approval, authoritative refetch |
 
 ## Explicit unresolved boundaries
 
