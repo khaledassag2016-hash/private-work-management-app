@@ -26,18 +26,19 @@
 
 ## 3. الحالة الحالية
 
-هذه الحالة تصبح الحالة التشغيلية المعتمدة بعد Squash-merge لـPR #70 والتحقق بعد الدمج:
+هذه الحالة تصبح نافذة بعد نجاح final-head CI وSquash-merge لـPR #73 والتحقق من `main` بعد الدمج وإغلاق Issue #5:
 
 - `S1 = CLOSED_COMPLETE`.
 - `S2 = CLOSED_COMPLETE`.
 - `S3 = CLOSED_BLOCKED_DEFERRED` وفق D-008، وليست S3 COMPLETE.
 - `S4 = CLOSED_COMPLETE`.
 - `S5 = CLOSED_COMPLETE`.
-- `S5_COMPLETE = TRUE`.
-- Issue #4 تغلق completed بعد تحقق PR #70.
-- `S6 = AUTHORIZED_NOT_STARTED`.
-- Issue #5 `[S6] الأسعار وطلبات الموافقة الثنائية` هي المرحلة التالية.
-- S7 وما بعدها لم تبدأ.
+- `S6 = CLOSED_COMPLETE`.
+- `S6_COMPLETE = TRUE`.
+- Issue #5 تغلق completed بعد تحقق PR #73.
+- `S7 = AUTHORIZED_NOT_STARTED`.
+- Issue #6 `[S7] الدفعات والتسويات والمصاريف` هي المرحلة التالية.
+- S8 وما بعدها لم تبدأ.
 
 ### S5 evidence chain
 
@@ -50,10 +51,26 @@
   - final-head CI: S3 `31607393828` SUCCESS؛ S2 `31607393809` SUCCESS
   - Node `65/65`، Python `80/80`، Pester `291/291`، Foundation/S2/Secret Scan/Payload-ZIP PASS
   - post-merge S3 run `31607788819` SUCCESS
-- PR-C #70:
-  - final-verification/administrative closure only
-  - no runtime feature change and no S6 implementation
-  - evidence: `docs/s5/S5_FINAL_VERIFICATION.md`
+- PR-C #70: final-verification/administrative closure only; evidence `docs/s5/S5_FINAL_VERIFICATION.md`.
+
+### S6 evidence chain
+
+- PR-A #71:
+  - base `c26c874c19054c610b273150d533938552036c42`
+  - final head `0b18c62cc0c8c5ab025b7473e5a23e3243babf63`
+  - Squash/main `281ca5490f9c498d0f34a71c6081e65108e89abe`
+  - final-head CI: Foundation `31614196766` SUCCESS؛ S2 `31614196675` SUCCESS؛ S3 `31614196721` SUCCESS
+- PR-B #72:
+  - base `281ca5490f9c498d0f34a71c6081e65108e89abe`
+  - final head `fdbd7f0fe21409849ad98a161aac4a3dde72bf8b`
+  - Squash/main `0de57ef07f015506c0ef9afa9956413916743442`
+  - final-head CI: Foundation `31618901526` SUCCESS؛ S2 `31618901361` SUCCESS؛ S3 `31618901360` SUCCESS
+  - post-merge Foundation `31619376196` SUCCESS
+  - post-merge S3 `31619376114` SUCCESS on attempt 2; attempt 1 failed only during external PowerShell archive download with `curl (56) Connection died`, before implementation/test execution
+- PR-C #73:
+  - branch `s6/pr-c-final-verification-closure`
+  - base `0de57ef07f015506c0ef9afa9956413916743442`
+  - docs/admin only; evidence `docs/s6/S6_FINAL_VERIFICATION.md`
 
 ## 4. ما ثبت في S5
 
@@ -62,12 +79,23 @@
 - FR-023: لا hard delete؛ الإلغاء/الأرشفة يبقيان السجل والتاريخ قابلين للتتبع.
 - AC-03: A→B→C يحتفظ بالتاريخ.
 - AC-12 وP-05 S5: CANCEL/ARCHIVE يحتاجان حسابين مختلفين، ولا self-approval.
-- CANCEL يطلب target execution status صريحًا من القيمتين المعتمدتين.
-- ARCHIVE مستقل عن execution status ولا يحوله إلى `ARCHIVED`.
-- execution status وcollection-status boundary معروضان منفصلين؛ S5 لا تخترع حالة تحصيل ولا تشتقها من `price_state`.
-- backend هو السلطة، مع stale/concurrency/duplicate fail-safe وappend-only audit/history.
+- execution status وcollection-status boundary معروضان منفصلين؛ S5 لا تخترع حالة تحصيل.
 
-## 5. القرارات الحالية المهمة
+## 5. ما ثبت في S6
+
+- FR-009: BASE / increase / decrease / discount موثقة كسجل حركات معتمد؛ السابق والجديد والسبب والطرفان والتوقيت محفوظة.
+- FR-010: السعر الحالي السلطوي مشتق من حركات S6 المعتمدة، وتُعاد الحصص منه دون الاعتماد على legacy S4 price sentinel.
+- FR-017: 30/70 افتراضي، والاستثناء الموثق يحتاج حسابين مختلفين وفق D-009.
+- AC-02: تدفقات 1500 ثم الزيادات/النقص والخصم ثبتت مع history وإعادة فتح.
+- P-05 S6: تعديل السعر request → other-account approval؛ self-approval مرفوض.
+- D-012: nearest halala وexact .5 half-up لكل حصة بشكل مستقل، بلا residual rebalance.
+- pending لا يغير الحقيقة المعتمدة؛ stale/duplicate fail closed.
+- `S6_NEGATIVE_FINAL_PRICE_POLICY_UNRESOLVED` يبقى fail-closed دون اختراع قرار منتج.
+- Work/list/similar/UI تستخدم `pricing_state`, `current_price_halalas`, `pricing_source = S6_APPROVED_PRICE_MOVEMENTS` كمصدر حاكم؛ legacy S4 fields محفوظة لكنها غير سلطوية.
+- D1 query budget: 200 Work في `listWorks` = 3 read queries وبحد أقصى 100 bindings لكل bulk query؛ 50 similar Works = 3 read queries؛ لا N+1 pricing reads.
+- لا payment ledger أو settlement/expense/subscription/transfer mutations من S7.
+
+## 6. القرارات الحالية المهمة
 
 - D-006: Workers Free + Workers Static Assets + D1 Free + Firebase Authentication Spark/Email-Password؛ حسابان فقط؛ لا Billing/بطاقة/خدمة مدفوعة؛ الأموال integer halalas ولا floating point.
 - D-007: لا direct main؛ final-head CI؛ stable refs لا تتحرك تلقائيًا.
@@ -76,11 +104,9 @@
 - D-010 / Q-002: تصحيح/إلغاء دفعة بقيد عكسي موثق وموافقتين؛ S7.
 - D-011 / Q-003: soft monthly close وإعادة فتح استثنائية بموافقتين؛ S7.
 - D-012 / Q-004: nearest halala؛ exact 0.5 halala tie = half-up.
-- D-013: استثناء تشغيلي خاص بـS5 فقط؛ **لا يمتد إلى S6**.
+- D-013: استثناء تشغيلي خاص بـS5 فقط؛ **لا يمتد إلى S6 أو S7**.
 
-لا توجد Q-001..Q-004 مفتوحة حاليًا؛ كلها محسومة في DECISION_LOG.
-
-## 6. ضوابط غير قابلة للتجاوز
+## 7. ضوابط غير قابلة للتجاوز
 
 - لا direct edits على `main`.
 - كل مرحلة/إصلاح في branch وPR مستقل.
@@ -92,7 +118,7 @@
 - لا قرار منتج مفترض؛ أي نقص غير محسوم يعود للإشراف.
 - لا stable promotion تلقائيًا.
 
-## 7. المعمارية الحالية
+## 8. المعمارية الحالية
 
 - API: Cloudflare Workers Free.
 - الواجهة: Cloudflare Workers Static Assets.
@@ -100,41 +126,40 @@
 - المصادقة: Firebase Authentication Spark، Email/Password، حسابان ينشئهما المشرف.
 - self-sign-up وPhone/SMS وAnonymous ومزودو الهوية الآخرون معطلون وفق D-006.
 - APIs الخاصة fail closed؛ D1 لا يُوصل مباشرة من المتصفح.
+- S7 يجب أن يحافظ على bounded D1 reads؛ لا N+1 financial list/read models.
 
-## 8. بدء S6
+## 9. بدء S7
 
-S6 = Issue #5: **الأسعار وطلبات الموافقة الثنائية**.
+S7 = Issue #6: **الدفعات والتسويات والمصاريف**.
 
-لا يبدأ التنفيذ من PR #69 أو فرع S5. يجب بعد إغلاق S5:
+لا يبدأ التنفيذ من PR #72 أو أي فرع S6. بعد الإغلاق النهائي لـPR #73 يجب:
 
-1. قراءة `main` بعد Squash-merge لـPR #70.
-2. تثبيت SHA الناتج بوصفه `S6_BASE_MAIN_SHA`.
-3. قراءة Word + DECISION_LOG + PROJECT_STATE + TRACEABILITY + Issue #5 + `FINANCIAL_INTEGER_RULE.md` + عقد S5 الفعلي.
-4. تفعيل تعليمات S6 المستقلة صراحة.
-5. بدء PR-A المالي من ذلك SHA فقط.
+1. قراءة `main` النهائي بعد Squash-merge لـPR #73 وتثبيت SHA الناتج بوصفه `S7_BASE_MAIN_SHA`.
+2. قراءة Word + DECISION_LOG + PROJECT_STATE + TRACEABILITY + Issue #6 + `FINANCIAL_INTEGER_RULE.md` + عقد S6 الفعلي.
+3. استخدام تعليمات S7 `FINAL_ACTIVATED` فقط؛ Prepared V3 ليست إذن تنفيذ.
+4. بدء S7 PR-A فقط من ذلك SHA.
 
-حدود S6:
+حدود S7 المعتمدة قبل التفعيل النهائي:
 
-- الحركات السعرية، السعر الحالي، النسب والحصص، الموافقة الثنائية على تعديل السعر، وإعادة الحساب ضمن FR-009/010/017 وAC-02 وP-05 S6.
-- D-009 يحكم النسبة الاستثنائية.
-- لا payment ledger أو تسويات أو مصاريف أو اشتراكات أو تحويلات من S7.
-- كل مبلغ integer halalas؛ لا floating-point financial math.
+- ordinary payment واحد يرتبط بـWork واحد؛ multi-work payment allocation يبقى `DEFERRED / NO_STAGE_ASSIGNED` ما لم يصدر قرار معتمد لاحقًا.
+- الاشتراكان: `subscription_count = 2` والإجمالي الحالي `136.5 SAR = 13,650 halalas`؛ لا تُخترع أسماء أو قيم فردية أو تقسيم 68.25/68.25.
+- الأسماء والقيم الفردية للاشتراكين `UNKNOWN / OPTIONAL UNTIL EXPLICITLY PROVIDED/APPROVED`، ولا تمنع استخدام الإجمالي عندما تكفي القاعدة الحاكمة.
+- تصحيح/إلغاء payment يخضع D-010 reversal، وإعادة فتح settlement تخضع D-011.
+- كل القيم المالية integer halalas، no float financial math.
+- N+1 D1 reads ممنوعة؛ يلزم query-budget regression بقياس فعلي على fixtures كبيرة.
+- لا S8 analytics/export scope.
 
-## 9. درس جودة ملزم من S5 إلى S6
+## 10. درس جودة مستمر
 
-في إصلاح S5، كان هناك اختبار UI عنوانه يوحي بأنه يثبت `ARCHIVE both directions` بينما assertions داخل ذلك الاختبار لم تنفذ الاتجاهين فعليًا؛ الإثبات الكامل وُضع في domain test آخر. لم يكن ذلك عيبًا وظيفيًا نهائيًا لأن السلوك ثبت في طبقة domain ومسار UI العام اختُبر منفصلًا، لكنه كشف ضعفًا في traceability.
+- لا تعتبر اسم test أو تقرير الوكيل دليلًا؛ المعيار هو assertions والطبقة الفعلية.
+- لكل claim: `Requirement/Risk → exact test file → exact test name → exact assertions`.
+- approval both-directions المطلوب في UI يجب أن ينفذ الاتجاهين داخل UI test نفسه إذا كان الادعاء UI-layer.
+- API/SPA envelope يجب أن يبقى عقدًا موحدًا.
+- mutation write success لا يساوي refreshed UI success؛ لا نجاح UX نهائي قبل authoritative refetch.
+- النص العربي المرئي يحتاج sanity scan.
+- أي list/read مالي جديد يجب اختباره ضد D1 query budget، لا فحص مصدر فقط.
 
-لذلك في S6:
-
-- لا تعتبر اسم test أو تقرير الوكيل دليلًا.
-- لكل claim في التقرير يجب وجود mapping: `Requirement/Risk → exact test file → exact test name → exact assertions`.
-- إذا كان معيار القبول يطلب الاتجاهين U1→U2 وU2→U1، يجب أن ينفذهما الاختبار المطلوب في **الطبقة المحددة**؛ لا تستبدل UI acceptance باختبار backend فقط.
-- قبل تسليم PASS، افحص أن test name لا يدعي أكثر مما تثبته assertions.
-- API/SPA response envelope يجب مراجعته عقديًا قبل دمج UI حتى لا تتكرر مشكلة `/private/ping`.
-- mutation success لا يعني أن UI أصبحت authoritative؛ لا success UX كاملًا قبل refetch ناجح، وإذا نجحت الكتابة وفشل refetch يعرض split outcome واضحًا.
-- نفذ sanity scan للنص العربي المرئي حتى لا تمر أخطاء نصية بسيطة أثناء التركيز على المخاطر العالية.
-
-## 10. Stable refs
+## 11. Stable refs
 
 لا تحرك تلقائيًا:
 
