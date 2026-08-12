@@ -356,11 +356,20 @@ export async function createWork(env, actorUid, requestId, input) {
   if (priceState === 'PRICE_ZERO' && input.price_minor_units !== 0) throw new DomainError('PRICE_ZERO_VALUE_REQUIRED', 400);
   if (priceState === 'PRICE_UNSET' && input.price_minor_units !== undefined && input.price_minor_units !== null) throw new DomainError('PRICE_UNSET_VALUE_FORBIDDEN', 400);
   const id = newId('work'); const createdAt = nowIso();
-  const after = { id, customer_id: validated.customerId, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, price_state: priceState, price_minor_units: priceState === 'PRICE_ZERO' ? 0 : null, created_by: actorUid, created_at: createdAt, updated_by: actorUid, updated_at: createdAt, version: 1 };
-  const mutation = env.DB.prepare(`INSERT INTO works(id,customer_id,parent_work_id,relationship_kind,title,work_type_key,specialty_key,subject_or_course_code,country,university,status,description,quantity,price_state,price_minor_units,created_by,created_at,updated_by,updated_at,version)
-    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?16,?17,1)`).bind(id, after.customer_id, after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, after.price_state, after.price_minor_units, actorUid, createdAt);
+  const confirmedAt = input.confirmed_at === undefined || input.confirmed_at === null ? null : canonicalEventTimestamp(input.confirmed_at);
+  await prbEnsureWorkAffectedPeriods(env, null, confirmedAt);
+  const after = { id, customer_id: validated.customerId, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, price_state: priceState, price_minor_units: priceState === 'PRICE_ZERO' ? 0 : null, created_by: actorUid, created_at: createdAt, updated_by: actorUid, updated_at: createdAt, confirmed_at: confirmedAt, version: 1 };
+  const mutation = env.DB.prepare(`INSERT INTO works(id,customer_id,parent_work_id,relationship_kind,title,work_type_key,specialty_key,subject_or_course_code,country,university,status,description,quantity,price_state,price_minor_units,created_by,created_at,updated_by,updated_at,confirmed_at,version)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?16,?17,?18,1)`).bind(id, after.customer_id, after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, after.price_state, after.price_minor_units, actorUid, createdAt, confirmedAt);
   const audit = auditStatement(env, 'work', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
-  await executeBatch(env, [mutation, audit]);
+  try {
+    await executeBatch(env, [mutation, audit]);
+  } catch (error) {
+    if (!(error instanceof Error) || !/no column named confirmed_at/.test(error.message)) throw error;
+    const legacyMutation = env.DB.prepare(`INSERT INTO works(id,customer_id,parent_work_id,relationship_kind,title,work_type_key,specialty_key,subject_or_course_code,country,university,status,description,quantity,price_state,price_minor_units,created_by,created_at,updated_by,updated_at,version)
+      VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?16,?17,1)`).bind(id, after.customer_id, after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, after.price_state, after.price_minor_units, actorUid, createdAt);
+    await executeBatch(env, [legacyMutation, audit]);
+  }
   return workMutationResponse(after);
 }
 
@@ -387,6 +396,8 @@ export async function listWorks(env, query = {}) {
 export async function updateWork(env, actorUid, requestId, id, input) {
   await ensureActor(env, actorUid);
   const before = await getWorkRaw(env, id);
+  const nextConfirmedAt = input.confirmed_at === undefined ? (before.confirmed_at ?? null) : (input.confirmed_at === null ? null : canonicalEventTimestamp(input.confirmed_at));
+  await prbEnsureWorkAffectedPeriods(env, before.confirmed_at ?? null, nextConfirmedAt);
   const version = positiveVersion(input.version);
   if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
   if (input.price_state !== undefined || input.price_minor_units !== undefined) throw new DomainError('PRICING_OUT_OF_SCOPE', 400);
@@ -394,10 +405,17 @@ export async function updateWork(env, actorUid, requestId, id, input) {
   const validated = await validateWorkInput(env, { ...input, customer_id: before.customer_id }, before);
   if (input.status !== undefined && input.status !== before.status) throw new DomainError('STATUS_CHANGE_OUT_OF_SCOPE', 400);
   const updatedAt = nowIso();
-  const after = { ...before, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, updated_by: actorUid, updated_at: updatedAt, version: version + 1 };
-  const mutation = env.DB.prepare(`UPDATE works SET parent_work_id=?1,relationship_kind=?2,title=?3,work_type_key=?4,specialty_key=?5,subject_or_course_code=?6,country=?7,university=?8,status=?9,description=?10,quantity=?11,updated_by=?12,updated_at=?13,version=version+1 WHERE id=?14 AND version=?15`).bind(after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, actorUid, updatedAt, id, version);
+  const after = { ...before, parent_work_id: validated.parentWorkId, relationship_kind: validated.relationshipKind, title: validated.title, work_type_key: validated.workTypeKey, specialty_key: validated.specialtyKey, subject_or_course_code: validated.subject, country: validated.country, university: validated.university, status: validated.status, description: validated.description, quantity: validated.quantity, confirmed_at: nextConfirmedAt, updated_by: actorUid, updated_at: updatedAt, version: version + 1 };
+  const mutation = env.DB.prepare(`UPDATE works SET parent_work_id=?1,relationship_kind=?2,title=?3,work_type_key=?4,specialty_key=?5,subject_or_course_code=?6,country=?7,university=?8,status=?9,description=?10,quantity=?11,confirmed_at=?12,updated_by=?13,updated_at=?14,version=version+1 WHERE id=?15 AND version=?16`).bind(after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, nextConfirmedAt, actorUid, updatedAt, id, version);
   const audit = auditStatement(env, 'work', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
-  const results = await executeBatch(env, [mutation, audit]);
+  let results;
+  try {
+    results = await executeBatch(env, [mutation, audit]);
+  } catch (error) {
+    if (!(error instanceof Error) || !/no such column: confirmed_at/.test(error.message)) throw error;
+    const legacyMutation = env.DB.prepare(`UPDATE works SET parent_work_id=?1,relationship_kind=?2,title=?3,work_type_key=?4,specialty_key=?5,subject_or_course_code=?6,country=?7,university=?8,status=?9,description=?10,quantity=?11,updated_by=?12,updated_at=?13,version=version+1 WHERE id=?14 AND version=?15`).bind(after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, actorUid, updatedAt, id, version);
+    results = await executeBatch(env, [legacyMutation, audit]);
+  }
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
   return workMutationResponse(after);
 }
@@ -526,6 +544,27 @@ async function handleApi(request, env, requestId, scenario, user) {
   if (parts[1] === 'works' && parts.length === 2) {
     if (method === 'GET') return Response.json({ ok: true, data: await listWorks(env, Object.fromEntries(url.searchParams.entries())), requestId });
     if (method === 'POST') return Response.json({ ok: true, data: await createWork(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'transfers' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listInterPartyTransfers(env, Object.fromEntries(url.searchParams.entries())), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createInterPartyTransfer(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'subscriptions' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listSubscriptionHistory(env), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createSubscriptionHistory(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'expenses' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listCommonExpenses(env), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createCommonExpense(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'settlements') {
+    if (parts.length === 3 && parts[2] === 'preview' && method === 'GET') return Response.json({ ok: true, data: await getSettlementPreview(env, url.searchParams.get('period_key') || '', Object.fromEntries(url.searchParams.entries())), requestId });
+    if (parts.length === 4 && parts[3] === 'close' && method === 'POST') return Response.json({ ok: true, data: await closeSettlement(env, user.uid, requestId, decodeURIComponent(parts[2]), body), requestId }, { status: 201 });
+    if (parts.length === 4 && parts[3] === 'reopen-requests') {
+      if (method === 'GET') return Response.json({ ok: true, data: await listSettlementReopenRequests(env, decodeURIComponent(parts[2])), requestId });
+      if (method === 'POST') return Response.json({ ok: true, data: await createSettlementReopenRequest(env, user.uid, requestId, decodeURIComponent(parts[2]), body), requestId }, { status: 201 });
+    }
+    if (parts.length === 6 && parts[3] === 'reopen-requests' && parts[5] === 'approve' && method === 'POST') return Response.json({ ok: true, data: await approveSettlementReopenRequest(env, user.uid, requestId, decodeURIComponent(parts[2]), decodeURIComponent(parts[4])), requestId });
   }
   if (parts[1] === 'works' && parts.length >= 3) {
     const workId = decodeURIComponent(parts[2]);
@@ -1016,6 +1055,7 @@ export async function createClientPayment(env, actorUid, requestId, workId, inpu
   const amountHalalas = parseMoneyHalalas(input.amount_riyals);
   if (amountHalalas <= 0) throw new DomainError('PAYMENT_AMOUNT_INVALID', 400);
   const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
   const paymentMethod = validatePaymentMethod(input.payment_method);
   const note = optionalString(input.note, 'PAYMENT_NOTE_INVALID');
   const receivedBy = input.received_by === undefined ? actorUid : requiredString(input.received_by, 'RECEIVED_BY_REQUIRED');
@@ -1098,6 +1138,7 @@ export async function createPaymentReversalRequest(env, actorUid, requestId, wor
   const payment = await env.DB.prepare('SELECT * FROM client_payments WHERE id=?1').bind(paymentId).first();
   if (!payment) throw new DomainError('PAYMENT_NOT_FOUND', 404);
   if (payment.work_id !== workId) throw new DomainError('PAYMENT_WORK_MISMATCH', 404);
+  await prbEnsurePeriodOpen(env, payment.effective_at);
   const existing = await env.DB.prepare('SELECT state FROM payment_reversal_requests WHERE payment_id=?1 ORDER BY requested_at DESC,id DESC LIMIT 1').bind(paymentId).first();
   if (existing?.state === 'PENDING') throw new DomainError('REVERSAL_ALREADY_PENDING', 409);
   if (existing?.state === 'APPROVED') throw new DomainError('REVERSAL_ALREADY_APPROVED', 409);
@@ -1122,6 +1163,7 @@ export async function approvePaymentReversalRequest(env, actorUid, requestId, wo
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const payment = await env.DB.prepare('SELECT * FROM client_payments WHERE id=?1 AND work_id=?2').bind(requestRow.payment_id, workId).first();
   if (!payment) throw new DomainError('PAYMENT_NOT_FOUND', 404);
+  await prbEnsurePeriodOpen(env, payment.effective_at);
   const beforeWork = await getWorkRaw(env, workId);
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
   const approvedAt = nowIso();
@@ -1171,6 +1213,7 @@ export async function createPriceChangeRequest(env, actorUid, requestId, workId,
   if (currentMovements.length && movementType === 'BASE') throw new DomainError('BASE_ALREADY_SET', 400);
   const reason = requiredString(input.reason, 'REASON_REQUIRED');
   const effectiveAt = canonicalEventTimestamp(input.effective_at === undefined ? nowIso() : input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
   const id = newId('price_req');
   const requestedAt = nowIso();
   const after = { id, work_id: workId, movement_type: movementType, amount_halalas: amountHalalas, reason, effective_at: effectiveAt, requested_by: actorUid, requested_at: requestedAt, work_version: version, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };
@@ -1186,6 +1229,7 @@ export async function approvePriceChangeRequest(env, actorUid, requestId, workId
   const requestRow = await env.DB.prepare('SELECT * FROM price_change_requests WHERE id=?1').bind(requestIdToApprove).first();
   if (!requestRow) throw new DomainError('PRICE_REQUEST_NOT_FOUND', 404);
   if (requestRow.work_id !== workId) throw new DomainError('REQUEST_WORK_MISMATCH', 404);
+  await prbEnsurePeriodOpen(env, requestRow.effective_at);
   if (requestRow.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const beforeWork = await getWorkRaw(env, workId);
@@ -1236,6 +1280,7 @@ export async function listRatioHistory(env, workId) {
 export async function createRatioChangeRequest(env, actorUid, requestId, workId, input) {
   await ensureActor(env, actorUid);
   const beforeWork = await getWorkRaw(env, workId);
+  await prbEnsurePeriodOpen(env, beforeWork.created_at);
   const version = positiveVersion(input.version);
   if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
   const nextRatio = validateRatioBps(input.person_1_bps, input.person_2_bps);
@@ -1261,6 +1306,7 @@ export async function approveRatioChangeRequest(env, actorUid, requestId, workId
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const beforeWork = await getWorkRaw(env, workId);
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
+  await prbEnsurePeriodOpen(env, beforeWork.created_at);
   const oldRatio = await currentRatio(env, workId);
   const approvedAt = nowIso();
   const historyId = newId('ratio_hist');
@@ -1277,4 +1323,312 @@ export async function approveRatioChangeRequest(env, actorUid, requestId, workId
   const results = await executeBatch(env, [workMutation, requestMutation, historyMutation, auditRequest, auditHistory]);
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
   return { request: afterRequest, history: afterHistory, financials: await getWorkFinancials(env, workId) };
+}
+
+// S7 PR-B Transfers / Subscriptions / Expenses / Settlement Core.
+
+function prbParty(value, code = 'PARTY_INVALID') {
+  const party = requiredString(value, code);
+  if (party !== 'person_1' && party !== 'person_2') throw new DomainError(code, 400);
+  return party;
+}
+function prbPositiveMoney(value, code = 'MONEY_INVALID') {
+  const amount = parseMoneyHalalas(value);
+  if (amount <= 0) throw new DomainError(code, 400);
+  return amount;
+}
+function prbPeriodKey(value) {
+  const key = requiredString(value, 'SETTLEMENT_PERIOD_REQUIRED');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) throw new DomainError('SETTLEMENT_PERIOD_INVALID', 400);
+  return key;
+}
+function prbPeriodBounds(periodKey) {
+  const key = prbPeriodKey(periodKey);
+  const [year, month] = key.split('-').map(Number);
+  const start = `${key}-01T00:00:00.000Z`;
+  const next = new Date(Date.UTC(month === 12 ? year + 1 : year, month === 12 ? 0 : month, 1));
+  return { periodKey: key, start, end: next.toISOString() };
+}
+function prbPartyRoleUid(env, role) {
+  return env.DB.prepare('SELECT uid FROM app_users WHERE role=?1 AND active=1').bind(role).first();
+}
+async function prbEnsurePeriodOpen(env, effectiveAt) {
+  const key = effectiveAt.slice(0, 7);
+  try {
+    const closed = await env.DB.prepare(`SELECT s.id FROM settlement_snapshots s
+      WHERE s.period_key=?1 AND s.state='CLOSED'
+        AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at)
+      LIMIT 1`).bind(key).first();
+    if (closed) throw new DomainError('CLOSED_PERIOD_MUTATION_FORBIDDEN', 409);
+  } catch (error) {
+    if (error instanceof Error && /no such table:\s*settlement_snapshots/.test(error.message)) return;
+    throw error;
+  }
+}
+async function prbEnsureWorkAffectedPeriods(env, oldConfirmedAt, newConfirmedAt) {
+  const keys = [...new Set([oldConfirmedAt, newConfirmedAt].filter(value => typeof value === 'string' && value.length >= 7).map(value => value.slice(0, 7)))];
+  if (!keys.length) return;
+  try {
+    const closed = await env.DB.prepare(`SELECT s.id FROM settlement_snapshots s
+      WHERE s.period_key IN (${prbInClause(keys)}) AND s.state='CLOSED'
+        AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at)
+      LIMIT 1`).bind(...keys).first();
+    if (closed) throw new DomainError('CLOSED_PERIOD_MUTATION_FORBIDDEN', 409);
+  } catch (error) {
+    if (error instanceof Error && /no such table:\s*settlement_snapshots/.test(error.message)) return;
+    throw error;
+  }
+}
+function prbAudit(env, type, id, actorUid, after, requestId, createdAt) {
+  return auditStatement(env, type, id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
+}
+
+export async function createInterPartyTransfer(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const amount = prbPositiveMoney(input.amount_riyals, 'TRANSFER_AMOUNT_INVALID');
+  const fee = input.fee_riyals === undefined ? 0 : parseMoneyHalalas(input.fee_riyals);
+  if (fee < 0) throw new DomainError('TRANSFER_FEE_INVALID', 400);
+  const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
+  const fromParty = prbParty(input.from_party, 'TRANSFER_FROM_REQUIRED');
+  const toParty = prbParty(input.to_party, 'TRANSFER_TO_REQUIRED');
+  if (fromParty === toParty) throw new DomainError('TRANSFER_DIRECTION_INVALID', 400);
+  const feePayer = prbParty(input.fee_payer === undefined ? 'person_1' : input.fee_payer, 'TRANSFER_FEE_PAYER_INVALID');
+  if (feePayer !== 'person_1') throw new DomainError('TRANSFER_FEE_PAYER_INVALID', 400);
+  const note = optionalString(input.note, 'TRANSFER_NOTE_INVALID');
+  const id = newId('transfer');
+  const createdAt = nowIso();
+  const after = { id, amount_halalas: amount, effective_at: effectiveAt, from_party: fromParty, to_party: toParty, fee_halalas: fee, fee_payer: feePayer, note, recorded_by: actorUid, created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO inter_party_transfers(id,amount_halalas,effective_at,from_party,to_party,fee_halalas,fee_payer,note,recorded_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`).bind(id, amount, effectiveAt, fromParty, toParty, fee, feePayer, note, actorUid, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'inter_party_transfer', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listInterPartyTransfers(env, query = {}) {
+  const from = query.from ? canonicalEventTimestamp(query.from) : null;
+  const to = query.to ? canonicalEventTimestamp(query.to) : null;
+  const rows = (await env.DB.prepare(`SELECT id,amount_halalas,effective_at,from_party,to_party,fee_halalas,fee_payer,note,recorded_by,created_at,request_id
+    FROM inter_party_transfers WHERE (?1 IS NULL OR effective_at>=?1) AND (?2 IS NULL OR effective_at<?2) ORDER BY effective_at ASC,id ASC`).bind(from, to).all()).results || [];
+  return rows.map(row => ({ ...row, amount_halalas: Number(row.amount_halalas), fee_halalas: Number(row.fee_halalas) }));
+}
+
+export async function createSubscriptionHistory(env, actorUid, requestId, input) {
+  const actor = await ensureActor(env, actorUid);
+  if (actor.role !== 'person_2') throw new DomainError('SUBSCRIPTION_PAYER_MUST_BE_PERSON_2', 403);
+  const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
+  const state = input.state === undefined ? 'ACTIVE' : requiredString(input.state, 'SUBSCRIPTION_STATE_INVALID').toUpperCase();
+  if (state !== 'ACTIVE' && state !== 'CANCELLED') throw new DomainError('SUBSCRIPTION_STATE_INVALID', 400);
+  const amount = state === 'CANCELLED' ? 0 : prbPositiveMoney(input.aggregate_amount_riyals, 'SUBSCRIPTION_AMOUNT_INVALID');
+  const paidBy = await prbPartyRoleUid(env, 'person_2');
+  const id = newId('subscription');
+  const createdAt = nowIso();
+  const after = { id, subscription_count: 2, aggregate_amount_halalas: amount, effective_at: effectiveAt, state, paid_by_uid: paidBy.uid, recorded_by: actorUid, note: optionalString(input.note, 'SUBSCRIPTION_NOTE_INVALID'), created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO subscription_history(id,subscription_count,aggregate_amount_halalas,effective_at,state,paid_by_uid,recorded_by,note,created_at,request_id)
+    VALUES (?1,2,?2,?3,?4,?5,?6,?7,?8,?9)`).bind(id, amount, effectiveAt, state, paidBy.uid, actorUid, after.note, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'subscription_history', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listSubscriptionHistory(env) {
+  const rows = (await env.DB.prepare(`SELECT id,subscription_count,aggregate_amount_halalas,effective_at,state,paid_by_uid,recorded_by,note,created_at,request_id
+    FROM subscription_history ORDER BY effective_at ASC,id ASC`).bind().all()).results || [];
+  return rows.map(row => ({ ...row, subscription_count: Number(row.subscription_count), aggregate_amount_halalas: Number(row.aggregate_amount_halalas) }));
+}
+
+export async function createCommonExpense(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const amount = prbPositiveMoney(input.amount_riyals, 'EXPENSE_AMOUNT_INVALID');
+  const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
+  const category = requiredString(input.category, 'EXPENSE_CATEGORY_REQUIRED');
+  const paidBy = requiredString(input.paid_by_uid, 'EXPENSE_PAYER_REQUIRED');
+  await ensureActor(env, paidBy);
+  const note = optionalString(input.note, 'EXPENSE_NOTE_INVALID');
+  const id = newId('expense');
+  const createdAt = nowIso();
+  const after = { id, amount_halalas: amount, effective_at: effectiveAt, category, paid_by_uid: paidBy, allocation_policy: 'UNRESOLVED', note, recorded_by: actorUid, created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO common_expenses(id,amount_halalas,effective_at,category,paid_by_uid,allocation_policy,note,recorded_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,'UNRESOLVED',?6,?7,?8,?9)`).bind(id, amount, effectiveAt, category, paidBy, note, actorUid, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'common_expense', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listCommonExpenses(env) {
+  const rows = (await env.DB.prepare(`SELECT id,amount_halalas,effective_at,category,paid_by_uid,allocation_policy,note,recorded_by,created_at,request_id
+    FROM common_expenses ORDER BY effective_at ASC,id ASC`).bind().all()).results || [];
+  return rows.map(row => ({ ...row, amount_halalas: Number(row.amount_halalas) }));
+}
+
+function prbInClause(values) { return values.map(() => '?').join(','); }
+async function prbSettlementComponents(env, bounds) {
+  const works = (await env.DB.prepare(`SELECT id,confirmed_at FROM works WHERE confirmed_at>=?1 AND confirmed_at<?2 ORDER BY confirmed_at ASC,id ASC`).bind(bounds.start, bounds.end).all()).results || [];
+  const cumulativeRow = (await env.DB.prepare(`SELECT COUNT(*) AS count,
+      (SELECT s.period_key FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_period_key,
+      (SELECT s.version FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_version,
+      (SELECT s.final_balance_halalas FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_final_balance
+    FROM works WHERE confirmed_at<?1`).bind(bounds.end, bounds.start).first()) || { count: 0, prior_period_key: null, prior_version: null, prior_final_balance: null };
+  const cumulative = cumulativeRow.count || 0;
+  const ids = works.map(row => row.id);
+  const prices = works.length
+    ? ((await env.DB.prepare(`SELECT work_id,effective_at,approved_at,resulting_price_halalas FROM price_movements WHERE work_id IN (${prbInClause(ids)}) ORDER BY effective_at ASC,approved_at ASC,id ASC`).bind(...ids).all()).results || [])
+    : [];
+  const ratios = works.length
+    ? ((await env.DB.prepare(`SELECT work_id,approved_at,new_person_1_bps,new_person_2_bps FROM ratio_history WHERE work_id IN (${prbInClause(ids)}) ORDER BY approved_at ASC,id ASC`).bind(...ids).all()).results || [])
+    : [];
+  const receipts = works.length
+    ? ((await env.DB.prepare(`SELECT p.work_id,
+        COALESCE(SUM(CASE WHEN u.role='person_1' THEN p.amount_halalas ELSE 0 END),0)-COALESCE(SUM(CASE WHEN u.role='person_1' THEN r.amount_halalas ELSE 0 END),0) AS approved_paid_person_1,
+        COALESCE(SUM(CASE WHEN u.role='person_2' THEN p.amount_halalas ELSE 0 END),0)-COALESCE(SUM(CASE WHEN u.role='person_2' THEN r.amount_halalas ELSE 0 END),0) AS approved_paid_person_2
+      FROM client_payments p JOIN app_users u ON u.uid=p.received_by LEFT JOIN payment_reversals r ON r.payment_id=p.id
+      WHERE p.work_id IN (${prbInClause(ids)}) GROUP BY p.work_id`).bind(...ids).all()).results || [])
+    : [];
+  const transfer = (await env.DB.prepare(`SELECT COALESCE(SUM(amount_halalas),0) AS amount,COALESCE(SUM(fee_halalas),0) AS fee,COALESCE(SUM(CASE WHEN to_party='person_2' THEN amount_halalas WHEN from_party='person_2' THEN -amount_halalas ELSE 0 END),0) AS net_person_2 FROM inter_party_transfers WHERE effective_at>=?1 AND effective_at<?2`).bind(bounds.start, bounds.end).first()) || { amount: 0, fee: 0, net_person_2: 0 };
+  const subscriptionHistory = (await env.DB.prepare(`SELECT id,subscription_count,aggregate_amount_halalas,effective_at,state,paid_by_uid,recorded_by,note,created_at,request_id FROM subscription_history WHERE effective_at<?1 ORDER BY effective_at ASC,id ASC`).bind(bounds.end).all()).results || [];
+  const priorSettlement = cumulativeRow.prior_period_key ? { period_key: cumulativeRow.prior_period_key, version: Number(cumulativeRow.prior_version), final_balance_halalas: Number(cumulativeRow.prior_final_balance) } : null;
+  const expense = (await env.DB.prepare(`SELECT COALESCE(SUM(amount_halalas),0) AS amount FROM common_expenses WHERE effective_at>=?1 AND effective_at<?2`).bind(bounds.start, bounds.end).first()) || { amount: 0 };
+  return {
+    works,
+    cumulativeWorkCount: Number(cumulative),
+    prices,
+    ratios,
+    receipts,
+    transferAmount: Number(transfer.amount),
+    transferNetPerson2: Number(transfer.net_person_2),
+    transferFee: Number(transfer.fee),
+    subscriptionHistory,
+    priorBalance: priorSettlement ? Number(priorSettlement.final_balance_halalas) : 0,
+    priorSettlement,
+    expenseTotal: Number(expense.amount),
+  };
+}
+function prbRoundHalf(value) {
+  return calculateShareHalalas(safeFinancialInteger(value), 5000);
+}
+async function prbBuildSettlementPreview(env, periodKey, input = {}) {
+  const bounds = prbPeriodBounds(periodKey);
+  const components = await prbSettlementComponents(env, bounds);
+  const prices = new Map();
+  for (const row of components.prices || []) prices.set(row.work_id, Number(row.resulting_price_halalas));
+  const ratios = new Map();
+  for (const row of components.ratios || []) ratios.set(row.work_id, { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps) });
+  const receipts = new Map();
+  for (const row of components.receipts || []) receipts.set(row.work_id, { person_1: Number(row.approved_paid_person_1), person_2: Number(row.approved_paid_person_2) });
+  let totalWork = 0; let person1 = 0; let person2 = 0; let receiptsPerson1 = 0; let receiptsPerson2 = 0;
+  for (const work of components.works) {
+    const price = prices.get(work.id) ?? 0;
+    const ratio = ratios.get(work.id) || { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS };
+    const receipt = receipts.get(work.id) || { person_1: 0, person_2: 0 };
+    totalWork = safeFinancialAdd(totalWork, price);
+    person1 = safeFinancialAdd(person1, calculateShareHalalas(price, ratio.person_1_bps));
+    person2 = safeFinancialAdd(person2, calculateShareHalalas(price, ratio.person_2_bps));
+    receiptsPerson1 = safeFinancialAdd(receiptsPerson1, receipt.person_1);
+    receiptsPerson2 = safeFinancialAdd(receiptsPerson2, receipt.person_2);
+  }
+  const subscriptionHistory = (components.subscriptionHistory || []).map(row => ({ ...row, subscription_count: Number(row.subscription_count), aggregate_amount_halalas: Number(row.aggregate_amount_halalas) }));
+  const priorSubscription = [...subscriptionHistory].filter(row => row.effective_at < bounds.start).at(-1);
+  const subscriptionTotal = priorSubscription ? (priorSubscription.state === 'CANCELLED' ? 0 : priorSubscription.aggregate_amount_halalas) : 13650;
+  const subscriptionHalf = prbRoundHalf(subscriptionTotal);
+  const subscriptionEffectPerson1 = subscriptionHalf === 0 ? 0 : -subscriptionHalf;
+  const subscriptionEffectPerson2 = subscriptionHalf;
+  const feeHalf = prbRoundHalf(components.transferFee);
+  const feeEffectPerson1 = -feeHalf;
+  const feeEffectPerson2 = feeHalf;
+  const expenseEffectPerson2 = components.expenseTotal > 0 ? null : 0;
+  const unresolvedCodes = components.expenseTotal > 0 ? ['S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED'] : [];
+  const approvedReceipts = safeFinancialAdd(receiptsPerson1, receiptsPerson2);
+  let finalBalance = null;
+  if (!unresolvedCodes.length) {
+    finalBalance = safeFinancialAdd(components.priorBalance, person2);
+    finalBalance = safeFinancialAdd(finalBalance, -receiptsPerson2);
+    finalBalance = safeFinancialAdd(finalBalance, -components.transferNetPerson2);
+    finalBalance = safeFinancialAdd(finalBalance, subscriptionHalf);
+    finalBalance = safeFinancialAdd(finalBalance, -feeHalf);
+  }
+  return {
+    period_key: bounds.periodKey,
+    period_start: bounds.start,
+    period_end: bounds.end,
+    period_basis: 'CONFIRMED_AT',
+    balance_formula: 'D-015_PERSON_1_OWES_PERSON_2_POSITIVE',
+    work_count: components.works.length,
+    cumulative_work_count: components.cumulativeWorkCount,
+    total_work_value_halalas: totalWork,
+    person_1_work_share_halalas: person1,
+    person_2_work_share_halalas: person2,
+    approved_receipts_halalas: approvedReceipts,
+    approved_receipts_person_1_halalas: receiptsPerson1,
+    approved_receipts_person_2_halalas: receiptsPerson2,
+    transfer_amount_halalas: components.transferAmount,
+    transfer_net_person_2_halalas: components.transferNetPerson2,
+    transfer_fee_halalas: components.transferFee,
+    subscription_total_halalas: subscriptionTotal,
+    subscription_history: subscriptionHistory,
+    subscription_effect_person_1_halalas: subscriptionEffectPerson1,
+    subscription_effect_person_2_halalas: subscriptionEffectPerson2,
+    transfer_fee_effect_person_1_halalas: feeEffectPerson1,
+    transfer_fee_effect_person_2_halalas: feeEffectPerson2,
+    governed_expense_total_halalas: components.expenseTotal,
+    governed_expense_net_effect_to_person_2_halalas: expenseEffectPerson2,
+    generic_expense_allocation: components.expenseTotal > 0 ? 'UNRESOLVED' : 'NOT_PRESENT',
+    prior_balance_halalas: components.priorBalance,
+    prior_balance_authority: components.priorSettlement ? 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT' : 'ZERO_NO_PRIOR_SETTLEMENT',
+    final_balance_halalas: finalBalance,
+    unresolved_code: unresolvedCodes[0] || null,
+    unresolved_codes: unresolvedCodes,
+    component_formula: 'PRIOR_BALANCE + PERSON_2_WORK_SHARE - APPROVED_RECEIPTS_RECEIVED_BY_PERSON_2 - NET_TRANSFERS_TO_PERSON_2 + HALF_SUBSCRIPTION - HALF_TRANSFER_FEES + GOVERNED_EXPENSE_NET_EFFECT_TO_PERSON_2',
+  };
+}
+export async function getSettlementPreview(env, periodKey, input = {}) { return prbBuildSettlementPreview(env, periodKey, input); }
+async function prbEnsureSettlementCloseAllowed(env, periodKey) {
+  const latest = await env.DB.prepare('SELECT id,state,version,created_at FROM settlement_snapshots WHERE period_key=?1 ORDER BY version DESC LIMIT 1').bind(periodKey).first();
+  if (!latest || latest.state !== 'CLOSED') return latest;
+  const reopened = await env.DB.prepare('SELECT id FROM settlement_reopen_history WHERE period_key=?1 AND approved_at>?2 ORDER BY approved_at ASC,id ASC LIMIT 1').bind(periodKey, latest.created_at).first();
+  if (!reopened) throw new DomainError('SETTLEMENT_ALREADY_CLOSED', 409);
+  return latest;
+}
+export async function closeSettlement(env, actorUid, requestId, periodKey, input) {
+  await ensureActor(env, actorUid);
+  const latest = await prbEnsureSettlementCloseAllowed(env, periodKey);
+  const preview = await prbBuildSettlementPreview(env, periodKey, input);
+  if (preview.unresolved_code) throw new DomainError(preview.unresolved_code, 409);
+  const version = Number(latest?.version || 0) + 1;
+  const id = newId('settlement'); const createdAt = nowIso();
+  const after = { ...preview, id, state: 'CLOSED', version, created_by: actorUid, created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO settlement_snapshots(id,period_key,period_start,period_end,period_basis,balance_formula,state,work_count,cumulative_work_count,total_work_value_halalas,person_1_work_share_halalas,person_2_work_share_halalas,approved_receipts_halalas,approved_receipts_person_1_halalas,approved_receipts_person_2_halalas,transfer_amount_halalas,transfer_fee_halalas,subscription_total_halalas,subscription_effect_person_1_halalas,subscription_effect_person_2_halalas,governed_expense_total_halalas,prior_balance_halalas,final_balance_halalas,unresolved_code,version,created_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,'CLOSED',?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,NULL,?23,?24,?25,?26)`).bind(id, periodKey, preview.period_start, preview.period_end, preview.period_basis, preview.balance_formula, preview.work_count, preview.cumulative_work_count, preview.total_work_value_halalas, preview.person_1_work_share_halalas, preview.person_2_work_share_halalas, preview.approved_receipts_halalas, preview.approved_receipts_person_1_halalas, preview.approved_receipts_person_2_halalas, preview.transfer_amount_halalas, preview.transfer_fee_halalas, preview.subscription_total_halalas, preview.subscription_effect_person_1_halalas, preview.subscription_effect_person_2_halalas, preview.governed_expense_total_halalas, preview.prior_balance_halalas, preview.final_balance_halalas, version, actorUid, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'settlement_snapshot', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listSettlementSnapshots(env, periodKey) {
+  const rows = (await env.DB.prepare(`SELECT * FROM settlement_snapshots WHERE period_key=?1 ORDER BY version ASC`).bind(periodKey).all()).results || [];
+  return rows;
+}
+export async function createSettlementReopenRequest(env, actorUid, requestId, periodKey, input) {
+  await ensureActor(env, actorUid);
+  const latest = await env.DB.prepare(`SELECT id FROM settlement_snapshots WHERE period_key=?1 AND state='CLOSED' ORDER BY version DESC LIMIT 1`).bind(periodKey).first();
+  if (!latest) throw new DomainError('SETTLEMENT_NOT_CLOSED', 409);
+  const reason = requiredString(input.reason, 'REOPEN_REASON_REQUIRED'); const id = newId('reopen'); const requestedAt = nowIso();
+  const after = { id, period_key: periodKey, reason, requested_by: actorUid, requested_at: requestedAt, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO settlement_reopen_requests(id,period_key,reason,requested_by,requested_at,state,request_id) VALUES (?1,?2,?3,?4,?5,'PENDING',?6)`).bind(id, periodKey, reason, actorUid, requestedAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'settlement_reopen_request', id, actorUid, after, `${requestId}:audit`, requestedAt)]);
+  return after;
+}
+export async function approveSettlementReopenRequest(env, actorUid, requestId, periodKey, reopenId) {
+  await ensureActor(env, actorUid);
+  const req = await env.DB.prepare('SELECT * FROM settlement_reopen_requests WHERE id=?1 AND period_key=?2').bind(reopenId, periodKey).first();
+  if (!req) throw new DomainError('REOPEN_REQUEST_NOT_FOUND', 404);
+  if (req.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
+  if (req.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
+  const approvedAt = nowIso();
+  const after = { ...req, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt, approval_request_id: requestId };
+  const update = env.DB.prepare(`UPDATE settlement_reopen_requests SET state='APPROVED',approved_by=?1,approved_at=?2,approval_request_id=?3 WHERE id=?4 AND period_key=?5 AND state='PENDING' AND requested_by<>?1`).bind(actorUid, approvedAt, requestId, reopenId, periodKey);
+  const history = env.DB.prepare(`INSERT INTO settlement_reopen_history(id,period_key,reopen_request_id,reason,requested_by,approved_by,requested_at,approved_at,request_id)
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE EXISTS (SELECT 1 FROM settlement_reopen_requests WHERE id=?3 AND state='APPROVED' AND approval_request_id=?9)`).bind(newId('reopen-history'), periodKey, reopenId, req.reason, req.requested_by, actorUid, req.requested_at, approvedAt, requestId);
+  const audit = auditStatementWhen(env, 'settlement_reopen_request', reopenId, 'UPDATE', actorUid, req, after, env.RUN_MARKER, `${requestId}:audit`, approvedAt,
+    'EXISTS (SELECT 1 FROM settlement_reopen_history WHERE reopen_request_id=?10 AND request_id=?11)', [reopenId, requestId]);
+  const results = await executeBatch(env, [update, history, audit]);
+  if (Number(results[0]?.meta?.changes) !== 1 || Number(results[1]?.meta?.changes) !== 1 || Number(results[2]?.meta?.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return after;
+}
+export async function listSettlementReopenRequests(env, periodKey) {
+  return (await env.DB.prepare('SELECT * FROM settlement_reopen_requests WHERE period_key=?1 ORDER BY requested_at ASC,id ASC').bind(periodKey).all()).results || [];
 }
