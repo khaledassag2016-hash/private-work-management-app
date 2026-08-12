@@ -73,6 +73,9 @@ The first attempt is classified as transient external runner/network failure, no
 
 ## Closure gate
 
-S6 may be marked `CLOSED_COMPLETE` only after this documentation-only administrative PR passes final-head CI, is independently reviewed, is Squash-merged, `main` is re-read, and Issue #5 is closed as completed.
+- Administrative closure PR: #73 — `s6/pr-c-final-verification-closure`, based on `main@0de57ef07f015506c0ef9afa9956413916743442`.
+- Scope: documentation/administrative state only; no runtime or S7 implementation.
 
-S7 is the next stage, Issue #6. S7 implementation is not part of this PR and may start only after explicit FINAL_ACTIVATED instructions tied to the final post-S6 main SHA.
+S6 may be marked `CLOSED_COMPLETE` only after PR #73 passes final-head CI, is independently reviewed, is Squash-merged, `main` is re-read, and Issue #5 is closed as completed.
+
+S7 is the next stage, Issue #6. S7 implementation is not part of PR #73 and may start only after explicit FINAL_ACTIVATED instructions tied to the final post-S6 main SHA.
