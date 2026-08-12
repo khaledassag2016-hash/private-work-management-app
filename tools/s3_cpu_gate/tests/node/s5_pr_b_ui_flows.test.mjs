@@ -473,10 +473,11 @@ describe('S5 PR-B UI Flows', () => {
     const mockEvent = { preventDefault: () => {}, currentTarget: {} };
     await testApp.submitEvent(mockEvent);
 
-    assert.equal(calledUrls.length, 8); // 1 for POST event, 7 for openWork parallel load
+    assert.equal(calledUrls.length, 9); // 1 for POST event, 8 for openWork parallel load including authoritative S6 financials
     assert.match(calledUrls[0], /\/events$/);
+    assert.ok(calledUrls.some(url => /\/financials$/.test(url)));
     calledUrls.forEach(url => {
-      assert.doesNotMatch(url, /billing|payment|discount|pricing/);
+      assert.doesNotMatch(url, /billing|payment|settlement|subscription|transfer|expense/);
     });
   });
 
@@ -487,9 +488,10 @@ describe('S5 PR-B UI Flows', () => {
     assert.match(html, /data-execution-status/);
     assert.match(html, /حالة التنفيذ/);
     assert.match(html, /data-collection-status/);
-    assert.match(html, /حالة التحصيل/);
+    assert.match(html, /حدود التحصيل قبل S7/);
     const collectionCard = html.split('data-collection-status')[1].split('</article>')[0];
-    assert.match(collectionCard, /المصدر المالي الحاكم غير متاح ضمن S5/);
+    assert.match(collectionCard, /PRE-S7 projection/);
+    assert.match(collectionCard, /لا توجد حالة تحصيل أو payment mutation داخل S6/);
     assert.doesNotMatch(collectionCard, /PRICE_UNSET|سعر غير محدد|سعر صفري/);
   });
 
