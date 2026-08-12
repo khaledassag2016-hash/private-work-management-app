@@ -58,7 +58,8 @@ EXPECTED_COVERAGE = {
     "approved_decisions": "7/7",
     "approved_scenarios": "14/14",
 }
-EXPECTED_OPEN_DECISIONS = {"Q-001", "Q-002", "Q-003", "Q-004"}
+EXPECTED_OPEN_DECISIONS = set()
+EXPECTED_RESOLVED_DECISIONS = {"Q-001", "Q-002", "Q-003", "Q-004"}
 EXPECTED_RECORDED_DECISIONS = {f"D-{number:03d}" for number in range(1, 14)}
 
 
@@ -263,7 +264,7 @@ def main() -> int:
         errors.append(
             f"DECISION LOG approved IDs mismatch: {sorted(approved_decisions)}"
         )
-    if open_decisions != EXPECTED_OPEN_DECISIONS:
+    if open_decisions != EXPECTED_RESOLVED_DECISIONS:
         errors.append(f"DECISION LOG open IDs mismatch: {sorted(open_decisions)}")
 
     source_notes = read_text("docs/SOURCE_NOTES.md")
@@ -277,7 +278,7 @@ def main() -> int:
             errors.append(f"SOURCE NOTES missing phrase: {required_phrase}")
 
     project_rules = read_text("docs/PROJECT_RULES.md")
-    for identifier in sorted(EXPECTED_OPEN_DECISIONS):
+    for identifier in sorted(EXPECTED_RESOLVED_DECISIONS):
         if identifier not in project_rules:
             errors.append(
                 f"PROJECT RULES missing unresolved-decision guard: {identifier}"
@@ -311,7 +312,7 @@ def main() -> int:
     print("Trace stage assignments: PASS")
     print("Manifest and issue index: PASS")
     print("Recorded decisions: D-001 through D-013")
-    print("Open decisions recorded: Q-001, Q-002, Q-003, Q-004")
+    print("Resolved decisions recorded: Q-001, Q-002, Q-003, Q-004")
     print("Required governance and source files:", len(REQUIRED), "present")
     print("Authoritative source segments:", len(SOURCE_FILES), "verified")
     print("Approved requirements bytes:", EXPECTED_BYTE_SIZE)
