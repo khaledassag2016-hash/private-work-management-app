@@ -9,7 +9,7 @@
 | FR-003 | متطلب وظيفي | S4 | Acceptance AC-01: Work بلا سعر محفوظ كـ PRICE_UNSET ويظهر للمتابعة | متحقق في Gate 2 — PR #59 |
 | FR-004 | متطلب وظيفي | S4 | independent/child، parent filtering، missing/self/cycle/cross-customer negative tests | متحقق في Gate 2 — PR #59 |
 | FR-005 | متطلب وظيفي | S4 | حقول country/university/specialty/work type/subject/title في Work UI وAPI | متحقق في Gate 2 — PR #59 |
-| FR-006 | متطلب وظيفي | S4 | required/optional/missing-detail UX مع `soft_warnings` server-side للـ`university` و`specialty_key`؛ لا hard rejection للبيانات المفقودة؛ generic-only semantics غير محسومة | **جزئي — S4 soft-warning portion متحقق في Gate 3؛ generic-title semantics غير محسومة** |
+| FR-006 | متطلب وظيفي | S4 | required/optional/missing-detail UX مع `soft_warnings` server/read-model/UI للـ`university` و`specialty_key`؛ لا hard rejection؛ تظهر بعد save/reopen وتزول عند اكتمال الحقول؛ لا تتحول إلى fact/customer warning/audit domain state | **PARTIAL — S4 soft-warning portion PASS؛ `FR_006_GENERIC_TITLE = SUPERVISORY_DECISION_REQUIRED`** |
 | FR-007 | متطلب وظيفي | S5 | اختبار وظيفي موثق لـ FR-007 في المرحلة S5 | مخطط |
 | FR-008 | متطلب وظيفي | S5 | اختبار وظيفي موثق لـ FR-008 في المرحلة S5 | مخطط |
 | FR-009 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-009 في المرحلة S6 | مخطط |
@@ -19,7 +19,7 @@
 | FR-013 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-013 في المرحلة S7 | مخطط |
 | FR-014 | متطلب وظيفي | S4 | AC-07: documented fact يولد warning projection مع source/date | متحقق في Gate 2 — PR #59 |
 | FR-015 | متطلب وظيفي | S4 | `/warnings` + `/history` ضمن pre-agreement context، وعرض fact type/source/date قبل New Work submit | **PASS — Gate 3 final verification** |
-| FR-016 | متطلب وظيفي | S4 | similar-work read فقط؛ لا يوجد داخل S4 authoritative executed-price source، لذلك لا يُدّعى اكتمال الجزء السعري | **جزئي — similar-work S4 portion متحقق؛ authoritative price source DEFERRED** |
+| FR-016 | متطلب وظيفي | S4 | similar-work read فقط؛ لا يوجد داخل S4 authoritative executed-price source، ولا يُنشأ pricing workflow | **`FR_016_S4_READ_BOUNDARY = PASS`; `FR_016_EXECUTED_PRICE_SOURCE = LATER_STAGE_DEPENDENCY / SUPERVISORY_DECISION_REQUIRED`** |
 | FR-017 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-017 في المرحلة S6 بعد حسم Q-001 | مخطط |
 | FR-018 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-018 في المرحلة S7 | مخطط |
 | FR-019 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-019 في المرحلة S7 | مخطط |
@@ -53,7 +53,7 @@
 | P-03 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
 | P-04 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
 | P-05 | قرار معتمد | S5/S6 | اختبار الإلغاء أو الأرشفة وعدم الحذف في S5، واختبار تعديل السعر والموافقتين في S6 | مخطط |
-| P-06 | قرار معتمد | S4 | **S4 portion PASS:** Customer identity/metadata، duplicate no-merge، روابط الأعمال، documented facts، history، warnings في UI/API؛ **financial dealings DEFERRED TO S7** | **S4 portion PASS؛ financial dealings DEFERRED TO S7** |
+| P-06 | قرار معتمد | S4 | **`P_06_S4_PORTION = PASS`:** customer identity/metadata، duplicate no-merge، works، history، documented facts، warnings، notes؛ **`P_06_FINANCIAL_PORTION = LATER_STAGE_DEPENDENCY (S7)`** | **S4 portion PASS؛ لا FULL PASS للقرار قبل financial scope في S7، وقرار إقفال التقسيم إشرافي عند اللزوم** |
 | P-07 | قرار معتمد | S11 | مراجعة قاعدة العمل واختبار أثرها في S11 | مخطط |
 | S-01 | سيناريو | S6 | اختبار السعر الأساسي والإضافات والنتيجة 1800 | مخطط |
 | S-02 | سيناريو | S5/S6 | اختبار تاريخ العنوان وتكلفة التغيير | مخطط |

@@ -139,7 +139,7 @@ function domainFixture() {
 function customerInput(extra = {}) { return { contact: 'synthetic-contact', country: null, university: 'Synthetic University', specialty: null, notes: 'Synthetic repair fixture', ...extra }; }
 function workInput(customerId, extra = {}) { return { customer_id: customerId, title: 'Synthetic repair work', country: 'SYN_COUNTRY', university: null, specialty_key: null, work_type_key: null, subject_or_course_code: null, description: 'Synthetic only', relationship_kind: 'INDEPENDENT', ...extra }; }
 
-test('supervisory domain: customer factual statuses cannot be invented and derive from documented facts', async () => {
+test('supervisory domain: customer factual statuses cannot be invented and scalar status remains neutral while facts stay authoritative', async () => {
   const { database, env } = domainFixture();
   try {
     for (const status of ['unpaid', 'dispute', 'blocked', 'frequent_delay']) {
@@ -150,7 +150,7 @@ test('supervisory domain: customer factual statuses cannot be invented and deriv
     await assert.rejects(updateCustomer(env, 'repair-person-one', 'repair-customer-status-update', customer.id, { version: 1, status: 'blocked' }), { code: 'CUSTOMER_STATUS_DERIVED' });
     assert.equal((await getCustomer(env, customer.id)).status, 'normal');
     await createDocumentedFact(env, 'repair-person-one', 'repair-fact-derived', { customer_id: customer.id, fact_type: 'NON_PAYMENT', source_ref: 'synthetic-status-evidence', happened_at: '2026-08-03T12:00:00.000Z', details: {} });
-    assert.equal((await getCustomer(env, customer.id)).status, 'unpaid');
+    assert.equal((await getCustomer(env, customer.id)).status, 'normal');
     assert.equal(database.prepare('SELECT status FROM customers WHERE id=?').get(customer.id).status, 'normal');
     const delayOnlyCustomer = await createCustomer(env, 'repair-person-one', 'repair-customer-delay-only', customerInput());
     await createDocumentedFact(env, 'repair-person-one', 'repair-fact-delay-only', { customer_id: delayOnlyCustomer.id, fact_type: 'DELAY', source_ref: 'synthetic-delay-evidence', happened_at: '2026-08-04T12:00:00.000Z', details: {} });
@@ -233,4 +233,45 @@ test('supervisory UI behavior: loading and read failure block New Work submit, t
   assert.equal(testApi.preAgreementCanSubmitNewWork('customer-error'), true);
   assert.match(root.innerHTML, /data-pre-agreement-context="verified"/);
   assert.doesNotMatch(testApi.workForm({ customer_id: 'customer-error' }), /type="submit" disabled/);
+});
+
+
+test('final supervisory UI behavior: FR-006 soft warnings remain visible after Work reload and disappear after details are supplied', async () => {
+  let workPayload = {
+    id: 'synthetic-soft-warning-work',
+    customer_id: 'synthetic-soft-warning-customer',
+    title: 'Synthetic soft-warning work',
+    country: 'SYN_COUNTRY',
+    university: null,
+    specialty_key: null,
+    relationship_kind: 'INDEPENDENT',
+    price_state: 'PRICE_UNSET',
+    soft_warnings: [
+      { code: 'WORK_DETAIL_UNIVERSITY_MISSING', field: 'university', severity: 'SOFT_WARNING' },
+      { code: 'WORK_DETAIL_SPECIALTY_MISSING', field: 'specialty_key', severity: 'SOFT_WARNING' },
+    ],
+  };
+  const success = data => new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const { root, testApi } = createUiHarness(async url => {
+    const path = String(url);
+    if (path.endsWith('/api/works/synthetic-soft-warning-work')) return success(workPayload);
+    if (path.endsWith('/api/works/synthetic-soft-warning-work/similar')) return success([]);
+    return success([]);
+  });
+  await settle();
+  const state = testApi.getState();
+  state.auth.status = 'signed_in';
+  state.auth.tokenProvider = { getToken: async () => 'synthetic-token' };
+
+  await testApi.openWork('synthetic-soft-warning-work');
+  assert.match(root.innerHTML, /data-soft-warnings="present"/);
+  assert.match(root.innerHTML, /الحفظ مسموح/);
+  assert.match(root.innerHTML, /ليست واقعة موثقة أو تحذير عميل/);
+  assert.match(root.innerHTML, /WORK_DETAIL_UNIVERSITY_MISSING/);
+  assert.match(testApi.workForm(state.selectedWork), /data-soft-warning-code="WORK_DETAIL_SPECIALTY_MISSING"/);
+
+  workPayload = { ...workPayload, university: 'Synthetic University', specialty_key: 'SYN_SPECIALTY', soft_warnings: [] };
+  await testApi.openWork('synthetic-soft-warning-work');
+  assert.doesNotMatch(root.innerHTML, /data-soft-warnings="present"/);
+  assert.doesNotMatch(testApi.workForm(state.selectedWork), /data-soft-warning-code=/);
 });

@@ -358,7 +358,9 @@
 - PR #63 (`fix(s4): complete final verification and residual repairs`) دُمجت باستخدام **Squash**.
 - `GATE3_FINAL_HEAD = 3d41d7b59e0ac74d24495039df054f2a58acf718`.
 - `GATE3_SQUASH_SHA = cdec4dc8b60ef4102e078bd339ec7e645b682f1c`.
-- `FINAL_MAIN_SHA = cdec4dc8b60ef4102e078bd339ec7e645b682f1c`، والتحقق المحلي يطابق `origin/main`.
+- `GATE3_ADMIN_PR = #64`.
+- `GATE3_ADMIN_SQUASH_SHA = bcf6d1bc5b48caf04239d434be9a74456513aeb1`.
+- لا يستعمل هذا السجل `FINAL_MAIN_SHA` كقيمة إغلاق ذاتية المرجع؛ `bcf6d1bc5b48caf04239d434be9a74456513aeb1` هو base الإصلاح الإشرافي اللاحق.
 - Final-head CI: PR #63 — S3 CPU Gate Static run `31582032995` **SUCCESS**، Foundation run `31582033018` **SUCCESS**، وS2 architecture validation run `31582033063` **SUCCESS**.
 - Post-merge CI على `main@cdec4dc8b60ef4102e078bd339ec7e645b682f1c`: S3 CPU Gate Static run `31582176576` **SUCCESS**، وFoundation run `31582176570` **SUCCESS**.
 - `S4_GATE0 = COMPLETE`.
@@ -373,4 +375,17 @@
 - `NEXT_ACTION = FINAL_SUPERVISORY_APPROVAL`.
 - Final evidence: `docs/s4/S4_FINAL_VERIFICATION.md`، والتتبع في `docs/TRACEABILITY_MATRIX.md` محدثان بحدود S4 الصحيحة؛ `FR-006` soft-warning partial، `FR-015` PASS، `FR-016` PARTIAL/DEFERRED، و`P-06` S4 portion PASS مع financial dealings DEFERRED TO S7.
 - لم يحدث Cloud write أو Firebase write أو D1 Cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
-- يجوز PR إداري docs-only واحد لتسجيل رقم PR الإداري إذا لزم، ولا يغير أي stable ref أو code.
+- PR #64 الإداري مدمج بالفعل؛ لا ينشأ PR إداري ثانٍ لمجرد تسجيل SHA الإصلاح الإشرافي اللاحق.
+
+
+## S4 final supervisory repair — in progress — 2026-08-12
+
+- `S4_FINAL_REPAIR_BASE_SHA = bcf6d1bc5b48caf04239d434be9a74456513aeb1` بعد التحقق من `origin/main`.
+- Repair branch: `s4/final-supervisory-repair`.
+- النطاق: إيقاف latest-fact scalar projection، حفظ `customer.status` محايدًا/non-authoritative، جعل `documented_facts` و`customer_warning_projection` مصدر الحقيقة، وإظهار/استدامة `FR-006 soft_warnings` كـread projection في UI.
+- `S4_FINAL_REPAIR = IN_PROGRESS`.
+- `S4_COMPLETE = FALSE`.
+- `Issue #3 = OPEN`.
+- `S5 = NOT_STARTED`.
+- `FINAL_MAIN_SHA` لا يسجل في هذا القسم قبل دمج PR الإصلاح؛ سيغير الدمج الرأس ويُسجل `REPAIR_SQUASH_SHA` في تعليق Issue #3 وتسليم الإصلاح فقط.
+- لم يحدث Cloud write أو Firebase write أو D1 Cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
