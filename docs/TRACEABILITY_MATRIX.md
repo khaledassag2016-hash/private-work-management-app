@@ -9,9 +9,9 @@
 | FR-003 | متطلب وظيفي | S4 | Acceptance AC-01: Work بلا سعر محفوظ كـ PRICE_UNSET ويظهر للمتابعة | متحقق في Gate 2 — PR #59 |
 | FR-004 | متطلب وظيفي | S4 | independent/child، parent filtering، missing/self/cycle/cross-customer negative tests | متحقق في Gate 2 — PR #59 |
 | FR-005 | متطلب وظيفي | S4 | حقول country/university/specialty/work type/subject/title في Work UI وAPI | متحقق في Gate 2 — PR #59 |
-| FR-006 | متطلب وظيفي | S4 | required/optional/missing-detail UX مع `soft_warnings` server/read-model/UI للـ`university` و`specialty_key`؛ لا hard rejection؛ تظهر بعد save/reopen وتزول عند اكتمال الحقول؛ لا تتحول إلى fact/customer warning/audit domain state | **S4 soft-warning portion PASS؛ generic-title taxonomy/semantics DEFERRED / NO RULE INVENTED (closed administratively for S4)** |},{all:false,find:
-| FR-007 | متطلب وظيفي | S5 | اختبار وظيفي موثق لـ FR-007 في المرحلة S5 | مخطط |
-| FR-008 | متطلب وظيفي | S5 | اختبار وظيفي موثق لـ FR-008 في المرحلة S5 | مخطط |
+| FR-006 | متطلب وظيفي | S4 | required/optional/missing-detail UX مع `soft_warnings` server/read-model/UI للـ`university` و`specialty_key`؛ لا hard rejection؛ تظهر بعد save/reopen وتزول عند اكتمال الحقول؛ لا تتحول إلى fact/customer warning/audit domain state | **S4 soft-warning portion PASS؛ generic-title taxonomy/semantics DEFERRED / NO RULE INVENTED (closed administratively for S4)** |
+| FR-007 | متطلب وظيفي | S5 | `s5_pr_a_domain_data_api.test.mjs` + `s5_pr_b_ui_flows.test.mjs`: أحداث غير محدودة، append-only، مرتبة زمنيًا، بهوية وتاريخ، مع add/reload/order | **PASS — S5 PR-A/PR-B؛ final verification PR #70** |
+| FR-008 | متطلب وظيفي | S5 | title A→B→C/history + mandatory reason + execution-status history/reason/allowlist + UI flows | **PASS — S5 PR-A/PR-B؛ final verification PR #70** |
 | FR-009 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-009 في المرحلة S6 | مخطط |
 | FR-010 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-010 في المرحلة S6 | مخطط |
 | FR-011 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-011 في المرحلة S7 | مخطط |
@@ -19,14 +19,14 @@
 | FR-013 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-013 في المرحلة S7 | مخطط |
 | FR-014 | متطلب وظيفي | S4 | AC-07: documented fact يولد warning projection مع source/date | متحقق في Gate 2 — PR #59 |
 | FR-015 | متطلب وظيفي | S4 | `/warnings` + `/history` ضمن pre-agreement context، وعرض fact type/source/date قبل New Work submit | **PASS — Gate 3 final verification** |
-| FR-016 | متطلب وظيفي | S4 | similar-work read فقط؛ لا يوجد داخل S4 authoritative executed-price source، ولا يُنشأ pricing workflow | **S4 READ BOUNDARY PASS؛ authoritative price source DEFERRED TO S6 / later pricing dependency (closed administratively for S4)** |},{all:false,find:
-| FR-017 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-017 في المرحلة S6 بعد حسم Q-001 | مخطط |
+| FR-016 | متطلب وظيفي | S4 | similar-work read فقط؛ لا يوجد داخل S4 authoritative executed-price source، ولا يُنشأ pricing workflow | **S4 READ BOUNDARY PASS؛ authoritative price source DEFERRED TO S6 / later pricing dependency (closed administratively for S4)** |
+| FR-017 | متطلب وظيفي | S6 | اختبار وظيفي موثق لـ FR-017 في المرحلة S6 بعد حسم Q-001 عبر D-009 | مخطط |
 | FR-018 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-018 في المرحلة S7 | مخطط |
 | FR-019 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-019 في المرحلة S7 | مخطط |
 | FR-020 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-020 في المرحلة S7 | مخطط |
 | FR-021 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-021 في المرحلة S7 | مخطط |
 | FR-022 | متطلب وظيفي | S8 | اختبار وظيفي موثق لـ FR-022 في المرحلة S8 | مخطط |
-| FR-023 | متطلب وظيفي | S5 | اختبار الأرشفة وعدم الحذف في S5، وإعادة اختباره ضمن البحث والتحليلات في S8 وS10 | مخطط |
+| FR-023 | متطلب وظيفي | S5 | `s5_pr_a_domain_data_api.test.mjs`: منع hard delete، archive history/retention، بقاء السجل؛ إعادة تحقق البحث/التحليلات والاستعادة في المراحل المسندة | **PASS — S5 portion؛ reverify in S8/S10 as already assigned** |
 | FR-024 | متطلب وظيفي | S8 | اختبار وظيفي موثق لـ FR-024 في المرحلة S8 | مخطط |
 | FR-025 | متطلب وظيفي | S8 | اختبار وظيفي موثق لـ FR-025 في المرحلة S8 | مخطط |
 | FR-026 | متطلب وظيفي | S3 | اختبار وظيفي موثق لـ FR-026 في المرحلة S3 | مخطط |
@@ -36,7 +36,7 @@
 | FR-030 | متطلب وظيفي | S8 | اختبار وظيفي موثق لـ FR-030 في المرحلة S8 | مخطط |
 | AC-01 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs`: Work بلا سعر، متابعة، وبقاء السجل | متحقق في Gate 2 — PR #59 |
 | AC-02 | معيار قبول | S6 | سيناريو قبول AC-02 | مخطط |
-| AC-03 | معيار قبول | S5 | سيناريو قبول AC-03 | مخطط |
+| AC-03 | معيار قبول | S5 | `s5_pr_b_ui_flows.test.mjs`: A→B→C؛ current title يصبح C والتاريخ السابق محفوظ | **PASS — S5 PR-B** |
 | AC-04 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs`: Customer واحد مع عدة Works مستقلة | متحقق في Gate 2 — PR #59 |
 | AC-05 | معيار قبول | S7 | سيناريو قبول AC-05 | مخطط |
 | AC-06 | معيار قبول | S7 | سيناريو قبول AC-06 | مخطط |
@@ -45,27 +45,27 @@
 | AC-09 | معيار قبول | S8 | سيناريو قبول AC-09 | مخطط |
 | AC-10 | معيار قبول | S8 | سيناريو قبول AC-10 | مخطط |
 | AC-11 | معيار قبول | S3 | سيناريو قبول AC-11 | مخطط |
-| AC-12 | معيار قبول | S5 | سيناريو قبول AC-12، ثم إعادة تحقق في S8 وS10 | مخطط |
+| AC-12 | معيار قبول | S5 | CANCEL/ARCHIVE pending + U1→U2 وU2→U1 domain approvals + self-approval rejection + archive status preservation/history retention + UI governed request/approve flow | **PASS — S5 PR-A/PR-B** |
 | AC-13 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs`: catalog runtime addition/use دون تعديل المصدر | متحقق في Gate 2 — PR #59 |
 | AC-14 | معيار قبول | S11 | سيناريو قبول AC-14 | مخطط |
 | P-01 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
 | P-02 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
 | P-03 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
 | P-04 | قرار معتمد | S7 | مراجعة قاعدة العمل واختبار أثرها في S7 | مخطط |
-| P-05 | قرار معتمد | S5/S6 | اختبار الإلغاء أو الأرشفة وعدم الحذف في S5، واختبار تعديل السعر والموافقتين في S6 | مخطط |
-| P-06 | قرار معتمد | S4 | customer identity/metadata، duplicate no-merge، works، history، documented facts، warnings، notes | **S4 PORTION PASS؛ financial dealings DEFERRED TO S7 (closed administratively for S4)** |}],path:
+| P-05 | قرار معتمد | S5/S6 | S5: cancel/archive require two different accounts, self-approval rejected, no hard delete; S6: price-change approval remains assigned to S6 | **S5 portion PASS؛ S6 price portion planned** |
+| P-06 | قرار معتمد | S4 | customer identity/metadata، duplicate no-merge، works، history، documented facts، warnings، notes | **S4 PORTION PASS؛ financial dealings DEFERRED TO S7 (closed administratively for S4)** |
 | P-07 | قرار معتمد | S11 | مراجعة قاعدة العمل واختبار أثرها في S11 | مخطط |
 | S-01 | سيناريو | S6 | اختبار السعر الأساسي والإضافات والنتيجة 1800 | مخطط |
-| S-02 | سيناريو | S5/S6 | اختبار تاريخ العنوان وتكلفة التغيير | مخطط |
-| S-03 | سيناريو | S4/S5 | Gate 2 يثبت parent/child relation؛ historical timeline الكامل يبقى S5 | متحقق جزئيًا في Gate 2 — PR #59 |
+| S-02 | سيناريو | S5/S6 | S5: title-history transitions retained؛ S6: تكلفة التغيير/price movement تبقى S6 | **S5 title-history portion PASS؛ S6 pricing portion planned** |
+| S-03 | سيناريو | S4/S5 | S4 parent/child + S5 events/title/status/archive histories تكمل historical timeline ضمن النطاقين | **PASS for S4/S5 assigned portions** |
 | S-04 | سيناريو | S4 | Work UI/API وnegative relation tests | متحقق في Gate 2 — PR #59 |
 | S-05 | سيناريو | S4/S8 | PRICE_UNSET follow-up UI؛ expanded S8 reporting غير منفذ | متحقق جزئيًا في Gate 2 — PR #59 |
-| S-06 | سيناريو | S5 | اختبار الإلغاء قبل التنفيذ مع بقاء السجل | مخطط |
-| S-07 | سيناريو | S5/S7 | اختبار تنفيذ جزئي ومدفوع صفر ومتَبقٍ كامل | مخطط |
+| S-06 | سيناريو | S5 | CANCEL target `CANCELLED_BEFORE_EXECUTION` عبر طلب وموافقة حساب مختلف مع بقاء السجل | **PASS — S5** |
+| S-07 | سيناريو | S5/S7 | S5 يثبت `PARTIALLY_STOPPED` كهدف CANCEL governed مع بقاء السجل؛ payment-zero/remaining جزء S7 | **S5 execution portion PASS؛ S7 financial portion planned** |
 | S-08 | سيناريو | S7 | اختبار 1700 ناقص 1000 يساوي 700 | مخطط |
 | S-09 | سيناريو | S7 | اختبار الأقساط المتباعدة حتى المتبقي صفر | مخطط |
 | S-10 | سيناريو | S6 | اختبار الخصم كحركة سالبة موثقة | مخطط |
-| S-11 | سيناريو | S5/S6 | اختبار تعديلات مجانية بقيمة صفر | مخطط |
+| S-11 | سيناريو | S5/S6 | S5 يحافظ على event/history boundary دون mutation مالي؛ S6 يختبر التعديل المالي المجاني/قيمة صفر عند تنفيذه | **S5 non-financial boundary PASS؛ S6 financial portion planned** |
 | S-12 | سيناريو | S4 | Acceptance AC-04 في Gate 2 | متحقق في Gate 2 — PR #59 |
 | S-13 | سيناريو | S4 | Acceptance AC-07: warning مشتق من documented fact مع source | متحقق في Gate 2 — PR #59 |
 | S-14 | سيناريو | S4/S11 | PRICE_UNSET/PRICE_ZERO distinction؛ historical import S11 غير منفذ | متحقق جزئيًا في Gate 2 — PR #59 |
