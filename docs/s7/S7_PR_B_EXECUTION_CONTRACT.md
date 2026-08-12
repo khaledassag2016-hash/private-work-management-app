@@ -68,3 +68,19 @@ The PR-B test file will contain exact test names for transfers, P-02/P-03, subsc
 ## Non-scope and handoff
 
 `PR_MERGED = NO`, `PR-C = NOT_STARTED`, and `S8 = NOT_STARTED` are mandatory at handoff. The Draft PR remains open for supervisory review and is never merged by this implementation workflow.
+
+## Exact PR-B test traceability
+
+The exact mandatory PR-B tests are:
+
+| Requirement | Exact test name |
+|---|---|
+| Transfers / direction / fee separation | `PR-B transfers preserve explicit direction and P-03 fee separation` |
+| P-01 / P-02 subscriptions | `PR-B subscriptions preserve P-01 13650 baseline and prospective P-02 burden` |
+| Generic expenses | `PR-B generic expenses preserve facts and fail closed on invented allocation` |
+| Settlement components / S6 authority / D-012 | `PR-B settlement components consume S6 price authority, receipts, transfers, subscriptions, and D-012 rounding` |
+| D-011 close/reopen / both directions | `PR-B D-011 soft-close and reopen require dual approval in both directions and preserve history` |
+| Migration preservation / audit guards | `PR-B migration preservation retains PR-A/S6 rows and installs append-only transfer and settlement audit guards` |
+| D1 query and bind budgets | `PR-B D1 query and bind budgets remain bounded for large settlement and child histories` |
+
+The D1 test emits `S7_PR_B_D1_MEASUREMENT` lines with the measured settlement query count, maximum bind width, and bounded child-list query counts. Test names are traceability only; the assertions and measurements are the evidence.

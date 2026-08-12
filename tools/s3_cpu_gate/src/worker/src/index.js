@@ -527,6 +527,27 @@ async function handleApi(request, env, requestId, scenario, user) {
     if (method === 'GET') return Response.json({ ok: true, data: await listWorks(env, Object.fromEntries(url.searchParams.entries())), requestId });
     if (method === 'POST') return Response.json({ ok: true, data: await createWork(env, user.uid, requestId, body), requestId }, { status: 201 });
   }
+  if (parts[1] === 'transfers' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listInterPartyTransfers(env, Object.fromEntries(url.searchParams.entries())), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createInterPartyTransfer(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'subscriptions' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listSubscriptionHistory(env), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createSubscriptionHistory(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'expenses' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listCommonExpenses(env), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await createCommonExpense(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'settlements') {
+    if (parts.length === 3 && parts[2] === 'preview' && method === 'GET') return Response.json({ ok: true, data: await getSettlementPreview(env, url.searchParams.get('period_key') || '', Object.fromEntries(url.searchParams.entries())), requestId });
+    if (parts.length === 4 && parts[3] === 'close' && method === 'POST') return Response.json({ ok: true, data: await closeSettlement(env, user.uid, requestId, decodeURIComponent(parts[2]), body), requestId }, { status: 201 });
+    if (parts.length === 4 && parts[3] === 'reopen-requests') {
+      if (method === 'GET') return Response.json({ ok: true, data: await listSettlementReopenRequests(env, decodeURIComponent(parts[2])), requestId });
+      if (method === 'POST') return Response.json({ ok: true, data: await createSettlementReopenRequest(env, user.uid, requestId, decodeURIComponent(parts[2]), body), requestId }, { status: 201 });
+    }
+    if (parts.length === 6 && parts[3] === 'reopen-requests' && parts[5] === 'approve' && method === 'POST') return Response.json({ ok: true, data: await approveSettlementReopenRequest(env, user.uid, requestId, decodeURIComponent(parts[2]), decodeURIComponent(parts[4])), requestId });
+  }
   if (parts[1] === 'works' && parts.length >= 3) {
     const workId = decodeURIComponent(parts[2]);
     if (parts[3] === 'similar' && method === 'GET') return Response.json({ ok: true, data: await getSimilarWorks(env, workId), requestId });
@@ -1016,6 +1037,7 @@ export async function createClientPayment(env, actorUid, requestId, workId, inpu
   const amountHalalas = parseMoneyHalalas(input.amount_riyals);
   if (amountHalalas <= 0) throw new DomainError('PAYMENT_AMOUNT_INVALID', 400);
   const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
   const paymentMethod = validatePaymentMethod(input.payment_method);
   const note = optionalString(input.note, 'PAYMENT_NOTE_INVALID');
   const receivedBy = input.received_by === undefined ? actorUid : requiredString(input.received_by, 'RECEIVED_BY_REQUIRED');
@@ -1122,6 +1144,7 @@ export async function approvePaymentReversalRequest(env, actorUid, requestId, wo
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const payment = await env.DB.prepare('SELECT * FROM client_payments WHERE id=?1 AND work_id=?2').bind(requestRow.payment_id, workId).first();
   if (!payment) throw new DomainError('PAYMENT_NOT_FOUND', 404);
+  await prbEnsurePeriodOpen(env, payment.effective_at);
   const beforeWork = await getWorkRaw(env, workId);
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
   const approvedAt = nowIso();
@@ -1277,4 +1300,234 @@ export async function approveRatioChangeRequest(env, actorUid, requestId, workId
   const results = await executeBatch(env, [workMutation, requestMutation, historyMutation, auditRequest, auditHistory]);
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
   return { request: afterRequest, history: afterHistory, financials: await getWorkFinancials(env, workId) };
+}
+
+// S7 PR-B Transfers / Subscriptions / Expenses / Settlement Core.
+const PRB_DEFAULT_SUBSCRIPTION_HALALAS = 13650;
+const PRB_PERIOD_BASIS = 'WORK_CREATED_AT';
+const PRB_BALANCE_FORMULA = 'PERSON_2_NET_POSITION_BEFORE_RECEIPTS';
+
+function prbParty(value, code = 'PARTY_INVALID') {
+  const party = requiredString(value, code);
+  if (party !== 'person_1' && party !== 'person_2') throw new DomainError(code, 400);
+  return party;
+}
+function prbPositiveMoney(value, code = 'MONEY_INVALID') {
+  const amount = parseMoneyHalalas(value);
+  if (amount <= 0) throw new DomainError(code, 400);
+  return amount;
+}
+function prbPeriodKey(value) {
+  const key = requiredString(value, 'SETTLEMENT_PERIOD_REQUIRED');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key)) throw new DomainError('SETTLEMENT_PERIOD_INVALID', 400);
+  return key;
+}
+function prbPeriodBounds(periodKey) {
+  const key = prbPeriodKey(periodKey);
+  const [year, month] = key.split('-').map(Number);
+  const start = `${key}-01T00:00:00.000Z`;
+  const next = new Date(Date.UTC(month === 12 ? year + 1 : year, month === 12 ? 0 : month, 1));
+  return { periodKey: key, start, end: next.toISOString() };
+}
+function prbPartyRoleUid(env, role) {
+  return env.DB.prepare('SELECT uid FROM app_users WHERE role=?1 AND active=1').bind(role).first();
+}
+async function prbEnsurePeriodOpen(env, effectiveAt) {
+  const key = effectiveAt.slice(0, 7);
+  const closed = await env.DB.prepare(`SELECT s.id FROM settlement_snapshots s
+    WHERE s.period_key=?1 AND s.state='CLOSED'
+      AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at)
+    LIMIT 1`).bind(key).first();
+  if (closed) throw new DomainError('CLOSED_PERIOD_MUTATION_FORBIDDEN', 409);
+}
+function prbAudit(env, type, id, actorUid, after, requestId, createdAt) {
+  return auditStatement(env, type, id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
+}
+
+export async function createInterPartyTransfer(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const amount = prbPositiveMoney(input.amount_riyals, 'TRANSFER_AMOUNT_INVALID');
+  const fee = input.fee_riyals === undefined ? 0 : parseMoneyHalalas(input.fee_riyals);
+  if (fee < 0) throw new DomainError('TRANSFER_FEE_INVALID', 400);
+  const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
+  const fromParty = prbParty(input.from_party, 'TRANSFER_FROM_REQUIRED');
+  const toParty = prbParty(input.to_party, 'TRANSFER_TO_REQUIRED');
+  if (fromParty === toParty) throw new DomainError('TRANSFER_DIRECTION_INVALID', 400);
+  const feePayer = prbParty(input.fee_payer === undefined ? 'person_1' : input.fee_payer, 'TRANSFER_FEE_PAYER_INVALID');
+  if (feePayer !== 'person_1') throw new DomainError('TRANSFER_FEE_PAYER_INVALID', 400);
+  const note = optionalString(input.note, 'TRANSFER_NOTE_INVALID');
+  const id = newId('transfer');
+  const createdAt = nowIso();
+  const after = { id, amount_halalas: amount, effective_at: effectiveAt, from_party: fromParty, to_party: toParty, fee_halalas: fee, fee_payer: feePayer, note, recorded_by: actorUid, created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO inter_party_transfers(id,amount_halalas,effective_at,from_party,to_party,fee_halalas,fee_payer,note,recorded_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`).bind(id, amount, effectiveAt, fromParty, toParty, fee, feePayer, note, actorUid, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'inter_party_transfer', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listInterPartyTransfers(env, query = {}) {
+  const from = query.from ? canonicalEventTimestamp(query.from) : null;
+  const to = query.to ? canonicalEventTimestamp(query.to) : null;
+  const rows = (await env.DB.prepare(`SELECT id,amount_halalas,effective_at,from_party,to_party,fee_halalas,fee_payer,note,recorded_by,created_at,request_id
+    FROM inter_party_transfers WHERE (?1 IS NULL OR effective_at>=?1) AND (?2 IS NULL OR effective_at<?2) ORDER BY effective_at ASC,id ASC`).bind(from, to).all()).results || [];
+  return rows.map(row => ({ ...row, amount_halalas: Number(row.amount_halalas), fee_halalas: Number(row.fee_halalas) }));
+}
+
+export async function createSubscriptionHistory(env, actorUid, requestId, input) {
+  const actor = await ensureActor(env, actorUid);
+  if (actor.role !== 'person_2') throw new DomainError('SUBSCRIPTION_PAYER_MUST_BE_PERSON_2', 403);
+  const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
+  const state = input.state === undefined ? 'ACTIVE' : requiredString(input.state, 'SUBSCRIPTION_STATE_INVALID').toUpperCase();
+  if (state !== 'ACTIVE' && state !== 'CANCELLED') throw new DomainError('SUBSCRIPTION_STATE_INVALID', 400);
+  const amount = state === 'CANCELLED' ? 0 : prbPositiveMoney(input.aggregate_amount_riyals, 'SUBSCRIPTION_AMOUNT_INVALID');
+  const paidBy = await prbPartyRoleUid(env, 'person_2');
+  const id = newId('subscription');
+  const createdAt = nowIso();
+  const after = { id, subscription_count: 2, aggregate_amount_halalas: amount, effective_at: effectiveAt, state, paid_by_uid: paidBy.uid, recorded_by: actorUid, note: optionalString(input.note, 'SUBSCRIPTION_NOTE_INVALID'), created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO subscription_history(id,subscription_count,aggregate_amount_halalas,effective_at,state,paid_by_uid,recorded_by,note,created_at,request_id)
+    VALUES (?1,2,?2,?3,?4,?5,?6,?7,?8,?9)`).bind(id, amount, effectiveAt, state, paidBy.uid, actorUid, after.note, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'subscription_history', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listSubscriptionHistory(env) {
+  const rows = (await env.DB.prepare(`SELECT id,subscription_count,aggregate_amount_halalas,effective_at,state,paid_by_uid,recorded_by,note,created_at,request_id
+    FROM subscription_history ORDER BY effective_at ASC,id ASC`).bind().all()).results || [];
+  return rows.map(row => ({ ...row, subscription_count: Number(row.subscription_count), aggregate_amount_halalas: Number(row.aggregate_amount_halalas) }));
+}
+
+export async function createCommonExpense(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const amount = prbPositiveMoney(input.amount_riyals, 'EXPENSE_AMOUNT_INVALID');
+  const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  await prbEnsurePeriodOpen(env, effectiveAt);
+  const category = requiredString(input.category, 'EXPENSE_CATEGORY_REQUIRED');
+  const paidBy = requiredString(input.paid_by_uid, 'EXPENSE_PAYER_REQUIRED');
+  await ensureActor(env, paidBy);
+  const note = optionalString(input.note, 'EXPENSE_NOTE_INVALID');
+  const id = newId('expense');
+  const createdAt = nowIso();
+  const after = { id, amount_halalas: amount, effective_at: effectiveAt, category, paid_by_uid: paidBy, allocation_policy: 'UNRESOLVED', note, recorded_by: actorUid, created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO common_expenses(id,amount_halalas,effective_at,category,paid_by_uid,allocation_policy,note,recorded_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,'UNRESOLVED',?6,?7,?8,?9)`).bind(id, amount, effectiveAt, category, paidBy, note, actorUid, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'common_expense', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listCommonExpenses(env) {
+  const rows = (await env.DB.prepare(`SELECT id,amount_halalas,effective_at,category,paid_by_uid,allocation_policy,note,recorded_by,created_at,request_id
+    FROM common_expenses ORDER BY effective_at ASC,id ASC`).bind().all()).results || [];
+  return rows.map(row => ({ ...row, amount_halalas: Number(row.amount_halalas) }));
+}
+
+function prbInClause(values) { return values.map(() => '?').join(','); }
+async function prbSettlementComponents(env, bounds) {
+  const works = (await env.DB.prepare(`SELECT id,created_at FROM works WHERE created_at>=?1 AND created_at<?2 ORDER BY created_at ASC,id ASC`).bind(bounds.start, bounds.end).all()).results || [];
+  const cumulative = (await env.DB.prepare('SELECT COUNT(*) AS count FROM works WHERE created_at<?1').bind(bounds.end).first())?.count || 0;
+  if (!works.length) {
+    const transfer = (await env.DB.prepare(`SELECT COALESCE(SUM(amount_halalas),0) AS amount,COALESCE(SUM(fee_halalas),0) AS fee,COALESCE(SUM(CASE WHEN to_party='person_2' THEN amount_halalas WHEN from_party='person_2' THEN -amount_halalas ELSE 0 END),0) AS net_person_2 FROM inter_party_transfers WHERE effective_at>=?1 AND effective_at<?2`).bind(bounds.start, bounds.end).first()) || { amount: 0, fee: 0 };
+    const subscription = (await env.DB.prepare(`SELECT aggregate_amount_halalas,state FROM subscription_history WHERE effective_at<?1 ORDER BY effective_at DESC,id DESC LIMIT 1`).bind(bounds.end).first()) || { aggregate_amount_halalas: PRB_DEFAULT_SUBSCRIPTION_HALALAS, state: 'ACTIVE' };
+    const expense = (await env.DB.prepare(`SELECT COALESCE(SUM(amount_halalas),0) AS amount FROM common_expenses WHERE effective_at>=?1 AND effective_at<?2`).bind(bounds.start, bounds.end).first()) || { amount: 0 };
+    return { works, cumulativeWorkCount: Number(cumulative), prices: new Map(), ratios: new Map(), receipts: new Map(), transferAmount: Number(transfer.amount), transferNetPerson2: Number(transfer.net_person_2), transferFee: Number(transfer.fee), subscriptionTotal: subscription.state === 'CANCELLED' ? 0 : Number(subscription.aggregate_amount_halalas), expenseTotal: Number(expense.amount) };
+  }
+  const ids = works.map(row => row.id);
+  const prices = (await env.DB.prepare(`SELECT work_id,effective_at,approved_at,resulting_price_halalas FROM price_movements WHERE work_id IN (${prbInClause(ids)}) ORDER BY effective_at ASC,approved_at ASC,id ASC`).bind(...ids).all()).results || [];
+  const ratios = (await env.DB.prepare(`SELECT work_id,approved_at,new_person_1_bps,new_person_2_bps FROM ratio_history WHERE work_id IN (${prbInClause(ids)}) ORDER BY approved_at ASC,id ASC`).bind(...ids).all()).results || [];
+  const receipts = (await env.DB.prepare(`SELECT p.work_id,COALESCE(SUM(p.amount_halalas),0)-COALESCE(SUM(r.amount_halalas),0) AS approved_paid
+    FROM client_payments p LEFT JOIN payment_reversals r ON r.payment_id=p.id
+    WHERE p.work_id IN (${prbInClause(ids)}) GROUP BY p.work_id`).bind(...ids).all()).results || [];
+  const transfer = (await env.DB.prepare(`SELECT COALESCE(SUM(amount_halalas),0) AS amount,COALESCE(SUM(fee_halalas),0) AS fee,COALESCE(SUM(CASE WHEN to_party='person_2' THEN amount_halalas WHEN from_party='person_2' THEN -amount_halalas ELSE 0 END),0) AS net_person_2 FROM inter_party_transfers WHERE effective_at>=?1 AND effective_at<?2`).bind(bounds.start, bounds.end).first()) || { amount: 0, fee: 0 };
+  const subscription = (await env.DB.prepare(`SELECT aggregate_amount_halalas,state FROM subscription_history WHERE effective_at<?1 ORDER BY effective_at DESC,id DESC LIMIT 1`).bind(bounds.end).first()) || { aggregate_amount_halalas: PRB_DEFAULT_SUBSCRIPTION_HALALAS, state: 'ACTIVE' };
+  const expense = (await env.DB.prepare(`SELECT COALESCE(SUM(amount_halalas),0) AS amount FROM common_expenses WHERE effective_at>=?1 AND effective_at<?2`).bind(bounds.start, bounds.end).first()) || { amount: 0 };
+  return { works, cumulativeWorkCount: Number(cumulative), prices, ratios, receipts, transferAmount: Number(transfer.amount), transferNetPerson2: Number(transfer.net_person_2), transferFee: Number(transfer.fee), subscriptionTotal: subscription.state === 'CANCELLED' ? 0 : Number(subscription.aggregate_amount_halalas), expenseTotal: Number(expense.amount) };
+}
+function prbRoundHalf(value) {
+  return calculateShareHalalas(safeFinancialInteger(value), 5000);
+}
+async function prbBuildSettlementPreview(env, periodKey, input = {}) {
+  const bounds = prbPeriodBounds(periodKey);
+  const components = await prbSettlementComponents(env, bounds);
+  const prices = new Map();
+  for (const row of components.prices || []) prices.set(row.work_id, Number(row.resulting_price_halalas));
+  const ratios = new Map();
+  for (const row of components.ratios || []) ratios.set(row.work_id, { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps) });
+  const receipts = new Map();
+  for (const row of components.receipts || []) receipts.set(row.work_id, Number(row.approved_paid));
+  let totalWork = 0; let person1 = 0; let person2 = 0; let receiptsTotal = 0;
+  for (const work of components.works) {
+    const price = prices.get(work.id) ?? 0;
+    const ratio = ratios.get(work.id) || { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS };
+    totalWork = safeFinancialAdd(totalWork, price);
+    person1 = safeFinancialAdd(person1, calculateShareHalalas(price, ratio.person_1_bps));
+    person2 = safeFinancialAdd(person2, calculateShareHalalas(price, ratio.person_2_bps));
+    receiptsTotal = safeFinancialAdd(receiptsTotal, receipts.get(work.id) || 0);
+  }
+  const subscriptionHalf = prbRoundHalf(components.subscriptionTotal);
+  const feeHalf = prbRoundHalf(components.transferFee);
+  const subscriptionEffectPerson1 = -subscriptionHalf;
+  const subscriptionEffectPerson2 = subscriptionHalf;
+  const feeEffectPerson1 = feeHalf;
+  const feeEffectPerson2 = -feeHalf;
+  const transferNetToPerson2 = components.transferNetPerson2;
+  const priorBalance = input.prior_balance_riyals === undefined ? 0 : parseMoneyHalalas(input.prior_balance_riyals);
+  const periodBasis = input.period_basis || null;
+  const balanceFormula = input.balance_formula || null;
+  const unresolved = components.expenseTotal > 0 ? 'S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED' : (periodBasis !== PRB_PERIOD_BASIS ? 'S7_SETTLEMENT_WORK_PERIOD_BASIS_UNRESOLVED' : (balanceFormula !== PRB_BALANCE_FORMULA ? 'S7_SETTLEMENT_FINAL_BALANCE_FORMULA_UNRESOLVED' : null));
+  let finalBalance = null;
+  if (!unresolved) {
+    finalBalance = priorBalance;
+    finalBalance = safeFinancialAdd(finalBalance, person2);
+    finalBalance = safeFinancialAdd(finalBalance, -person1);
+    finalBalance = safeFinancialAdd(finalBalance, subscriptionEffectPerson2);
+    finalBalance = safeFinancialAdd(finalBalance, -subscriptionEffectPerson1);
+    finalBalance = safeFinancialAdd(finalBalance, feeEffectPerson2);
+    finalBalance = safeFinancialAdd(finalBalance, -feeEffectPerson1);
+    finalBalance = safeFinancialAdd(finalBalance, -transferNetToPerson2);
+  }
+  return { period_key: bounds.periodKey, period_start: bounds.start, period_end: bounds.end, period_basis: periodBasis, balance_formula: balanceFormula, work_count: components.works.length, cumulative_work_count: components.cumulativeWorkCount, total_work_value_halalas: totalWork, person_1_work_share_halalas: person1, person_2_work_share_halalas: person2, approved_receipts_halalas: receiptsTotal, transfer_amount_halalas: components.transferAmount, transfer_net_person_2_halalas: transferNetToPerson2, transfer_fee_halalas: components.transferFee, subscription_total_halalas: components.subscriptionTotal, subscription_effect_person_1_halalas: subscriptionEffectPerson1, subscription_effect_person_2_halalas: subscriptionEffectPerson2, governed_expense_total_halalas: components.expenseTotal, generic_expense_allocation: 'UNRESOLVED', prior_balance_halalas: priorBalance, final_balance_halalas: finalBalance, unresolved_code: unresolved, component_formula: 'PERSON_2_WORK_SHARE - PERSON_1_WORK_SHARE - TRANSFERS_TO_PERSON_2 + P02 + P03 + PRIOR_BALANCE; CLIENT_RECEIPTS_REPORTED_SEPARATELY' };
+}
+export async function getSettlementPreview(env, periodKey, input = {}) { return prbBuildSettlementPreview(env, periodKey, input); }
+export async function closeSettlement(env, actorUid, requestId, periodKey, input) {
+  await ensureActor(env, actorUid);
+  const preview = await prbBuildSettlementPreview(env, periodKey, input);
+  if (preview.unresolved_code) throw new DomainError(preview.unresolved_code, 409);
+  const latest = await env.DB.prepare('SELECT COALESCE(MAX(version),0) AS version FROM settlement_snapshots WHERE period_key=?1').bind(periodKey).first();
+  const version = Number(latest?.version || 0) + 1;
+  const id = newId('settlement'); const createdAt = nowIso();
+  const after = { ...preview, id, state: 'CLOSED', version, created_by: actorUid, created_at: createdAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO settlement_snapshots(id,period_key,period_start,period_end,period_basis,balance_formula,state,work_count,cumulative_work_count,total_work_value_halalas,person_1_work_share_halalas,person_2_work_share_halalas,approved_receipts_halalas,transfer_amount_halalas,transfer_fee_halalas,subscription_total_halalas,subscription_effect_person_1_halalas,subscription_effect_person_2_halalas,governed_expense_total_halalas,prior_balance_halalas,final_balance_halalas,unresolved_code,version,created_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,'CLOSED',?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,NULL,?21,?22,?23,?24)`).bind(id, periodKey, preview.period_start, preview.period_end, preview.period_basis, preview.balance_formula, preview.work_count, preview.cumulative_work_count, preview.total_work_value_halalas, preview.person_1_work_share_halalas, preview.person_2_work_share_halalas, preview.approved_receipts_halalas, preview.transfer_amount_halalas, preview.transfer_fee_halalas, preview.subscription_total_halalas, preview.subscription_effect_person_1_halalas, preview.subscription_effect_person_2_halalas, preview.governed_expense_total_halalas, preview.prior_balance_halalas, preview.final_balance_halalas, version, actorUid, createdAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'settlement_snapshot', id, actorUid, after, `${requestId}:audit`, createdAt)]);
+  return after;
+}
+export async function listSettlementSnapshots(env, periodKey) {
+  const rows = (await env.DB.prepare(`SELECT * FROM settlement_snapshots WHERE period_key=?1 ORDER BY version ASC`).bind(periodKey).all()).results || [];
+  return rows;
+}
+export async function createSettlementReopenRequest(env, actorUid, requestId, periodKey, input) {
+  await ensureActor(env, actorUid);
+  const latest = await env.DB.prepare(`SELECT id FROM settlement_snapshots WHERE period_key=?1 AND state='CLOSED' ORDER BY version DESC LIMIT 1`).bind(periodKey).first();
+  if (!latest) throw new DomainError('SETTLEMENT_NOT_CLOSED', 409);
+  const reason = requiredString(input.reason, 'REOPEN_REASON_REQUIRED'); const id = newId('reopen'); const requestedAt = nowIso();
+  const after = { id, period_key: periodKey, reason, requested_by: actorUid, requested_at: requestedAt, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO settlement_reopen_requests(id,period_key,reason,requested_by,requested_at,state,request_id) VALUES (?1,?2,?3,?4,?5,'PENDING',?6)`).bind(id, periodKey, reason, actorUid, requestedAt, requestId);
+  await executeBatch(env, [mutation, prbAudit(env, 'settlement_reopen_request', id, actorUid, after, `${requestId}:audit`, requestedAt)]);
+  return after;
+}
+export async function approveSettlementReopenRequest(env, actorUid, requestId, periodKey, reopenId) {
+  await ensureActor(env, actorUid);
+  const req = await env.DB.prepare('SELECT * FROM settlement_reopen_requests WHERE id=?1 AND period_key=?2').bind(reopenId, periodKey).first();
+  if (!req) throw new DomainError('REOPEN_REQUEST_NOT_FOUND', 404);
+  if (req.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
+  if (req.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
+  const approvedAt = nowIso();
+  const after = { ...req, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt, approval_request_id: requestId };
+  const update = env.DB.prepare(`UPDATE settlement_reopen_requests SET state='APPROVED',approved_by=?1,approved_at=?2,approval_request_id=?3 WHERE id=?4 AND period_key=?5 AND state='PENDING' AND requested_by<>?1`).bind(actorUid, approvedAt, requestId, reopenId, periodKey);
+  const history = env.DB.prepare(`INSERT INTO settlement_reopen_history(id,period_key,reopen_request_id,reason,requested_by,approved_by,requested_at,approved_at,request_id)
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE EXISTS (SELECT 1 FROM settlement_reopen_requests WHERE id=?3 AND state='APPROVED' AND approval_request_id=?9)`).bind(newId('reopen-history'), periodKey, reopenId, req.reason, req.requested_by, actorUid, req.requested_at, approvedAt, requestId);
+  const results = await executeBatch(env, [update, history, prbAudit(env, 'settlement_reopen_request', reopenId, actorUid, after, `${requestId}:audit`, approvedAt)]);
+  if (Number(results[0]?.meta?.changes) !== 1 || Number(results[1]?.meta?.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return after;
+}
+export async function listSettlementReopenRequests(env, periodKey) {
+  return (await env.DB.prepare('SELECT * FROM settlement_reopen_requests WHERE period_key=?1 ORDER BY requested_at ASC,id ASC').bind(periodKey).all()).results || [];
 }
