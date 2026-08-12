@@ -179,6 +179,11 @@ function auditStatement(env, entityType, entityId, action, actorUid, before, aft
        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`;
   return env.DB.prepare(sql).bind(entityType, entityId, action, actorUid, createdAt, before === null ? null : JSON.stringify(before), JSON.stringify(after), runMarker, requestId);
 }
+function auditStatementWhen(env, entityType, entityId, action, actorUid, before, after, runMarker, requestId, createdAt, predicate, predicateValues) {
+  return env.DB.prepare(`INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE ${predicate}`)
+    .bind(entityType, entityId, action, actorUid, createdAt, before === null ? null : JSON.stringify(before), JSON.stringify(after), runMarker, requestId, ...predicateValues);
+}
 async function executeBatch(env, statements) {
   return env.DB.batch(statements);
 }
@@ -662,7 +667,7 @@ export async function approveCancelArchiveRequest(env, actorUid, requestId, work
     .bind(actorUid, approvedAt, reqId, workId, beforeWork.version, beforeWork.version + 1);
   const historyMutation = env.DB.prepare(`INSERT INTO work_status_history(id, work_id, old_status, new_status, reason, changed_at, changed_by, request_id)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
-    WHERE ?9='CANCEL' AND EXISTS (SELECT 1 FROM cancel_archive_requests WHERE id=?10 AND state='APPROVED' AND approved_by=?7)`)
+    WHERE ?9='CANCEL' AND EXISTS (SELECT 1 FROM cancel_archive_requests WHERE id=?10 AND state='APPROVED' AND approved_by=?7 AND approved_at=?6)`)
     .bind(statusHistId, workId, beforeWork.status, newStatus, `Approved ${requestRow.action} request: ${requestRow.reason}`, approvedAt, actorUid, requestId, requestRow.action, reqId);
   const archiveHistoryMutation = env.DB.prepare(`INSERT INTO work_archive_history(id, work_id, archived_at, archived_by, reason, request_id)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6
@@ -681,8 +686,12 @@ export async function approveCancelArchiveRequest(env, actorUid, requestId, work
   };
   const afterRequest = { ...requestRow, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt };
 
-  const auditRequest = auditStatement(env, 'cancel_archive_request', reqId, 'UPDATE', actorUid, requestRow, afterRequest, env.RUN_MARKER, requestId + ':req', approvedAt, true);
-  const auditWork = auditStatement(env, 'work', workId, 'UPDATE', actorUid, beforeWork, afterWork, env.RUN_MARKER, requestId + ':work', approvedAt, true);
+  const auditRequest = auditStatementWhen(env, 'cancel_archive_request', reqId, 'UPDATE', actorUid, requestRow, afterRequest, env.RUN_MARKER, requestId + ':req', approvedAt,
+    'EXISTS (SELECT 1 FROM cancel_archive_requests WHERE id=?10 AND work_id=?11 AND state=\'APPROVED\' AND approved_by=?12 AND approved_at=?13)',
+    [reqId, workId, actorUid, approvedAt]);
+  const auditWork = auditStatementWhen(env, 'work', workId, 'UPDATE', actorUid, beforeWork, afterWork, env.RUN_MARKER, requestId + ':work', approvedAt,
+    'EXISTS (SELECT 1 FROM works WHERE id=?10 AND version=?11 AND updated_by=?12 AND updated_at=?13)',
+    [workId, beforeWork.version + 1, actorUid, approvedAt]);
 
   const results = await executeBatch(env, [workMutation, requestMutation, historyMutation, archiveHistoryMutation, auditRequest, auditWork]);
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || (requestRow.action === 'CANCEL' && Number(results[2]?.meta?.changes) !== 1) || (requestRow.action === 'ARCHIVE' && Number(results[3]?.meta?.changes) !== 1)) {

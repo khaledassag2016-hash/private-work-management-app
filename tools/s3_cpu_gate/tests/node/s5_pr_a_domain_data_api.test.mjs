@@ -151,6 +151,7 @@ test('S5 FR-008: Work Title History records transitions and requires mandatory r
 
     // Stale version/lost update rejection
     await assert.rejects(changeWorkTitle(env, 'uid-one', 'req-title-4', work.id, { version: 1, new_title: 'Stale Title', reason: 'Stale update test' }), /VERSION_CONFLICT/);
+    assert.equal((await listWorkTitleHistory(env, work.id)).length, 2);
 
     await assert.rejects(updateWork(env, 'uid-one', 'req-title-bypass', work.id, { version: w2.version, title: 'PATCH bypass' }), /TITLE_CHANGE_OUT_OF_SCOPE/);
     assert.equal((await listWorkTitleHistory(env, work.id)).length, 2);
@@ -227,9 +228,11 @@ test('S5 Cancel / Archive Requests: Pending model, targets, and dual-approval me
     const updatedWork = await changeWorkTitle(env, 'uid-one', 'req-title-mod', work.id, { version: work.version, new_title: 'Some New Title', reason: 'Title mod' });
     assert.equal(updatedWork.version, 2);
     await assert.rejects(approveCancelArchiveRequest(env, 'uid-two', 'req-approve-2', work.id, cancelReq.id), /STALE_VERSION/);
+    assert.equal(database.prepare('SELECT state FROM cancel_archive_requests WHERE id=?').get(cancelReq.id).state, 'PENDING');
 
     const other = await createWork(env, 'uid-one', 'work-create-2', { customer_id: customer.id, title: 'Other Work', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT' });
     await assert.rejects(approveCancelArchiveRequest(env, 'uid-two', 'req-cross-work', other.id, cancelReq.id), /REQUEST_WORK_MISMATCH/);
+    assert.equal(database.prepare('SELECT state FROM cancel_archive_requests WHERE id=?').get(cancelReq.id).state, 'PENDING');
 
     // Create a new CANCEL request with current version 2 (User 2 requests)
     const cancelReq2 = await createCancelArchiveRequest(env, 'uid-two', 'req-cancel-2', work.id, { version: updatedWork.version, action: 'CANCEL', reason: 'Client withdrew again', target_execution_status: 'PARTIALLY_STOPPED' });
@@ -250,6 +253,16 @@ test('S5 Cancel / Archive Requests: Pending model, targets, and dual-approval me
     assert.equal(statHistory[0].old_status, 'NEW_REQUEST');
     assert.equal(statHistory[0].new_status, 'PARTIALLY_STOPPED');
     assert.equal(statHistory[0].reason, 'Approved CANCEL request: Client withdrew again');
+
+    const raceReq = await createCancelArchiveRequest(env, 'uid-one', 'req-race-create', work.id, { version: approvedResult.work.version, action: 'CANCEL', reason: 'Concurrent approval test', target_execution_status: 'PARTIALLY_STOPPED' });
+    const raceResults = await Promise.allSettled([
+      approveCancelArchiveRequest(env, 'uid-two', 'req-race-a', work.id, raceReq.id),
+      approveCancelArchiveRequest(env, 'uid-two', 'req-race-b', work.id, raceReq.id),
+    ]);
+    assert.equal(raceResults.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(raceResults.filter(result => result.status === 'rejected').length, 1);
+    assert.equal(database.prepare('SELECT state FROM cancel_archive_requests WHERE id=?').get(raceReq.id).state, 'APPROVED');
+    assert.equal((await listWorkStatusHistory(env, work.id)).filter(row => row.reason.includes('Concurrent approval test')).length, 1);
   } finally { database.close(); }
 });
 
