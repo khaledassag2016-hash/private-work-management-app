@@ -26,4 +26,3 @@
 - `git diff --check`: `PASS`.
 - Changed paths are documentation-only; no executable production path changed.
 - No secrets, real customer data, Cloud write, deployment, billing action, or Live acceptance was performed.
-
