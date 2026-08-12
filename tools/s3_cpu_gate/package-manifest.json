@@ -52,6 +52,7 @@
     "src/worker/src/index.js",
     "src/worker/migrations/0005_s5_domain_data_api.sql",
     "src/worker/migrations/0006_s6_financial_core.sql",
+    "src/worker/migrations/0007_s7_payments_collections_reversals.sql",
     "tests/pester/Common.Tests.ps1",
     "tests/pester/CpuGate.Tests.ps1",
     "tests/pester/FirebaseProtoJsonRecordsCount.Tests.ps1",
@@ -75,6 +76,7 @@
     "tests/node/s6_pr_a_financial_core.test.mjs",
     "tests/node/s6_pr_b_ui_acceptance.test.mjs",
     "tests/node/s6_pr_b_query_budget.test.mjs",
+    "tests/node/s7_pr_a_payments.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
@@ -93,6 +95,7 @@
     "worker/assets/styles.css",
     "worker/src/index.js",
     "worker/migrations/0005_s5_domain_data_api.sql",
-    "worker/migrations/0006_s6_financial_core.sql"
+    "worker/migrations/0006_s6_financial_core.sql",
+    "worker/migrations/0007_s7_payments_collections_reversals.sql"
   ]
 }

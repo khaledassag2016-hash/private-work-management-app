@@ -340,14 +340,15 @@ test('S6 API envelope is consumed by the existing private Worker route', { skip:
   }
 });
 
-test('S6 source/package parity and no S7 payment tables/routes', () => {
-  for (const relativePath of ['schema.sql', 'schema_s6.sql', 'src/index.js', 'migrations/0006_s6_financial_core.sql']) {
+test('S6 source/package parity remains intact and the S6 boundary stays settlement-free', () => {
+  for (const relativePath of ['schema.sql', 'schema_s6.sql', 'src/index.js', 'migrations/0006_s6_financial_core.sql', 'migrations/0007_s7_payments_collections_reversals.sql']) {
     const sourcePath = join(fileURLToPath(new URL('../../src/worker/', import.meta.url)), relativePath);
     const packagedPath = join(packagedRoot, relativePath);
     assert.equal(readFileSync(sourcePath, 'utf8'), readFileSync(packagedPath, 'utf8'), `worker mirror mismatch: ${relativePath}`);
   }
-  const schema = readFileSync(schemaPath, 'utf8');
+  const s6Schema = readFileSync(fileURLToPath(new URL('../../src/worker/schema_s6.sql', import.meta.url)), 'utf8');
   const source = readFileSync(sourceWorkerPath, 'utf8');
-  assert.doesNotMatch(schema, /CREATE TABLE IF NOT EXISTS (payment|payments|settlements|subscriptions)/i);
-  assert.doesNotMatch(source, /\/api\/payments|\/api\/settlements|\/api\/subscriptions/);
+  assert.doesNotMatch(s6Schema, /CREATE TABLE IF NOT EXISTS (client_payments|payment_reversal_requests|payment_reversals)/i);
+  assert.doesNotMatch(source, /\/api\/settlements|\/api\/subscriptions|\/api\/transfers/);
+  assert.match(source, /parts\[3\] === 'payments'/);
 });
