@@ -152,6 +152,9 @@ test('supervisory domain: customer factual statuses cannot be invented and deriv
     await createDocumentedFact(env, 'repair-person-one', 'repair-fact-derived', { customer_id: customer.id, fact_type: 'NON_PAYMENT', source_ref: 'synthetic-status-evidence', happened_at: '2026-08-03T12:00:00.000Z', details: {} });
     assert.equal((await getCustomer(env, customer.id)).status, 'unpaid');
     assert.equal(database.prepare('SELECT status FROM customers WHERE id=?').get(customer.id).status, 'normal');
+    const delayOnlyCustomer = await createCustomer(env, 'repair-person-one', 'repair-customer-delay-only', customerInput());
+    await createDocumentedFact(env, 'repair-person-one', 'repair-fact-delay-only', { customer_id: delayOnlyCustomer.id, fact_type: 'DELAY', source_ref: 'synthetic-delay-evidence', happened_at: '2026-08-04T12:00:00.000Z', details: {} });
+    assert.equal((await getCustomer(env, delayOnlyCustomer.id)).status, 'normal');
   } finally { database.close(); }
 });
 

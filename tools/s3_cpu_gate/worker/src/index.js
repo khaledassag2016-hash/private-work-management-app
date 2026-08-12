@@ -101,7 +101,8 @@ async function allowed(env, uid) {
 }
 
 function nowIso() { return new Date().toISOString(); }
-const CUSTOMER_STATUS_FACT_MAP = Object.freeze({ NON_PAYMENT: 'unpaid', DELAY: 'frequent_delay', BLOCKED: 'blocked', DISPUTE: 'dispute' });
+// DELAY -> frequent_delay intentionally remains an UNRESOLVED_PRODUCT_DECISION: the governing S4 reference sets no frequency threshold.
+const CUSTOMER_STATUS_FACT_MAP = Object.freeze({ NON_PAYMENT: 'unpaid', BLOCKED: 'blocked', DISPUTE: 'dispute' });
 const WORK_STATUS_ALLOWLIST = Object.freeze([
   'NEW_REQUEST',
   'REQUIREMENT_REVIEW',
@@ -248,6 +249,16 @@ export async function updateCustomer(env, actorUid, requestId, id, input) {
   return projectCustomerStatus(env, after);
 }
 
+function softWorkDetailWarnings(work) {
+  const warnings = [];
+  if (!work.university) warnings.push({ code: 'WORK_DETAIL_UNIVERSITY_MISSING', field: 'university', severity: 'SOFT_WARNING' });
+  if (!work.specialty_key) warnings.push({ code: 'WORK_DETAIL_SPECIALTY_MISSING', field: 'specialty_key', severity: 'SOFT_WARNING' });
+  return warnings;
+}
+function workMutationResponse(work) {
+  return { ...work, soft_warnings: softWorkDetailWarnings(work) };
+}
+
 async function validateWorkInput(env, input, current = null) {
   const title = input.title === undefined && current ? current.title : requiredString(input.title, 'WORK_TITLE_REQUIRED');
   const customerId = input.customer_id === undefined && current ? current.customer_id : requiredString(input.customer_id, 'CUSTOMER_ID_REQUIRED');
@@ -302,7 +313,7 @@ export async function createWork(env, actorUid, requestId, input) {
     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?16,?17,1)`).bind(id, after.customer_id, after.parent_work_id, after.relationship_kind, after.title, after.work_type_key, after.specialty_key, after.subject_or_course_code, after.country, after.university, after.status, after.description, after.quantity, after.price_state, after.price_minor_units, actorUid, createdAt);
   const audit = auditStatement(env, 'work', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
   await executeBatch(env, [mutation, audit]);
-  return after;
+  return workMutationResponse(after);
 }
 
 export async function getWork(env, id) {
@@ -333,7 +344,7 @@ export async function updateWork(env, actorUid, requestId, id, input) {
   const audit = auditStatement(env, 'work', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
   const results = await executeBatch(env, [mutation, audit]);
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
-  return after;
+  return workMutationResponse(after);
 }
 
 export async function listCatalog(env, kind) {

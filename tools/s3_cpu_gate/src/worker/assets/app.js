@@ -70,7 +70,7 @@ const WORK_STATUS_LABELS = Object.freeze({
   COMPLETED: 'مكتمل',
   DELIVERED: 'مسلم',
 });
-const CUSTOMER_STATUS_LABELS = Object.freeze({ normal: 'لا توجد واقعة وقائعية مشتقة', unpaid: 'لم يدفع — مشتق من واقعة موثقة', frequent_delay: 'تأخر — مشتق من واقعة موثقة', blocked: 'حظر/انقطاع — مشتق من واقعة موثقة', dispute: 'نزاع — مشتق من واقعة موثقة' });
+const CUSTOMER_STATUS_LABELS = Object.freeze({ normal: 'لا توجد حالة وقائعية مشتقة', unpaid: 'لم يدفع — مشتق من واقعة موثقة', blocked: 'حظر/انقطاع — مشتق من واقعة موثقة', dispute: 'نزاع — مشتق من واقعة موثقة' });
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
