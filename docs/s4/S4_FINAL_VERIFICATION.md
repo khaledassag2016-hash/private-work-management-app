@@ -1,19 +1,19 @@
 # S4 Gate 3 — Final Verification Evidence
 
-> **الحالة الحالية قبل فتح PR:** `S4_GATE3 = FINAL_VERIFICATION_IN_PROGRESS`، و`S4_COMPLETE = FALSE`. هذا المستند هو evidence محلي/مستودعي اصطناعي فقط، ولا يمثل موافقة إشرافية نهائية أو deployment.
+> **الحالة النهائية بعد merged-main verification:** `S4_GATE3 = READY_FOR_FINAL_SUPERVISORY_APPROVAL`، و`S4_COMPLETE = FALSE`. هذا المستند هو evidence محلي/مستودعي اصطناعي فقط، ولا يمثل موافقة إشرافية نهائية أو deployment.
 
 ## 1. الحقول الحاكمة
 
 | الحقل | القيمة الحالية |
 | --- | --- |
-| `S4_GATE3` | `FINAL_VERIFICATION_IN_PROGRESS` قبل PR؛ القيمة النهائية المسموح بها بعد merged-main verification هي `READY_FOR_FINAL_SUPERVISORY_APPROVAL` |
+| `S4_GATE3` | `READY_FOR_FINAL_SUPERVISORY_APPROVAL` بعد merged-main verification |
 | `GATE3_BASE_SHA` | `1020773ccf5dbb2fc28581d98fc68a3954cfdc23` |
 | `GATE3_BRANCH` | `s4/gate3-final-verification` |
-| `GATE3_PR` | Pending at evidence preparation; to be recorded after `gh pr create` |
-| `GATE3_FINAL_HEAD` | `e32d9d002c7fc5d6ba3477e31845dc3a46ef8f42` قبل إضافة هذا المستند؛ سيعاد تثبيته بعد آخر commit للـPR |
-| `GATE3_SQUASH_SHA` | Pending merge؛ لا يُسجل قبل الدمج |
-| `ADMIN_PR_IF_ANY` | Pending; يجوز PR إداري docs-only واحد بعد الدمج لتسجيل squash SHA |
-| `FINAL_MAIN_SHA` | Pending merged-main verification |
+| `GATE3_PR` | [PR #63](https://github.com/khaledassag2016-hash/private-work-management-app/pull/63) — merged by Squash |
+| `GATE3_FINAL_HEAD` | `3d41d7b59e0ac74d24495039df054f2a58acf718` |
+| `GATE3_SQUASH_SHA` | `cdec4dc8b60ef4102e078bd339ec7e645b682f1c` |
+| `ADMIN_PR_IF_ANY` | PR #64 — docs-only final-state record |
+| `FINAL_MAIN_SHA` | `cdec4dc8b60ef4102e078bd339ec7e645b682f1c` |
 | `ISSUE_3` | `OPEN` |
 | `S5` | `NOT_STARTED` |
 | `S4_COMPLETE` | `FALSE` |
@@ -127,29 +127,29 @@
 
 ## 11. Final handoff fields
 
-| Field | Pre-merge value |
+| Field | Final merged-main value |
 | --- | --- |
-| `S4_GATE3` | `FINAL_VERIFICATION_IN_PROGRESS` |
+| `S4_GATE3` | `READY_FOR_FINAL_SUPERVISORY_APPROVAL` |
 | `GATE3_BASE_SHA` | `1020773ccf5dbb2fc28581d98fc68a3954cfdc23` |
 | `GATE3_BRANCH` | `s4/gate3-final-verification` |
-| `GATE3_PR` | Pending |
-| `GATE3_FINAL_HEAD` | To be reset to the final evidence commit after this document is committed |
-| `GATE3_SQUASH_SHA` | Pending |
-| `ADMIN_PR_IF_ANY` | Pending |
-| `FINAL_MAIN_SHA` | Pending |
+| `GATE3_PR` | `#63` — merged by Squash |
+| `GATE3_FINAL_HEAD` | `3d41d7b59e0ac74d24495039df054f2a58acf718` |
+| `GATE3_SQUASH_SHA` | `cdec4dc8b60ef4102e078bd339ec7e645b682f1c` |
+| `ADMIN_PR_IF_ANY` | PR #64 — docs-only final-state record |
+| `FINAL_MAIN_SHA` | `cdec4dc8b60ef4102e078bd339ec7e645b682f1c` |
 | `FULL_TEST_RESULTS` | Local evidence PASS: Foundation, S2, Python `80/80`, Node `28/28`, secret scan, integrity, diff check |
-| `FULL_REGRESSION_RESULTS` | Local regression PASS; PR final-head and post-merge CI still required |
+| `FULL_REGRESSION_RESULTS` | Local regression PASS; PR final-head and post-merge CI PASS |
 | `SECURITY_AUDIT` | PASS within repository/local synthetic scope |
 | `AUDIT_AUDIT` | PASS: append-only/atomic evidence retained; Gate 3 soft warning excluded from audit after-state |
 | `REAL_DATA_SCAN` | PASS by scope review; synthetic only |
 | `SECRET_SCAN` | PASS |
 | `SCOPE_AUDIT` | PASS; no S5/S6/S7 leakage introduced |
-| `FINAL_HEAD_CI` | Pending PR creation |
-| `POST_MERGE_CI` | Pending merge |
+| `FINAL_HEAD_CI` | PASS — PR #63 run `31582032995` (S3 CPU Gate Static), Foundation run `31582033018`, S2 run `31582033063` |
+| `POST_MERGE_CI` | PASS — main run `31582176576` (S3 CPU Gate Static) and Foundation run `31582176570` |
 | `TRACEABILITY_MATRIX` | Updated for Gate 3 and deferred boundaries |
-| `PROJECT_STATE` | To be updated to `FINAL_VERIFICATION_IN_PROGRESS` in this PR |
-| `FINAL_EVIDENCE` | This document; final SHA fields to be recorded after merge |
-| `ISSUE_3_COMMENT` | Pending one final evidence comment after merged-main verification |
+| `PROJECT_STATE` | Final state recorded on merged main; `S4_GATE3 = READY_FOR_FINAL_SUPERVISORY_APPROVAL`, `S4_COMPLETE = FALSE` |
+| `FINAL_EVIDENCE` | This document, updated after merged-main verification |
+| `ISSUE_3_COMMENT` | UPDATED after merged-main verification; Issue #3 remains OPEN |
 
 ## References
 
