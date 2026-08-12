@@ -527,9 +527,15 @@ async function readAuthorized(request, env, requestId, scenario) {
   }
 }
 
+export async function listActiveParticipants(env) {
+  const rows = (await env.DB.prepare(`SELECT uid,role FROM app_users WHERE active=1 AND role IN ('person_1','person_2') ORDER BY CASE role WHEN 'person_1' THEN 1 ELSE 2 END,uid ASC`).all()).results || [];
+  return rows.map(row => ({ uid: row.uid, role: row.role }));
+}
+
 async function handleApi(request, env, requestId, scenario, user) {
   const url = new URL(request.url); const parts = url.pathname.split('/').filter(Boolean);
   const method = request.method.toUpperCase(); const body = method === 'POST' || method === 'PATCH' ? await parseRequestJson(request) : {};
+  if (parts[1] === 'participants' && parts.length === 2 && method === 'GET') return Response.json({ ok: true, data: await listActiveParticipants(env), requestId });
   if (parts[1] === 'customers' && parts.length === 2) {
     if (method === 'GET') return Response.json({ ok: true, data: await listCustomers(env, url.searchParams.get('q') || '') , requestId });
     if (method === 'POST') return Response.json({ ok: true, data: await createCustomer(env, user.uid, requestId, body), requestId }, { status: 201 });
@@ -558,6 +564,7 @@ async function handleApi(request, env, requestId, scenario, user) {
     if (method === 'POST') return Response.json({ ok: true, data: await createCommonExpense(env, user.uid, requestId, body), requestId }, { status: 201 });
   }
   if (parts[1] === 'settlements') {
+    if (parts.length === 2 && method === 'GET') return Response.json({ ok: true, data: await listSettlementSnapshots(env, url.searchParams.get('period_key') || ''), requestId });
     if (parts.length === 3 && parts[2] === 'preview' && method === 'GET') return Response.json({ ok: true, data: await getSettlementPreview(env, url.searchParams.get('period_key') || '', Object.fromEntries(url.searchParams.entries())), requestId });
     if (parts.length === 4 && parts[3] === 'close' && method === 'POST') return Response.json({ ok: true, data: await closeSettlement(env, user.uid, requestId, decodeURIComponent(parts[2]), body), requestId }, { status: 201 });
     if (parts.length === 4 && parts[3] === 'reopen-requests') {

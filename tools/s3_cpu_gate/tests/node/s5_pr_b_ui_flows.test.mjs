@@ -103,10 +103,10 @@ describe('S5 PR-B UI Flows', () => {
       };
     };
 
-    // Test events endpoint
+    // S7 may add authoritative Work-detail reads, but legacy requests remain wired through api().
     state.selectedWork = { id: 'w1' };
     await testApp.openWork('w1');
-    assert.match(lastFetch.url, /\/api\/works\/w1\/requests$/); // the last of Promise.all
+    assert.match(lastFetch.url, /\/api\/works\/w1\/payment-reversal-requests$/);
   });
 
   it('2. Direct status UI cannot offer governed cancel targets', () => {
@@ -450,13 +450,13 @@ describe('S5 PR-B UI Flows', () => {
     assert.equal(fetchCompleted, true);
   });
 
-  it('18. money text in event does not call any S6/S7 financial endpoint', async () => {
+  it('18. money text in event does not invoke a financial mutation; post-event refetches may include authoritative S7 reads', async () => {
     setupTestEnv();
     state.selectedWork = { id: 'w1', version: 1 };
 
     let calledUrls = [];
     globalThis.fetch = async (url, options) => {
-      calledUrls.push(url);
+      calledUrls.push({ url, method: options?.method });
       return { ok: true, json: async () => ({ ok: true, data: {} }) };
     };
 
@@ -473,12 +473,14 @@ describe('S5 PR-B UI Flows', () => {
     const mockEvent = { preventDefault: () => {}, currentTarget: {} };
     await testApp.submitEvent(mockEvent);
 
-    assert.equal(calledUrls.length, 9); // 1 for POST event, 8 for openWork parallel load including authoritative S6 financials
-    assert.match(calledUrls[0], /\/events$/);
-    assert.ok(calledUrls.some(url => /\/financials$/.test(url)));
-    calledUrls.forEach(url => {
-      assert.doesNotMatch(url, /billing|payment|settlement|subscription|transfer|expense/);
-    });
+    assert.equal(calledUrls.length, 11); // event POST plus ten authoritative Work-detail reads, including S7 payment/reversal history
+    assert.match(calledUrls[0].url, /\/events$/);
+    assert.equal(calledUrls[0].method, 'POST');
+    assert.ok(calledUrls.some(call => /\/financials$/.test(call.url)));
+    assert.ok(calledUrls.some(call => /\/payments$/.test(call.url)));
+    assert.ok(calledUrls.some(call => /payment-reversal-requests$/.test(call.url)));
+    assert.ok(calledUrls.slice(1).every(call => call.method === undefined));
+    assert.ok(calledUrls.every(call => !/billing|settlement|subscription|transfer|expense/.test(call.url)));
   });
 
   it('19. execution and collection are separate without deriving collection from price_state', () => {
