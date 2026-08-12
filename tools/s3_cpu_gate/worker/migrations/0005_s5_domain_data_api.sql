@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS cancel_archive_requests (
   state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING', 'APPROVED')),
   approved_by TEXT,
   approved_at TEXT,
+  approval_request_id TEXT,
   request_id TEXT NOT NULL,
   target_execution_status TEXT CHECK (
     (action = 'CANCEL' AND target_execution_status IN ('CANCELLED_BEFORE_EXECUTION', 'PARTIALLY_STOPPED')) OR

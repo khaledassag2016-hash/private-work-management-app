@@ -25,6 +25,8 @@ payments, balances, settlements, reversal, or monthly closing.
 - Conditional mutations use the work/request version and ownership predicates
   inside the same D1 batch as their dependent history and audit writes. A stale
   or mismatched operation therefore produces no business side effects.
+- Each approval stores its own approval request/correlation ID; timestamps are
+  evidence, never the sole race discriminator.
 - All private endpoints require a valid Firebase ID token and an active,
   allowlisted D1 user. No endpoint performs financial mutations.
 
