@@ -277,16 +277,19 @@ async function authoritativeWorkReadModel(env, work) {
   const movements = await listApprovedPriceMovementsRaw(env, work.id);
   return workPricingReadModel(work, sumApprovedPriceMovements(movements));
 }
+const MAX_BULK_PRICE_LOOKUP_BINDINGS = 100;
 async function bulkCurrentPriceMap(env, works) {
   const workIds = [...new Set(works.map(work => work.id).filter(Boolean))];
-  if (!workIds.length) return new Map();
-  const placeholders = workIds.map((_, index) => `?${index + 1}`).join(',');
-  const rows = (await env.DB.prepare(`SELECT work_id, amount_halalas, approved_at, id
-    FROM price_movements WHERE work_id IN (${placeholders}) ORDER BY work_id ASC, approved_at ASC, id ASC`).bind(...workIds).all()).results || [];
   const currentByWork = new Map();
-  for (const row of rows) {
-    const previous = currentByWork.has(row.work_id) ? currentByWork.get(row.work_id) : 0;
-    currentByWork.set(row.work_id, safeFinancialAdd(previous, Number(row.amount_halalas)));
+  for (let offset = 0; offset < workIds.length; offset += MAX_BULK_PRICE_LOOKUP_BINDINGS) {
+    const chunk = workIds.slice(offset, offset + MAX_BULK_PRICE_LOOKUP_BINDINGS);
+    const placeholders = chunk.map((_, index) => `?${index + 1}`).join(',');
+    const rows = (await env.DB.prepare(`SELECT work_id, amount_halalas, approved_at, id
+      FROM price_movements WHERE work_id IN (${placeholders}) ORDER BY work_id ASC, approved_at ASC, id ASC`).bind(...chunk).all()).results || [];
+    for (const row of rows) {
+      const previous = currentByWork.has(row.work_id) ? currentByWork.get(row.work_id) : 0;
+      currentByWork.set(row.work_id, safeFinancialAdd(previous, Number(row.amount_halalas)));
+    }
   }
   return currentByWork;
 }

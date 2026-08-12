@@ -20,7 +20,7 @@ class D1Statement {
     this.sql = sql.replace(/\?(\d+)/g, (_, index) => { this.parameterMap.push(Number(index)); return '?'; });
     this.values = [];
   }
-  bind(...values) { this.values = this.parameterMap.length ? this.parameterMap.map(index => values[index - 1]) : values; return this; }
+  bind(...values) { this.values = this.parameterMap.length ? this.parameterMap.map(index => values[index - 1]) : values; this.database.bindingWidths.push(this.values.length); return this; }
   first() { this.database.readQueries += 1; return this.database.prepare(this.sql).get(...this.values) || null; }
   all() { this.database.readQueries += 1; return { results: this.database.prepare(this.sql).all(...this.values) }; }
 }
@@ -50,6 +50,8 @@ function fixture() {
   database.exec(readFileSync(schemaPath, 'utf8'));
   database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('uid-one', 'person_1', 's6-query-budget');
   database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('uid-two', 'person_2', 's6-query-budget');
+  database.readQueries = 0;
+  database.bindingWidths = [];
   return { database, env: { DB: new D1Database(database), RUN_MARKER: 's6-query-budget', FIREBASE_PROJECT_ID: 'synthetic-query-budget' } };
 }
 
@@ -62,19 +64,22 @@ async function seedCatalogs(env) {
 function workPayload(customerId, title) {
   return { customer_id: customerId, title, country: 'BUDGET_COUNTRY', university: 'Budget University', specialty_key: 'BUDGET_SPECIALTY', work_type_key: 'BUDGET_REPORT', subject_or_course_code: 'BUDGET-001', description: 'Synthetic query budget fixture' };
 }
+function fixtureTimestamp(index, minuteOffset) {
+  return new Date(Date.UTC(2026, 7, 1, 0, minuteOffset, index)).toISOString();
+}
 
 async function seedLargePricingFixture(env, database) {
   await seedCatalogs(env);
   const customer = await createCustomer(env, 'uid-one', 'budget-customer-request', { name: 'Budget Customer', country: 'BUDGET_COUNTRY', university: 'Budget University', specialty: 'BUDGET_SPECIALTY' });
   const works = [];
   const expectedPrices = new Map();
-  for (let index = 0; index < 60; index += 1) {
+  for (let index = 0; index < 200; index += 1) {
     const work = await createWork(env, index % 2 === 0 ? 'uid-one' : 'uid-two', `budget-work-create-${index}`, workPayload(customer.id, `Budget Work ${index}`));
     works.push(work);
     const amountHalalas = 100000 + index;
     expectedPrices.set(work.id, amountHalalas);
-    const requestedAt = `2026-08-01T00:00:${String(index).padStart(2, '0')}.000Z`;
-    const approvedAt = `2026-08-01T00:01:${String(index).padStart(2, '0')}.000Z`;
+    const requestedAt = fixtureTimestamp(index, 0);
+    const approvedAt = fixtureTimestamp(index, 1);
     database.prepare(`INSERT INTO price_change_requests(id,work_id,movement_type,amount_halalas,reason,effective_at,requested_by,requested_at,work_version,state,approved_by,approved_at,approval_request_id,request_id)
       VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?,?,?)`).run(`budget-price-req-${index}`, work.id, 'BASE', amountHalalas, 'Synthetic query budget base', requestedAt, 'uid-one', requestedAt, 1, 'uid-two', approvedAt, `budget-approval-${index}`, `budget-request-${index}`);
     database.prepare(`INSERT INTO price_movements(id,work_id,price_request_id,movement_type,amount_halalas,reason,effective_at,requested_by,approved_by,requested_at,approved_at,resulting_price_halalas,request_id)
@@ -83,15 +88,17 @@ async function seedLargePricingFixture(env, database) {
   return { customer, works, expectedPrices };
 }
 
-test('S6 PR-B query budget keeps listWorks bulk and authoritative for 60 works', async () => {
+test('S6 PR-B query budget keeps listWorks bulk and authoritative for 200 works', async () => {
   const { database, env } = fixture();
   try {
     const { works, expectedPrices } = await seedLargePricingFixture(env, database);
     database.readQueries = 0;
+    database.bindingWidths = [];
     const listed = await listWorks(env);
-    assert.equal(listed.length, 60);
-    assert.ok(database.readQueries < 50, `listWorks used ${database.readQueries} read queries`);
-    assert.ok(database.readQueries <= 2, `listWorks should be bounded, got ${database.readQueries}`);
+    assert.equal(listed.length, 200);
+    assert.equal(database.readQueries, 3, `listWorks should use one works query plus two bulk queries, got ${database.readQueries}`);
+    assert.deepEqual(database.bindingWidths, [0, 100, 100]);
+    assert.ok(database.bindingWidths.every(width => width <= 100), `listWorks exceeded binding limit: ${database.bindingWidths}`);
     for (const work of listed) {
       assert.equal(work.pricing_state, 'PRICE_APPROVED');
       assert.equal(work.current_price_halalas, expectedPrices.get(work.id));
@@ -107,10 +114,12 @@ test('S6 PR-B query budget keeps similar-work authoritative and under D1 free li
   try {
     const { works, expectedPrices } = await seedLargePricingFixture(env, database);
     database.readQueries = 0;
+    database.bindingWidths = [];
     const similar = await getSimilarWorks(env, works[0].id);
     assert.equal(similar.length, 50);
-    assert.ok(database.readQueries < 50, `getSimilarWorks used ${database.readQueries} read queries`);
-    assert.ok(database.readQueries <= 3, `getSimilarWorks should be bounded, got ${database.readQueries}`);
+    assert.equal(database.readQueries, 3, `getSimilarWorks should use target, similar, and one bulk query, got ${database.readQueries}`);
+    assert.deepEqual(database.bindingWidths, [1, 6, 50]);
+    assert.ok(database.bindingWidths.every(width => width <= 100), `getSimilarWorks exceeded binding limit: ${database.bindingWidths}`);
     for (const work of similar) {
       assert.equal(work.pricing_state, 'PRICE_APPROVED');
       assert.equal(work.current_price_halalas, expectedPrices.get(work.id));
