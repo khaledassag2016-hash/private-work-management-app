@@ -100,7 +100,13 @@ async function allowed(env, uid) {
   return row || null;
 }
 
-function nowIso() { return new Date().toISOString(); }
+let lastIssuedTimestampMs = 0;
+function nowIso() {
+  const currentMs = Date.now();
+  const issuedMs = Math.max(currentMs, lastIssuedTimestampMs + 1);
+  lastIssuedTimestampMs = issuedMs;
+  return new Date(issuedMs).toISOString();
+}
 // Documented facts and customer_warning_projection are the factual source of truth.
 // customer.status is deliberately neutral/non-authoritative: the governing S4 reference defines no latest-wins, priority, or frequency rule.
 const WORK_STATUS_ALLOWLIST = Object.freeze([
@@ -525,6 +531,18 @@ async function handleApi(request, env, requestId, scenario, user) {
     const workId = decodeURIComponent(parts[2]);
     if (parts[3] === 'similar' && method === 'GET') return Response.json({ ok: true, data: await getSimilarWorks(env, workId), requestId });
     if (parts[3] === 'financials' && method === 'GET') return Response.json({ ok: true, data: await getWorkFinancials(env, workId), requestId });
+    if (parts[3] === 'payments') {
+      if (parts.length === 4 && method === 'GET') return Response.json({ ok: true, data: await listClientPayments(env, workId), requestId });
+      if (parts.length === 4 && method === 'POST') return Response.json({ ok: true, data: await createClientPayment(env, user.uid, requestId, workId, body), requestId }, { status: 201 });
+    }
+    if (parts[3] === 'payment-reversal-requests') {
+      if (parts.length === 4 && method === 'GET') return Response.json({ ok: true, data: await listPaymentReversalRequests(env, workId), requestId });
+      if (parts.length === 4 && method === 'POST') return Response.json({ ok: true, data: await createPaymentReversalRequest(env, user.uid, requestId, workId, body), requestId }, { status: 201 });
+      if (parts.length === 6 && parts[5] === 'approve' && method === 'POST') {
+        const reversalRequestId = decodeURIComponent(parts[4]);
+        return Response.json({ ok: true, data: await approvePaymentReversalRequest(env, user.uid, requestId, workId, reversalRequestId), requestId });
+      }
+    }
     if (parts[3] === 'price-movements' && method === 'GET') return Response.json({ ok: true, data: await listPriceMovements(env, workId), requestId });
     if (parts[3] === 'price-requests') {
       if (parts.length === 4) {
@@ -904,27 +922,149 @@ async function currentRatio(env, workId) {
   return row ? { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps), source: 'APPROVED_HISTORY' } : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT' };
 }
 
+const PAYMENT_METHOD_MAX_LENGTH = 64;
+
+function validatePaymentMethod(value) {
+  const method = requiredString(value, 'PAYMENT_METHOD_REQUIRED');
+  if (method.length > PAYMENT_METHOD_MAX_LENGTH) throw new DomainError('PAYMENT_METHOD_INVALID', 400);
+  return method;
+}
+
+function paymentCollectionStatus(currentPriceHalalas, approvedPaidTotalHalalas) {
+  if (currentPriceHalalas === null) return 'PRICE_UNSET';
+  if (approvedPaidTotalHalalas > currentPriceHalalas) return 'OVERPAYMENT_UNRESOLVED';
+  if (currentPriceHalalas === 0 || approvedPaidTotalHalalas === currentPriceHalalas) return 'FINANCIALLY_CLOSED';
+  if (approvedPaidTotalHalalas === 0) return 'UNPAID';
+  return 'PARTIALLY_COLLECTED';
+}
+
+async function listPaymentRowsRaw(env, workId) {
+  const rows = (await env.DB.prepare(`SELECT
+      p.id, p.work_id, p.amount_halalas, p.effective_at, p.payment_method, p.note,
+      p.received_by, p.recorded_by, p.created_at, p.work_version, p.request_id,
+      rr.id AS reversal_request_id, rr.reason AS reversal_reason,
+      rr.requested_by AS reversal_requested_by, rr.requested_at AS reversal_requested_at,
+      rr.state AS reversal_request_state, rr.approved_by AS reversal_approved_by,
+      rr.approved_at AS reversal_approved_at, rr.approval_request_id AS reversal_approval_request_id,
+      r.id AS reversal_id, r.amount_halalas AS reversal_amount_halalas,
+      r.approved_at AS reversal_recorded_at, r.request_id AS reversal_request_id_final
+    FROM client_payments p
+    LEFT JOIN payment_reversal_requests rr ON rr.payment_id = p.id
+    LEFT JOIN payment_reversals r ON r.payment_id = p.id
+    WHERE p.work_id = ?1
+    ORDER BY p.effective_at ASC, p.id ASC`).bind(workId).all()).results || [];
+  return rows.map(row => ({
+    ...row,
+    reversal_state: row.reversal_id ? 'APPROVED' : (row.reversal_request_id ? 'PENDING' : null),
+    reversal_amount_halalas: row.reversal_id ? Number(row.reversal_amount_halalas) : null,
+  }));
+}
+
+function paymentTotals(rows) {
+  let gross = 0;
+  let reversed = 0;
+  for (const row of rows) {
+    gross = safeFinancialAdd(gross, safeFinancialInteger(Number(row.amount_halalas)));
+    if (row.reversal_state === 'APPROVED') reversed = safeFinancialAdd(reversed, safeFinancialInteger(Number(row.reversal_amount_halalas)));
+  }
+  return { gross, reversed, approvedPaid: safeFinancialAdd(gross, -reversed) };
+}
+
+function paymentReadModel(row) {
+  return {
+    id: row.id,
+    work_id: row.work_id,
+    amount_halalas: Number(row.amount_halalas),
+    effective_at: row.effective_at,
+    payment_method: row.payment_method,
+    note: row.note,
+    received_by: row.received_by,
+    recorded_by: row.recorded_by,
+    created_at: row.created_at,
+    work_version: Number(row.work_version),
+    request_id: row.request_id,
+    reversal_state: row.reversal_state,
+    reversal_request_id: row.reversal_request_id,
+    reversal_reason: row.reversal_reason,
+    reversal_requested_by: row.reversal_requested_by,
+    reversal_requested_at: row.reversal_requested_at,
+    reversal_approved_by: row.reversal_approved_by,
+    reversal_approved_at: row.reversal_approved_at,
+    reversal_approval_request_id: row.reversal_approval_request_id,
+    reversal_id: row.reversal_id,
+    reversal_amount_halalas: row.reversal_amount_halalas,
+    reversal_recorded_at: row.reversal_recorded_at,
+    reversal_request_id_final: row.reversal_request_id_final,
+  };
+}
+
+export async function listClientPayments(env, workId) {
+  await getWorkRaw(env, workId);
+  return (await listPaymentRowsRaw(env, workId)).map(paymentReadModel);
+}
+
+export async function createClientPayment(env, actorUid, requestId, workId, input) {
+  await ensureActor(env, actorUid);
+  const existing = await env.DB.prepare('SELECT * FROM client_payments WHERE request_id=?1').bind(requestId).first();
+  if (existing) {
+    if (existing.work_id !== workId) throw new DomainError('REQUEST_ID_REUSE', 409);
+    return { payment: paymentReadModel(existing), financials: await getWorkFinancials(env, workId), idempotent_replay: true };
+  }
+  const beforeWork = await getWorkRaw(env, workId);
+  const version = positiveVersion(input.version);
+  if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
+  const amountHalalas = parseMoneyHalalas(input.amount_riyals);
+  if (amountHalalas <= 0) throw new DomainError('PAYMENT_AMOUNT_INVALID', 400);
+  const effectiveAt = canonicalEventTimestamp(input.effective_at);
+  const paymentMethod = validatePaymentMethod(input.payment_method);
+  const note = optionalString(input.note, 'PAYMENT_NOTE_INVALID');
+  const receivedBy = input.received_by === undefined ? actorUid : requiredString(input.received_by, 'RECEIVED_BY_REQUIRED');
+  await ensureActor(env, receivedBy);
+  const currentPrice = sumApprovedPriceMovements(await listApprovedPriceMovementsRaw(env, workId));
+  if (currentPrice === null) throw new DomainError('PRICE_UNSET_PAYMENT_FORBIDDEN', 409);
+  const totals = paymentTotals(await listPaymentRowsRaw(env, workId));
+  const nextApprovedPaid = safeFinancialAdd(totals.approvedPaid, amountHalalas);
+  if (nextApprovedPaid > currentPrice) throw new DomainError('S7_OVERPAYMENT_POLICY_UNRESOLVED', 409);
+  const id = newId('payment');
+  const createdAt = nowIso();
+  const after = { id, work_id: workId, amount_halalas: amountHalalas, effective_at: effectiveAt, payment_method: paymentMethod, note, received_by: receivedBy, recorded_by: actorUid, created_at: createdAt, work_version: version, request_id: requestId };
+  const workMutation = env.DB.prepare(`UPDATE works SET version=version+1, updated_by=?1, updated_at=?2 WHERE id=?3 AND version=?4`).bind(actorUid, createdAt, workId, version);
+  const paymentMutation = env.DB.prepare(`INSERT INTO client_payments(id,work_id,amount_halalas,effective_at,payment_method,note,received_by,recorded_by,created_at,work_version,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`).bind(id, workId, amountHalalas, effectiveAt, paymentMethod, note, receivedBy, actorUid, createdAt, version, requestId);
+  const audit = auditStatement(env, 'client_payment', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, `${requestId}:payment`, createdAt);
+  const results = await executeBatch(env, [workMutation, paymentMutation, audit]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return { payment: after, financials: await getWorkFinancials(env, workId), idempotent_replay: false };
+}
+
 export async function getWorkFinancials(env, workId) {
   await getWorkRaw(env, workId);
-  const [movements, priceRequests, ratioRequests, ratioHistory] = await Promise.all([
+  const [movements, priceRequests, ratioRequests, ratioHistory, paymentRows] = await Promise.all([
     listApprovedPriceMovementsRaw(env, workId),
-    listPriceChangeRequests(env, workId),
-    listRatioChangeRequests(env, workId),
-    listRatioHistory(env, workId),
+    listPriceChangeRequestsRaw(env, workId),
+    listRatioChangeRequestsRaw(env, workId),
+    listRatioHistoryRaw(env, workId),
+    listPaymentRowsRaw(env, workId),
   ]);
   const currentPriceHalalas = sumApprovedPriceMovements(movements);
   const ratio = await currentRatio(env, workId);
   const person1Share = calculateShareHalalas(currentPriceHalalas, ratio.person_1_bps);
   const person2Share = calculateShareHalalas(currentPriceHalalas, ratio.person_2_bps);
+  const totals = paymentTotals(paymentRows);
+  const hasS7Payments = paymentRows.length > 0;
+  const remainingHalalas = currentPriceHalalas === null ? null : safeFinancialAdd(currentPriceHalalas, -totals.approvedPaid);
   return {
     work_id: workId,
     price_state: currentPriceHalalas === null ? 'PRICE_UNSET' : 'PRICE_APPROVED',
     current_price_halalas: currentPriceHalalas,
     ratio,
     shares: { person_1_halalas: person1Share, person_2_halalas: person2Share },
-    approved_payments_total_halalas: 0,
-    remaining_halalas: currentPriceHalalas,
-    remaining_projection: 'PRE_S7_APPROVED_PAYMENTS_ZERO',
+    approved_payments_total_halalas: totals.approvedPaid,
+    remaining_halalas: remainingHalalas,
+    collection_status: paymentCollectionStatus(currentPriceHalalas, totals.approvedPaid),
+    remaining_projection: hasS7Payments ? 'S7_APPROVED_PAYMENTS_LEDGER' : 'PRE_S7_APPROVED_PAYMENTS_ZERO',
+    payments: paymentRows.map(paymentReadModel),
+    payment_totals: { gross_paid_halalas: totals.gross, reversed_paid_halalas: totals.reversed, approved_paid_halalas: totals.approvedPaid },
     movements,
     price_requests: priceRequests,
     ratio_requests: ratioRequests,
@@ -932,15 +1072,86 @@ export async function getWorkFinancials(env, workId) {
   };
 }
 
+export async function listPaymentReversalRequests(env, workId) {
+  await getWorkRaw(env, workId);
+  const rows = (await env.DB.prepare(`SELECT rr.id, rr.payment_id, rr.work_id, rr.reason, rr.requested_by, rr.requested_at,
+      rr.work_version, rr.state, rr.approved_by, rr.approved_at, rr.approval_request_id, rr.request_id,
+      p.amount_halalas, p.effective_at, r.id AS reversal_id, r.amount_halalas AS reversal_amount_halalas
+    FROM payment_reversal_requests rr
+    JOIN client_payments p ON p.id = rr.payment_id
+    LEFT JOIN payment_reversals r ON r.reversal_request_id = rr.id
+    WHERE rr.work_id=?1 ORDER BY rr.requested_at ASC, rr.id ASC`).bind(workId).all()).results || [];
+  return rows.map(row => ({ ...row, amount_halalas: Number(row.amount_halalas), reversal_amount_halalas: row.reversal_amount_halalas === null ? null : Number(row.reversal_amount_halalas) }));
+}
+
+export async function createPaymentReversalRequest(env, actorUid, requestId, workId, input) {
+  await ensureActor(env, actorUid);
+  const beforeWork = await getWorkRaw(env, workId);
+  const version = positiveVersion(input.version);
+  if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
+  const paymentId = requiredString(input.payment_id, 'PAYMENT_ID_REQUIRED');
+  const payment = await env.DB.prepare('SELECT * FROM client_payments WHERE id=?1').bind(paymentId).first();
+  if (!payment) throw new DomainError('PAYMENT_NOT_FOUND', 404);
+  if (payment.work_id !== workId) throw new DomainError('PAYMENT_WORK_MISMATCH', 404);
+  const existing = await env.DB.prepare('SELECT state FROM payment_reversal_requests WHERE payment_id=?1 ORDER BY requested_at DESC,id DESC LIMIT 1').bind(paymentId).first();
+  if (existing?.state === 'PENDING') throw new DomainError('REVERSAL_ALREADY_PENDING', 409);
+  if (existing?.state === 'APPROVED') throw new DomainError('REVERSAL_ALREADY_APPROVED', 409);
+  const reason = requiredString(input.reason, 'REASON_REQUIRED');
+  const id = newId('payment_reversal_req');
+  const requestedAt = nowIso();
+  const after = { id, payment_id: paymentId, work_id: workId, reason, requested_by: actorUid, requested_at: requestedAt, work_version: version, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO payment_reversal_requests(id,payment_id,work_id,reason,requested_by,requested_at,work_version,state,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,'PENDING',?8)`).bind(id, paymentId, workId, reason, actorUid, requestedAt, version, requestId);
+  const audit = auditStatement(env, 'payment_reversal_request', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, `${requestId}:reversal_request`, requestedAt);
+  const results = await executeBatch(env, [mutation, audit]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return after;
+}
+
+export async function approvePaymentReversalRequest(env, actorUid, requestId, workId, requestIdToApprove) {
+  await ensureActor(env, actorUid);
+  const requestRow = await env.DB.prepare('SELECT * FROM payment_reversal_requests WHERE id=?1').bind(requestIdToApprove).first();
+  if (!requestRow) throw new DomainError('REVERSAL_REQUEST_NOT_FOUND', 404);
+  if (requestRow.work_id !== workId) throw new DomainError('REQUEST_WORK_MISMATCH', 404);
+  if (requestRow.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
+  if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
+  const payment = await env.DB.prepare('SELECT * FROM client_payments WHERE id=?1 AND work_id=?2').bind(requestRow.payment_id, workId).first();
+  if (!payment) throw new DomainError('PAYMENT_NOT_FOUND', 404);
+  const beforeWork = await getWorkRaw(env, workId);
+  if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
+  const approvedAt = nowIso();
+  const reversalId = newId('payment_reversal');
+  const afterRequest = { ...requestRow, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt, approval_request_id: requestId };
+  const afterReversal = { id: reversalId, payment_id: payment.id, reversal_request_id: requestIdToApprove, work_id: workId, amount_halalas: Number(payment.amount_halalas), reason: requestRow.reason, requested_by: requestRow.requested_by, approved_by: actorUid, requested_at: requestRow.requested_at, approved_at: approvedAt, request_id: requestId };
+  const workMutation = env.DB.prepare(`UPDATE works SET version=version+1, updated_by=?1, updated_at=?2
+    WHERE id=?3 AND version=?4 AND EXISTS (SELECT 1 FROM payment_reversal_requests WHERE id=?5 AND state='PENDING' AND work_version=?4 AND requested_by<>?1)`).bind(actorUid, approvedAt, workId, beforeWork.version, requestIdToApprove);
+  const requestMutation = env.DB.prepare(`UPDATE payment_reversal_requests SET state='APPROVED', approved_by=?1, approved_at=?2, approval_request_id=?3
+    WHERE id=?4 AND work_id=?5 AND state='PENDING' AND work_version=?6 AND EXISTS (SELECT 1 FROM works WHERE id=?5 AND version=?7)`).bind(actorUid, approvedAt, requestId, requestIdToApprove, workId, beforeWork.version, beforeWork.version + 1);
+  const reversalMutation = env.DB.prepare(`INSERT INTO payment_reversals(id,payment_id,reversal_request_id,work_id,amount_halalas,reason,requested_by,approved_by,requested_at,approved_at,request_id)
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11
+    WHERE EXISTS (SELECT 1 FROM payment_reversal_requests WHERE id=?3 AND state='APPROVED' AND approval_request_id=?11)`).bind(reversalId, payment.id, requestIdToApprove, workId, Number(payment.amount_halalas), requestRow.reason, requestRow.requested_by, actorUid, requestRow.requested_at, approvedAt, requestId);
+  const auditRequest = auditStatementWhen(env, 'payment_reversal_request', requestIdToApprove, 'UPDATE', actorUid, requestRow, afterRequest, env.RUN_MARKER, `${requestId}:reversal_request`, approvedAt,
+    'EXISTS (SELECT 1 FROM payment_reversal_requests WHERE id=?10 AND state=\'APPROVED\' AND approved_by=?11 AND approval_request_id=?12)', [requestIdToApprove, actorUid, requestId]);
+  const auditReversal = auditStatementWhen(env, 'payment_reversal', reversalId, 'CREATE', actorUid, null, afterReversal, env.RUN_MARKER, `${requestId}:reversal`, approvedAt,
+    'EXISTS (SELECT 1 FROM payment_reversals WHERE id=?10 AND payment_id=?11 AND request_id=?12)', [reversalId, payment.id, requestId]);
+  const results = await executeBatch(env, [workMutation, requestMutation, reversalMutation, auditRequest, auditReversal]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1 || !results[3]?.meta || Number(results[3].meta.changes) !== 1 || !results[4]?.meta || Number(results[4].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return { request: afterRequest, reversal: afterReversal, financials: await getWorkFinancials(env, workId) };
+}
+
 export async function listPriceMovements(env, workId) {
   await getWorkRaw(env, workId);
   return listApprovedPriceMovementsRaw(env, workId);
 }
 
-export async function listPriceChangeRequests(env, workId) {
-  await getWorkRaw(env, workId);
+async function listPriceChangeRequestsRaw(env, workId) {
   return (await env.DB.prepare(`SELECT id, work_id, movement_type, amount_halalas, reason, effective_at, requested_by, requested_at, work_version, state, approved_by, approved_at, approval_request_id, request_id
     FROM price_change_requests WHERE work_id=?1 ORDER BY requested_at ASC, id ASC`).bind(workId).all()).results || [];
+}
+
+export async function listPriceChangeRequests(env, workId) {
+  await getWorkRaw(env, workId);
+  return listPriceChangeRequestsRaw(env, workId);
 }
 
 export async function createPriceChangeRequest(env, actorUid, requestId, workId, input) {
@@ -997,16 +1208,24 @@ export async function approvePriceChangeRequest(env, actorUid, requestId, workId
   return { request: afterRequest, movement: afterMovement, financials: await getWorkFinancials(env, workId) };
 }
 
-export async function listRatioChangeRequests(env, workId) {
-  await getWorkRaw(env, workId);
+async function listRatioChangeRequestsRaw(env, workId) {
   return (await env.DB.prepare(`SELECT id, work_id, person_1_bps, person_2_bps, reason, requested_by, requested_at, work_version, state, approved_by, approved_at, approval_request_id, request_id
     FROM ratio_change_requests WHERE work_id=?1 ORDER BY requested_at ASC, id ASC`).bind(workId).all()).results || [];
 }
 
-export async function listRatioHistory(env, workId) {
+export async function listRatioChangeRequests(env, workId) {
   await getWorkRaw(env, workId);
+  return listRatioChangeRequestsRaw(env, workId);
+}
+
+async function listRatioHistoryRaw(env, workId) {
   return (await env.DB.prepare(`SELECT id, work_id, old_person_1_bps, old_person_2_bps, new_person_1_bps, new_person_2_bps, reason, requested_by, approved_by, requested_at, approved_at, ratio_request_id, request_id
     FROM ratio_history WHERE work_id=?1 ORDER BY approved_at ASC, id ASC`).bind(workId).all()).results || [];
+}
+
+export async function listRatioHistory(env, workId) {
+  await getWorkRaw(env, workId);
+  return listRatioHistoryRaw(env, workId);
 }
 
 export async function createRatioChangeRequest(env, actorUid, requestId, workId, input) {
