@@ -74,6 +74,7 @@
     "tests/node/s5_pr_b_ui_flows.test.mjs",
     "tests/node/s6_pr_a_financial_core.test.mjs",
     "tests/node/s6_pr_b_ui_acceptance.test.mjs",
+    "tests/node/s6_pr_b_query_budget.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",

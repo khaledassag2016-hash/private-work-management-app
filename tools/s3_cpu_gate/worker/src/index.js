@@ -277,6 +277,23 @@ async function authoritativeWorkReadModel(env, work) {
   const movements = await listApprovedPriceMovementsRaw(env, work.id);
   return workPricingReadModel(work, sumApprovedPriceMovements(movements));
 }
+async function bulkCurrentPriceMap(env, works) {
+  const workIds = [...new Set(works.map(work => work.id).filter(Boolean))];
+  if (!workIds.length) return new Map();
+  const placeholders = workIds.map((_, index) => `?${index + 1}`).join(',');
+  const rows = (await env.DB.prepare(`SELECT work_id, amount_halalas, approved_at, id
+    FROM price_movements WHERE work_id IN (${placeholders}) ORDER BY work_id ASC, approved_at ASC, id ASC`).bind(...workIds).all()).results || [];
+  const currentByWork = new Map();
+  for (const row of rows) {
+    const previous = currentByWork.has(row.work_id) ? currentByWork.get(row.work_id) : 0;
+    currentByWork.set(row.work_id, safeFinancialAdd(previous, Number(row.amount_halalas)));
+  }
+  return currentByWork;
+}
+async function bulkAuthoritativeWorkReadModels(env, works) {
+  const currentByWork = await bulkCurrentPriceMap(env, works);
+  return works.map(work => workPricingReadModel(work, currentByWork.has(work.id) ? currentByWork.get(work.id) : null));
+}
 function workMutationResponse(work) {
   return workReadModel(work);
 }
@@ -355,7 +372,7 @@ export async function listWorks(env, query = {}) {
   }
   const sql = `SELECT * FROM works ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT 200`;
   const rows = (await env.DB.prepare(sql).bind(...values).all()).results || [];
-  return Promise.all(rows.map(row => authoritativeWorkReadModel(env, row)));
+  return bulkAuthoritativeWorkReadModels(env, rows);
 }
 
 export async function updateWork(env, actorUid, requestId, id, input) {
@@ -431,10 +448,10 @@ export async function getCustomerWarnings(env, customerId) {
 }
 
 export async function getSimilarWorks(env, workId) {
-  const work = await getWork(env, workId);
+  const work = await getWorkRaw(env, workId);
   const rows = (await env.DB.prepare(`SELECT id,customer_id,title,work_type_key,specialty_key,country,university,status,price_state,price_minor_units,created_at
     FROM works WHERE id <> ?1 AND country = ?2 AND (?3 IS NULL OR work_type_key = ?3) AND (?4 IS NULL OR specialty_key = ?4) ORDER BY created_at DESC LIMIT 50`).bind(workId, work.country, work.work_type_key, work.specialty_key).all()).results || [];
-  return Promise.all(rows.map(row => authoritativeWorkReadModel(env, row)));
+  return bulkAuthoritativeWorkReadModels(env, rows);
 }
 
 export async function applyAuditMutation(env, actorUid, requestId, value) {
