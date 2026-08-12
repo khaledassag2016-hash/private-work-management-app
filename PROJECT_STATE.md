@@ -351,3 +351,26 @@
 - `FR-006` مسجل بحدود soft-warning فقط؛ `FR-015` **PASS**؛ `FR-016` **PARTIAL/DEFERRED**؛ `P-06` S4 portion **PASS** وfinancial dealings **DEFERRED TO S7**.
 - لم يحدث Cloud write أو Firebase write أو D1 Cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
 - Gate 3 PR وfinal-head CI وmerged-main verification لم تُسجل بعد؛ لا يُسجل merge SHA قبل الدمج الفعلي.
+
+
+## S4 Gate 3 — merged-main verification final state — 2026-08-12
+
+- PR #63 (`fix(s4): complete final verification and residual repairs`) دُمجت باستخدام **Squash**.
+- `GATE3_FINAL_HEAD = 3d41d7b59e0ac74d24495039df054f2a58acf718`.
+- `GATE3_SQUASH_SHA = cdec4dc8b60ef4102e078bd339ec7e645b682f1c`.
+- `FINAL_MAIN_SHA = cdec4dc8b60ef4102e078bd339ec7e645b682f1c`، والتحقق المحلي يطابق `origin/main`.
+- Final-head CI: PR #63 — S3 CPU Gate Static run `31582032995` **SUCCESS**، Foundation run `31582033018` **SUCCESS**، وS2 architecture validation run `31582033063` **SUCCESS**.
+- Post-merge CI على `main@cdec4dc8b60ef4102e078bd339ec7e645b682f1c`: S3 CPU Gate Static run `31582176576` **SUCCESS**، وFoundation run `31582176570` **SUCCESS**.
+- `S4_GATE0 = COMPLETE`.
+- `S4_GATE1 = COMPLETE`.
+- `S4_GATE2 = COMPLETE`.
+- `S4_GATE3 = READY_FOR_FINAL_SUPERVISORY_APPROVAL`.
+- `S4_STATUS = READY_FOR_FINAL_SUPERVISORY_APPROVAL`.
+- `S4_COMPLETE = FALSE`.
+- `S4_FINAL_CLOSURE = BLOCKED_PENDING_SUPERVISORY_DECISION`.
+- `Issue #3 = OPEN`.
+- `S5 = NOT_STARTED`.
+- `NEXT_ACTION = FINAL_SUPERVISORY_APPROVAL`.
+- Final evidence: `docs/s4/S4_FINAL_VERIFICATION.md`، والتتبع في `docs/TRACEABILITY_MATRIX.md` محدثان بحدود S4 الصحيحة؛ `FR-006` soft-warning partial، `FR-015` PASS، `FR-016` PARTIAL/DEFERRED، و`P-06` S4 portion PASS مع financial dealings DEFERRED TO S7.
+- لم يحدث Cloud write أو Firebase write أو D1 Cloud creation أو deployment أو Billing أو stable promotion، ولم تستخدم real data أو secrets.
+- يجوز PR إداري docs-only واحد لتسجيل رقم PR الإداري إذا لزم، ولا يغير أي stable ref أو code.
