@@ -165,7 +165,7 @@ test('S5 FR-008: Work Title History records transitions and requires mandatory r
 test('S5 Execution Status History: records transitions, enforces reason, and validates allowlist', async () => {
   const { database, env } = fixture();
   try {
-    const { work } = await setupCustomerAndWork(env);
+    const { customer, work } = await setupCustomerAndWork(env);
 
     // Transition status NEW_REQUEST -> AGREED
     const w1 = await changeWorkStatus(env, 'uid-one', 'req-status-1', work.id, { version: work.version, status: 'AGREED', reason: 'Agreed on scope and price' });
@@ -201,11 +201,60 @@ test('S5 Execution Status History: records transitions, enforces reason, and val
 
     // Direct archive and direct cancellation status are both rejected outside P-05.
     await assert.rejects(changeWorkStatus(env, 'uid-one', 'req-status-5', work.id, { version: w2.version, status: 'ARCHIVED', reason: 'Direct archive' }), /WORK_STATUS_INVALID/);
-    await assert.rejects(updateWork(env, 'uid-one', 'req-status-bypass', work.id, { version: w2.version, status: 'CANCELLED_BEFORE_EXECUTION' }), /STATUS_CHANGE_OUT_OF_SCOPE/);
+    await assert.rejects(changeWorkStatus(env, 'uid-one', 'req-status-6', work.id, { version: w2.version, status: 'CANCELLED_BEFORE_EXECUTION', reason: 'Direct cancel before execution' }), /WORK_STATUS_DIRECT_FORBIDDEN/);
+    await assert.rejects(changeWorkStatus(env, 'uid-one', 'req-status-7', work.id, { version: w2.version, status: 'PARTIALLY_STOPPED', reason: 'Direct partial stop' }), /WORK_STATUS_DIRECT_FORBIDDEN/);
+    await assert.rejects(updateWork(env, 'uid-one', 'req-status-bypass', work.id, { version: w2.version, status: 'CANCELLED_BEFORE_EXECUTION' }), /WORK_STATUS_DIRECT_FORBIDDEN/);
+    await assert.rejects(createWork(env, 'uid-one', 'req-create-cancel', { customer_id: customer.id, title: 'Invalid direct cancel', country: 'SA', status: 'CANCELLED_BEFORE_EXECUTION' }), /WORK_STATUS_DIRECT_FORBIDDEN/);
 
     // Append-only enforcement on status history
     assert.throws(() => database.exec(`UPDATE work_status_history SET reason = 'tampered'`), /work_status_history is append only/);
     assert.throws(() => database.exec(`DELETE FROM work_status_history`), /work_status_history is append only/);
+  } finally { database.close(); }
+});
+
+test('S5 CONCURRENT_SAME_TITLE: same target has one mutation and no failed side effects', async () => {
+  const { database, env } = fixture();
+  try {
+    const { work } = await setupCustomerAndWork(env);
+    const results = await Promise.allSettled([
+      changeWorkTitle(env, 'uid-one', 'race-title-a', work.id, { version: work.version, new_title: 'Same Target Title', reason: 'Race title A' }),
+      changeWorkTitle(env, 'uid-two', 'race-title-b', work.id, { version: work.version, new_title: 'Same Target Title', reason: 'Race title B' }),
+    ]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter(result => result.status === 'rejected').length, 1);
+    assert.match(results.find(result => result.status === 'rejected').reason.message, /VERSION_CONFLICT/);
+    const history = database.prepare('SELECT * FROM work_title_history WHERE work_id=?').all(work.id);
+    const audits = database.prepare("SELECT * FROM audit_log WHERE entity_type='work' AND action='UPDATE' AND entity_id=?").all(work.id);
+    assert.equal(history.length, 1);
+    assert.equal(audits.length, 1);
+    assert.equal(history[0].new_title, 'Same Target Title');
+    assert.ok(['race-title-a', 'race-title-b'].includes(history[0].request_id));
+    assert.equal(audits[0].request_id, history[0].request_id);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM work_title_history WHERE request_id='race-title-a' OR request_id='race-title-b'").get().count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE request_id='race-title-a' OR request_id='race-title-b'").get().count, 1);
+  } finally { database.close(); }
+});
+
+test('S5 CONCURRENT_SAME_STATUS: same target has one mutation and no failed side effects', async () => {
+  const { database, env } = fixture();
+  try {
+    const { work } = await setupCustomerAndWork(env);
+    const results = await Promise.allSettled([
+      changeWorkStatus(env, 'uid-one', 'race-status-a', work.id, { version: work.version, status: 'AGREED', reason: 'Race status A' }),
+      changeWorkStatus(env, 'uid-two', 'race-status-b', work.id, { version: work.version, status: 'AGREED', reason: 'Race status B' }),
+    ]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter(result => result.status === 'rejected').length, 1);
+    assert.match(results.find(result => result.status === 'rejected').reason.message, /VERSION_CONFLICT/);
+    const history = database.prepare('SELECT * FROM work_status_history WHERE work_id=?').all(work.id);
+    const audits = database.prepare("SELECT * FROM audit_log WHERE entity_type='work' AND action='UPDATE' AND entity_id=?").all(work.id);
+    assert.equal(history.length, 1);
+    assert.equal(audits.length, 1);
+    assert.equal(history[0].new_status, 'AGREED');
+    assert.ok(['race-status-a', 'race-status-b'].includes(history[0].request_id));
+    assert.equal(audits[0].request_id, history[0].request_id);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM work_status_history WHERE request_id='race-status-a' OR request_id='race-status-b'").get().count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE request_id='race-status-a' OR request_id='race-status-b'").get().count, 1);
   } finally { database.close(); }
 });
 
@@ -342,6 +391,25 @@ test('S5 migration upgrades a populated S4-shaped database without losing data',
     database.exec(`
       PRAGMA foreign_keys = ON;
       CREATE TABLE app_users (uid TEXT PRIMARY KEY, role TEXT NOT NULL, active INTEGER NOT NULL, run_marker TEXT NOT NULL);
+      CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL CHECK (entity_type IN ('s3_audit_probe','customer','work','catalog_value','documented_fact')),
+        entity_id TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('CREATE','UPDATE')),
+        actor_uid TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        before_json TEXT CHECK (before_json IS NULL OR json_valid(before_json)),
+        after_json TEXT NOT NULL CHECK (json_valid(after_json)),
+        run_marker TEXT NOT NULL,
+        request_id TEXT NOT NULL UNIQUE,
+        FOREIGN KEY (actor_uid) REFERENCES app_users(uid) ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE INDEX ix_audit_log_run_entity ON audit_log(run_marker, entity_type, entity_id, id);
+      CREATE INDEX ix_audit_log_entity ON audit_log(entity_type, entity_id, id);
+      CREATE TRIGGER trg_audit_log_no_update BEFORE UPDATE ON audit_log
+      BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
+      CREATE TRIGGER trg_audit_log_no_delete BEFORE DELETE ON audit_log
+      BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
       CREATE TABLE works (
         id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, title TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'IN_PROGRESS', version INTEGER NOT NULL DEFAULT 1,
@@ -349,7 +417,10 @@ test('S5 migration upgrades a populated S4-shaped database without losing data',
       );
       INSERT INTO app_users VALUES ('uid-one','person_1',1,'run-s5');
       INSERT INTO works VALUES ('old-work','old-customer','Legacy work','IN_PROGRESS',4,'uid-one','2026-08-01T00:00:00.000Z','uid-one','2026-08-02T00:00:00.000Z');
+      INSERT INTO audit_log(id,entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+      VALUES (41,'work','old-work','UPDATE','uid-one','2026-08-02T00:00:00.000Z','{"status":"NEW_REQUEST"}','{"status":"IN_PROGRESS"}','run-s5','legacy-audit-41');
     `);
+    const legacyBefore = database.prepare('SELECT id, entity_type, entity_id, action, actor_uid, created_at, before_json, after_json, run_marker, request_id FROM audit_log WHERE id=41').get();
     database.exec(readFileSync(migrationPath, 'utf8'));
     const legacy = database.prepare('SELECT id, title, status, version FROM works WHERE id=?').get('old-work');
     assert.equal(legacy.id, 'old-work');
@@ -360,6 +431,31 @@ test('S5 migration upgrades a populated S4-shaped database without losing data',
     assert.ok(columns.includes('archived_at'));
     assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_archive_history'").get());
     assert.throws(() => database.prepare("DELETE FROM works WHERE id='old-work'").run(), /hard delete is not allowed/);
+
+    const legacyAfter = database.prepare('SELECT id, entity_type, entity_id, action, actor_uid, created_at, before_json, after_json, run_marker, request_id FROM audit_log WHERE id=41').get();
+    assert.deepEqual(legacyAfter, legacyBefore);
+    database.prepare('INSERT INTO work_events(id,work_id,event_type,description,effective_at,created_at,actor_uid,request_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run('event-after-migration', 'old-work', 'NOTE', 'S5 event', '2026-08-03T00:00:00.000Z', '2026-08-03T00:00:00.000Z', 'uid-one', 'event-after-migration');
+    database.prepare('INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run('work_event', 'event-after-migration', 'CREATE', 'uid-one', '2026-08-03T00:00:00.000Z', null, '{"event_type":"NOTE"}', 'run-s5', 'audit-event-after-migration');
+    database.prepare('INSERT INTO cancel_archive_requests(id,work_id,action,requested_by,requested_at,reason,work_version,state,request_id,target_execution_status) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run('request-after-migration', 'old-work', 'CANCEL', 'uid-one', '2026-08-03T00:00:00.000Z', 'S5 request', 4, 'PENDING', 'request-after-migration', 'CANCELLED_BEFORE_EXECUTION');
+    database.prepare('INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run('cancel_archive_request', 'request-after-migration', 'CREATE', 'uid-one', '2026-08-03T00:00:00.000Z', null, '{"action":"CANCEL"}', 'run-s5', 'audit-request-after-migration');
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE entity_type IN ('work_event','cancel_archive_request')").get().count, 2);
+    assert.throws(() => database.prepare("UPDATE audit_log SET after_json='{}' WHERE id=41").run(), /audit log is append only/);
+    assert.throws(() => database.prepare("DELETE FROM audit_log WHERE id=41").run(), /audit log is append only/);
+
+    const fresh = new DatabaseSync(':memory:');
+    try {
+      fresh.exec(readFileSync(schemaPath, 'utf8'));
+      const freshAuditSql = fresh.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_log'").get().sql;
+      const migratedAuditSql = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_log'").get().sql;
+      for (const type of ['work_event', 'work_title_history', 'work_status_history', 'cancel_archive_request']) {
+        assert.ok(freshAuditSql.includes(`'${type}'`));
+        assert.ok(migratedAuditSql.includes(`'${type}'`));
+      }
+    } finally { fresh.close(); }
   } finally { database.close(); }
 });
 
@@ -543,6 +639,17 @@ test('S5 Endpoints are fully registered in handleApi and retrievable via fetch',
     assert.equal(statusResp.status, 200);
     const statusData = (await statusResp.json()).data;
     assert.equal(statusData.status, 'AGREED');
+
+    // Direct cancellation statuses are rejected at the HTTP status route.
+    for (const directStatus of ['CANCELLED_BEFORE_EXECUTION', 'PARTIALLY_STOPPED']) {
+      const directStatusResp = await worker.fetch(new Request(`https://example.test/api/works/${workId}/status`, {
+        method: 'POST',
+        headers: headersOne,
+        body: JSON.stringify({ version: 3, status: directStatus, reason: 'Direct cancellation bypass' }),
+      }), env);
+      assert.equal(directStatusResp.status, 400);
+      assert.equal((await directStatusResp.json()).error.code, 'WORK_STATUS_DIRECT_FORBIDDEN');
+    }
 
     // TEST 6: GET /api/works/:id/status-history via fetch
     const getStatusHistResp = await worker.fetch(new Request(`https://example.test/api/works/${workId}/status-history`, {

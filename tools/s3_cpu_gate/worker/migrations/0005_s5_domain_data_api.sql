@@ -3,6 +3,37 @@
 -- The three ALTER statements are intentionally additive; the migration smoke
 -- test applies them to a populated S4 database and verifies data retention.
 
+DROP TRIGGER IF EXISTS trg_audit_log_no_update;
+DROP TRIGGER IF EXISTS trg_audit_log_no_delete;
+DROP INDEX IF EXISTS ix_audit_log_run_entity;
+DROP INDEX IF EXISTS ix_audit_log_entity;
+ALTER TABLE audit_log RENAME TO audit_log_s4;
+CREATE TABLE audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('s3_audit_probe','customer','work','catalog_value','documented_fact','work_event','work_title_history','work_status_history','cancel_archive_request')),
+  entity_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('CREATE','UPDATE')),
+  actor_uid TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  before_json TEXT CHECK (before_json IS NULL OR json_valid(before_json)),
+  after_json TEXT NOT NULL CHECK (json_valid(after_json)),
+  run_marker TEXT NOT NULL,
+  request_id TEXT NOT NULL UNIQUE,
+  FOREIGN KEY (actor_uid) REFERENCES app_users(uid) ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+INSERT INTO audit_log(id, entity_type, entity_id, action, actor_uid, created_at, before_json, after_json, run_marker, request_id)
+SELECT id, entity_type, entity_id, action, actor_uid, created_at, before_json, after_json, run_marker, request_id
+FROM audit_log_s4;
+DROP TABLE audit_log_s4;
+CREATE INDEX IF NOT EXISTS ix_audit_log_run_entity ON audit_log(run_marker, entity_type, entity_id, id);
+CREATE INDEX IF NOT EXISTS ix_audit_log_entity ON audit_log(entity_type, entity_id, id);
+CREATE TRIGGER IF NOT EXISTS trg_audit_log_no_update
+BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
+CREATE TRIGGER IF NOT EXISTS trg_audit_log_no_delete
+BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
+
 ALTER TABLE works ADD COLUMN archived_at TEXT;
 ALTER TABLE works ADD COLUMN archived_by TEXT;
 ALTER TABLE works ADD COLUMN archive_request_id TEXT;

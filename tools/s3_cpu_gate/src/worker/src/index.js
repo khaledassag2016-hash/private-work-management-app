@@ -147,6 +147,7 @@ function validateCustomerStatus(value) {
 function validateWorkStatus(value, fallback = 'NEW_REQUEST') {
   const status = value === undefined ? fallback : requiredString(value, 'WORK_STATUS_INVALID');
   if (!WORK_STATUS_ALLOWLIST.includes(status) || status === 'ARCHIVED') throw new DomainError('WORK_STATUS_INVALID', 400);
+  if (status === 'CANCELLED_BEFORE_EXECUTION' || status === 'PARTIALLY_STOPPED') throw new DomainError('WORK_STATUS_DIRECT_FORBIDDEN', 400);
   return status;
 }
 function positiveVersion(value) {
@@ -280,7 +281,7 @@ async function validateWorkInput(env, input, current = null) {
   else if (input.quantity === null) quantity = null;
   else if (Number.isInteger(input.quantity) && input.quantity >= 1) quantity = input.quantity;
   else throw new DomainError('QUANTITY_INVALID', 400);
-  const status = validateWorkStatus(input.status, current?.status || 'NEW_REQUEST');
+  const status = input.status === undefined && current ? current.status : validateWorkStatus(input.status, current?.status || 'NEW_REQUEST');
   const parentWorkId = input.parent_work_id === undefined && current ? current.parent_work_id : optionalString(input.parent_work_id, 'PARENT_WORK_INVALID');
   const relationshipKind = input.relationship_kind === undefined && current ? current.relationship_kind : (input.relationship_kind === undefined ? 'INDEPENDENT' : requiredString(input.relationship_kind, 'RELATIONSHIP_KIND_INVALID').toUpperCase());
   if (!['INDEPENDENT', 'CHILD'].includes(relationshipKind)) throw new DomainError('RELATIONSHIP_KIND_INVALID', 400);
@@ -572,7 +573,7 @@ export async function changeWorkTitle(env, actorUid, requestId, workId, input) {
   const workMutation = env.DB.prepare(`UPDATE works SET title=?1, version=version+1, updated_by=?2, updated_at=?3 WHERE id=?4 AND version=?5`).bind(newTitle, actorUid, changedAt, workId, version);
   const historyMutation = env.DB.prepare(`INSERT INTO work_title_history(id, work_id, old_title, new_title, reason, changed_at, changed_by, request_id)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
-    WHERE EXISTS (SELECT 1 FROM works WHERE id=?2 AND version=?9 AND title=?4)`).bind(historyId, workId, before.title, newTitle, reason, changedAt, actorUid, requestId, version + 1);
+    WHERE changes() = 1 AND EXISTS (SELECT 1 FROM works WHERE id=?2 AND version=?9 AND title=?4)`).bind(historyId, workId, before.title, newTitle, reason, changedAt, actorUid, requestId, version + 1);
   const after = { ...before, title: newTitle, updated_by: actorUid, updated_at: changedAt, version: version + 1 };
   const audit = auditStatement(env, 'work', workId, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, changedAt, true);
   const results = await executeBatch(env, [workMutation, historyMutation, audit]);
@@ -597,7 +598,7 @@ export async function changeWorkStatus(env, actorUid, requestId, workId, input) 
   const workMutation = env.DB.prepare(`UPDATE works SET status=?1, version=version+1, updated_by=?2, updated_at=?3 WHERE id=?4 AND version=?5`).bind(newStatus, actorUid, changedAt, workId, version);
   const historyMutation = env.DB.prepare(`INSERT INTO work_status_history(id, work_id, old_status, new_status, reason, changed_at, changed_by, request_id)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
-    WHERE EXISTS (SELECT 1 FROM works WHERE id=?2 AND version=?9 AND status=?4)`).bind(historyId, workId, before.status, newStatus, reason, changedAt, actorUid, requestId, version + 1);
+    WHERE changes() = 1 AND EXISTS (SELECT 1 FROM works WHERE id=?2 AND version=?9 AND status=?4)`).bind(historyId, workId, before.status, newStatus, reason, changedAt, actorUid, requestId, version + 1);
   const after = { ...before, status: newStatus, updated_by: actorUid, updated_at: changedAt, version: version + 1 };
   const audit = auditStatement(env, 'work', workId, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, changedAt, true);
   const results = await executeBatch(env, [workMutation, historyMutation, audit]);
