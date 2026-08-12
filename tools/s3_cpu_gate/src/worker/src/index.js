@@ -101,8 +101,8 @@ async function allowed(env, uid) {
 }
 
 function nowIso() { return new Date().toISOString(); }
-// DELAY -> frequent_delay intentionally remains an UNRESOLVED_PRODUCT_DECISION: the governing S4 reference sets no frequency threshold.
-const CUSTOMER_STATUS_FACT_MAP = Object.freeze({ NON_PAYMENT: 'unpaid', BLOCKED: 'blocked', DISPUTE: 'dispute' });
+// Documented facts and customer_warning_projection are the factual source of truth.
+// customer.status is deliberately neutral/non-authoritative: the governing S4 reference defines no latest-wins, priority, or frequency rule.
 const WORK_STATUS_ALLOWLIST = Object.freeze([
   'NEW_REQUEST',
   'REQUIREMENT_REVIEW',
@@ -190,9 +190,8 @@ async function getCustomerRaw(env, id) {
   if (!row) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
   return row;
 }
-async function projectCustomerStatus(env, row) {
-  const fact = await env.DB.prepare('SELECT fact_type FROM documented_facts WHERE customer_id=?1 ORDER BY happened_at DESC,id DESC LIMIT 1').bind(row.id).first();
-  return { ...row, status: CUSTOMER_STATUS_FACT_MAP[fact?.fact_type] || 'normal' };
+function projectCustomerStatus(row) {
+  return { ...row, status: 'normal' };
 }
 
 export async function createCustomer(env, actorUid, requestId, input) {
@@ -212,11 +211,11 @@ export async function createCustomer(env, actorUid, requestId, input) {
     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?9,?10,1)`).bind(id, name, contact, country, university, specialty, notes, status, actorUid, createdAt);
   const audit = auditStatement(env, 'customer', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
   await executeBatch(env, [mutation, audit]);
-  return projectCustomerStatus(env, after);
+  return projectCustomerStatus(after);
 }
 
 export async function getCustomer(env, id) {
-  return projectCustomerStatus(env, await getCustomerRaw(env, id));
+  return projectCustomerStatus(await getCustomerRaw(env, id));
 }
 
 export async function listCustomers(env, query = '') {
@@ -224,7 +223,7 @@ export async function listCustomers(env, query = '') {
   const result = !q
     ? (await env.DB.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 100').all()).results || []
     : (await env.DB.prepare('SELECT * FROM customers WHERE name LIKE ?1 OR university LIKE ?1 OR specialty LIKE ?1 ORDER BY created_at DESC LIMIT 100').bind(`%${q}%`).all()).results || [];
-  return Promise.all(result.map(row => projectCustomerStatus(env, row)));
+  return result.map(projectCustomerStatus);
 }
 
 export async function updateCustomer(env, actorUid, requestId, id, input) {
@@ -246,7 +245,7 @@ export async function updateCustomer(env, actorUid, requestId, id, input) {
   const audit = auditStatement(env, 'customer', id, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt, true);
   const results = await executeBatch(env, [mutation, audit]);
   if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) throw new DomainError('VERSION_CONFLICT', 409);
-  return projectCustomerStatus(env, after);
+  return projectCustomerStatus(after);
 }
 
 function softWorkDetailWarnings(work) {
@@ -255,8 +254,11 @@ function softWorkDetailWarnings(work) {
   if (!work.specialty_key) warnings.push({ code: 'WORK_DETAIL_SPECIALTY_MISSING', field: 'specialty_key', severity: 'SOFT_WARNING' });
   return warnings;
 }
-function workMutationResponse(work) {
+function workReadModel(work) {
   return { ...work, soft_warnings: softWorkDetailWarnings(work) };
+}
+function workMutationResponse(work) {
+  return workReadModel(work);
 }
 
 async function validateWorkInput(env, input, current = null) {
@@ -316,10 +318,14 @@ export async function createWork(env, actorUid, requestId, input) {
   return workMutationResponse(after);
 }
 
-export async function getWork(env, id) {
+async function getWorkRaw(env, id) {
   const row = await env.DB.prepare('SELECT * FROM works WHERE id = ?1').bind(id).first();
   if (!row) throw new DomainError('WORK_NOT_FOUND', 404);
   return row;
+}
+
+export async function getWork(env, id) {
+  return workReadModel(await getWorkRaw(env, id));
 }
 
 export async function listWorks(env, query = {}) {
@@ -328,12 +334,13 @@ export async function listWorks(env, query = {}) {
     if (value) { values.push(value); clauses.push(`${key} = ?${values.length}`); }
   }
   const sql = `SELECT * FROM works ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT 200`;
-  return (await env.DB.prepare(sql).bind(...values).all()).results || [];
+  const rows = (await env.DB.prepare(sql).bind(...values).all()).results || [];
+  return rows.map(workReadModel);
 }
 
 export async function updateWork(env, actorUid, requestId, id, input) {
   await ensureActor(env, actorUid);
-  const before = await getWork(env, id);
+  const before = await getWorkRaw(env, id);
   const version = positiveVersion(input.version);
   if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
   if (input.price_state !== undefined || input.price_minor_units !== undefined) throw new DomainError('PRICING_OUT_OF_SCOPE', 400);

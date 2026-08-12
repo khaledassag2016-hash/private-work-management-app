@@ -66,6 +66,7 @@
     "tests/node/s4_gate2_supervisory_repair.test.mjs",
     "tests/node/s4_gate2_ui.test.mjs",
     "tests/node/s4_gate3_final_verification.test.mjs",
+    "tests/node/s4_final_supervisory_repair.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
