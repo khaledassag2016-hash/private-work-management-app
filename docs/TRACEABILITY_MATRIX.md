@@ -21,7 +21,7 @@ S6 final evidence: `docs/s6/S6_FINAL_VERIFICATION.md`. PR #71 أنجز Financial
 | FR-013 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-013 في المرحلة S7 | مخطط |
 | FR-014 | متطلب وظيفي | S4 | AC-07: documented fact يولد warning projection مع source/date | متحقق في Gate 2 — PR #59 |
 | FR-015 | متطلب وظيفي | S4 | `/warnings` + `/history` ضمن pre-agreement context، وعرض fact type/source/date قبل New Work submit | **PASS — Gate 3 final verification** |
-| FR-016 | متطلب وظيفي | S4/S6 | S4 similar-work read boundary + S6 authoritative price integration؛ `s4_gate2_acceptance.test.mjs` يثبت similar Work يعرض `current_price_halalas` من S6 مع legacy sentinel محفوظ غير سلطوي | **PASS — S4 read boundary + S6 authoritative pricing integration** |
+| FR-016 | متطلب وظيفي | S4 | S4 similar-work read boundary؛ اعتمدت S6 لاحقًا مصدر السعر السلطوي، و` s4_gate2_acceptance.test.mjs` يثبت تكامل similar Work مع `current_price_halalas` من S6 مع بقاء legacy sentinel غير سلطوي | **S4 READ BOUNDARY PASS؛ S6 authoritative pricing dependency integration PASS** |
 | FR-017 | متطلب وظيفي | S6 | `s6_pr_a_financial_core.test.mjs` + `s6_pr_b_ui_acceptance.test.mjs`: default 30/70، D-009 exceptional ratio U1→U2 وU2→U1، self-approval rejected، history retained | **PASS — S6** |
 | FR-018 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-018 في المرحلة S7 | مخطط |
 | FR-019 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-019 في المرحلة S7 | مخطط |
