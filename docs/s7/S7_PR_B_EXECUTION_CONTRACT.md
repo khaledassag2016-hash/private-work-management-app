@@ -8,7 +8,7 @@ The final S6 price and ratio read models remain authoritative. PR-B consumes tho
 
 ## PR-B scope
 
-PR-B implements append-only inter-party transfers, effective-dated subscription aggregate history, governed expense facts without invented generic allocation, bounded settlement component preview and D-011 reopen paths, objective P-02/P-03 components, unresolved prior-balance authority, audit history, and closed-period guards. All money is integer halalas and all mutations are authenticated, audited, request-correlated, and append-only where they represent business evidence.
+PR-B implements append-only inter-party transfers, authoritative `confirmed_at` Work membership, effective-dated subscription aggregate history, governed expense facts without invented generic allocation, bounded settlement preview/close and D-011 reopen paths, D-014/D-015 objective accounting components, audit history, and closed-period guards. All money is integer halalas and all mutations are authenticated, audited, request-correlated, and append-only where they represent business evidence.
 
 ## Activated rules
 
@@ -16,25 +16,23 @@ PR-B implements append-only inter-party transfers, effective-dated subscription 
 |---|---|
 | Transfer direction | `from_party` and `to_party` are explicit, distinct active accounts; direction is never inferred from fee payer. |
 | Transfer fee | `fee_halalas` is stored separately. Person 1 is the physical fee payer under P-03; each party bears one rounded half. |
-| Subscription history | Aggregate rows preserve `subscription_count = 2`, amount, `effective_at`, state, and P-02 physical payer evidence. No `13,650` baseline or within-period amount is applied without an approved effective-date rule. |
-| Subscription changes | History is append-only and effective-dated. A period containing subscription history exposes that history but remains unresolved rather than applying the latest row retroactively or to the whole month. |
-| Subscription burden | Person 2 remains the physical payer fact; no P-02 amount is applied to a settlement while the effective-date/allocation rule is unresolved. |
+| Subscription baseline | P-01 aggregate baseline is `13,650` halalas for `subscription_count = 2` until a governed change is effective; individual names and item amounts remain unknown. |
+| Subscription changes | Under D-016, a change or cancellation recorded during month M becomes effective for settlement month M+1, with no daily prorating. Prior closed snapshots remain immutable. |
+| Subscription burden | Person 2 remains the physical payer fact; P-02 contributes one rounded half of the effective aggregate subscription cost to the D-015 final balance. |
 | Expense boundary | Expense facts may be recorded and audited. No generic expense is automatically allocated unless an explicit governed allocation is supplied. |
 | Rounding | D-012 nearest halala; exact 0.5 half-up, independently at each P-02/P-03 effect. |
 | Evidence | No hard delete or update of a transfer, subscription history row, expense, settlement snapshot, or close/reopen history. |
 
 ## Explicit unresolved activation boundaries
 
-The governing sources still do not identify a single Work-period basis among the available Work dates, and do not state whether client receipts are cash-basis or a separately reported metric in the final balance. PR-B must not silently invent either rule.
+D-014, D-015, and D-016 resolve the prior settlement placeholders:
 
-Therefore:
-
-1. Preview exposes objective Work shares, approved receipts, transfer direction/amount/fee, expense facts, and the full effective-dated subscription history. It never treats caller-supplied `period_basis` or `balance_formula` strings as authorization; both remain `null` and unresolved until a governing decision exists.
-2. `prior_balance_riyals` is not financial truth supplied by the client. Preview reports `prior_balance_halalas = null` and `prior_balance_authority = UNRESOLVED_AUTHORITATIVE_SETTLEMENT_CHAIN` until an authoritative prior-settlement chain and governing formula exist.
-3. A period containing subscription history remains unresolved under `S7_SUBSCRIPTION_EFFECTIVE_DATE_RULE_UNRESOLVED`; no last-row or full-month aggregation is invented, and a subscription effective date is never applied retroactively.
-4. Generic expense allocation remains `S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED`; expense facts are preserved but do not alter final balances automatically.
-5. `closeSettlement` fails closed for unresolved period basis, final-balance formula, subscription effective-date semantics, or generic expense allocation. A currently `CLOSED` period rejects ordinary re-close; only an approved D-011 reopen clears the state gate, after which unresolved rules still prevent close.
-6. Closed-period guards cover Work creation/update, S6 price/ratio request and approval mutations, client payments, reversal requests/approvals, transfers, subscriptions, and expenses.
+1. Settlement Work membership is `confirmed_at >= period_start AND confirmed_at < period_end`; Work with `confirmed_at = NULL` is excluded. No `created_at`, price date, or inferred status timestamp is substituted.
+2. Preview exposes objective Work shares, approved receipts split by `received_by` role, transfer direction/amount/fee, effective subscription history, and expense facts. Caller-supplied `period_basis`, `balance_formula`, or `prior_balance_riyals` cannot authorize or alter financial truth.
+3. `prior_balance_halalas` is zero when no valid prior closed monthly settlement exists; otherwise it is the latest valid prior snapshot final balance. `final_balance_halalas > 0` means person 1 owes person 2, and the D-015 identity includes only person-2 receipts, signed transfers, half subscription cost, and half transfer fees once.
+4. D-016 applies a subscription aggregate change/cancellation recorded in month M to month M+1; P-01 baseline remains 13,650 halalas until then, with no daily prorating or invented individual detail.
+5. Generic expense allocation remains `S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED`; expense facts are preserved and `closeSettlement` remains fail-closed while any generic expense is present.
+6. Closed-period guards cover Work creation/update including both old and new confirmation months, S6 price/ratio request and approval mutations, client payments, reversal requests/approvals, transfers, subscriptions, and expenses. D-011 ordinary re-close remains rejected unless an approved reopen exists; snapshots remain append-only.
 
 This is an explicit fail-closed boundary, not a product-rule invention.
 
