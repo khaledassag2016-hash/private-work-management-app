@@ -489,6 +489,29 @@ async function handleApi(request, env, requestId, scenario, user) {
   if (parts[1] === 'works' && parts.length >= 3) {
     const workId = decodeURIComponent(parts[2]);
     if (parts[3] === 'similar' && method === 'GET') return Response.json({ ok: true, data: await getSimilarWorks(env, workId), requestId });
+    if (parts[3] === 'financials' && method === 'GET') return Response.json({ ok: true, data: await getWorkFinancials(env, workId), requestId });
+    if (parts[3] === 'price-movements' && method === 'GET') return Response.json({ ok: true, data: await listPriceMovements(env, workId), requestId });
+    if (parts[3] === 'price-requests') {
+      if (parts.length === 4) {
+        if (method === 'GET') return Response.json({ ok: true, data: await listPriceChangeRequests(env, workId), requestId });
+        if (method === 'POST') return Response.json({ ok: true, data: await createPriceChangeRequest(env, user.uid, requestId, workId, body), requestId }, { status: 201 });
+      }
+      if (parts.length === 6 && parts[5] === 'approve' && method === 'POST') {
+        const reqId = decodeURIComponent(parts[4]);
+        return Response.json({ ok: true, data: await approvePriceChangeRequest(env, user.uid, requestId, workId, reqId), requestId });
+      }
+    }
+    if (parts[3] === 'ratio-history' && method === 'GET') return Response.json({ ok: true, data: await listRatioHistory(env, workId), requestId });
+    if (parts[3] === 'ratio-requests') {
+      if (parts.length === 4) {
+        if (method === 'GET') return Response.json({ ok: true, data: await listRatioChangeRequests(env, workId), requestId });
+        if (method === 'POST') return Response.json({ ok: true, data: await createRatioChangeRequest(env, user.uid, requestId, workId, body), requestId }, { status: 201 });
+      }
+      if (parts.length === 6 && parts[5] === 'approve' && method === 'POST') {
+        const reqId = decodeURIComponent(parts[4]);
+        return Response.json({ ok: true, data: await approveRatioChangeRequest(env, user.uid, requestId, workId, reqId), requestId });
+      }
+    }
 
     if (parts[3] === 'events') {
       if (method === 'GET') return Response.json({ ok: true, data: await listWorkEvents(env, workId), requestId });
@@ -756,3 +779,236 @@ export default {
     }
   }
 };
+
+
+// S6 PR-A Financial Core: integer-halalah math and governed approval paths.
+const MAX_SAFE_HALALAS = Number.MAX_SAFE_INTEGER;
+const MAX_SAFE_HALALAS_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const DEFAULT_PERSON_1_BPS = 3000;
+const DEFAULT_PERSON_2_BPS = 7000;
+const PRICE_MOVEMENT_TYPES = Object.freeze(['BASE', 'INCREASE', 'DECREASE', 'DISCOUNT']);
+
+function safeFinancialInteger(value, code = 'MONEY_OVERFLOW') {
+  if (!Number.isSafeInteger(value)) throw new DomainError(code, 400);
+  return value;
+}
+
+function parseMoneyHalalas(value) {
+  if (typeof value !== 'string') throw new DomainError('MONEY_TEXT_REQUIRED', 400);
+  const raw = value.trim();
+  const match = /^([+-]?)(\d+)(?:\.(\d{1,2}))?$/.exec(raw);
+  if (!match) throw new DomainError('MONEY_FORMAT_INVALID', 400);
+  const sign = match[1] === '-' ? -1n : 1n;
+  const whole = BigInt(match[2]);
+  const fraction = BigInt((match[3] || '').padEnd(2, '0') || '0');
+  const halalas = sign * (whole * 100n + fraction);
+  if (halalas < -MAX_SAFE_HALALAS_BIGINT || halalas > MAX_SAFE_HALALAS_BIGINT) throw new DomainError('MONEY_OVERFLOW', 400);
+  return Number(halalas);
+}
+
+function safeFinancialAdd(left, right) {
+  const result = BigInt(safeFinancialInteger(left)) + BigInt(safeFinancialInteger(right));
+  if (result < -MAX_SAFE_HALALAS_BIGINT || result > MAX_SAFE_HALALAS_BIGINT) throw new DomainError('MONEY_OVERFLOW', 400);
+  return Number(result);
+}
+
+function roundHalfUpNumerator(numerator, denominator) {
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  return quotient + (remainder * 2n >= denominator ? 1n : 0n);
+}
+
+function calculateShareHalalas(priceHalalas, ratioBps) {
+  if (priceHalalas === null) return null;
+  const numerator = BigInt(safeFinancialInteger(priceHalalas)) * BigInt(ratioBps);
+  const rounded = roundHalfUpNumerator(numerator, 10000n);
+  if (rounded > MAX_SAFE_HALALAS_BIGINT) throw new DomainError('MONEY_OVERFLOW', 400);
+  return Number(rounded);
+}
+
+function validateRatioBps(person1, person2) {
+  if (!Number.isInteger(person1) || !Number.isInteger(person2) || person1 < 0 || person2 < 0 || person1 > 10000 || person2 > 10000 || person1 + person2 !== 10000) {
+    throw new DomainError('RATIO_INVALID', 400);
+  }
+  return { person_1_bps: person1, person_2_bps: person2 };
+}
+
+function validatePriceMovementType(value) {
+  const movementType = requiredString(value, 'MOVEMENT_TYPE_REQUIRED').toUpperCase();
+  if (!PRICE_MOVEMENT_TYPES.includes(movementType)) throw new DomainError('MOVEMENT_TYPE_INVALID', 400);
+  return movementType;
+}
+
+function validateMovementAmount(movementType, amountHalalas) {
+  safeFinancialInteger(amountHalalas);
+  if ((movementType === 'BASE' || movementType === 'INCREASE') && amountHalalas < 0) throw new DomainError('MOVEMENT_SIGN_INVALID', 400);
+  if ((movementType === 'DECREASE' || movementType === 'DISCOUNT') && amountHalalas > 0) throw new DomainError('MOVEMENT_SIGN_INVALID', 400);
+  return amountHalalas;
+}
+
+async function listApprovedPriceMovementsRaw(env, workId) {
+  return (await env.DB.prepare(`SELECT id, work_id, price_request_id, movement_type, amount_halalas, reason, effective_at, requested_by, approved_by, requested_at, approved_at, resulting_price_halalas, request_id
+    FROM price_movements WHERE work_id=?1 ORDER BY effective_at ASC, approved_at ASC, id ASC`).bind(workId).all()).results || [];
+}
+
+function sumApprovedPriceMovements(movements) {
+  let total = 0;
+  for (const movement of movements) total = safeFinancialAdd(total, Number(movement.amount_halalas));
+  return movements.length ? total : null;
+}
+
+async function currentRatio(env, workId) {
+  const row = await env.DB.prepare(`SELECT new_person_1_bps, new_person_2_bps FROM ratio_history WHERE work_id=?1 ORDER BY approved_at DESC, id DESC LIMIT 1`).bind(workId).first();
+  return row ? { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps), source: 'APPROVED_HISTORY' } : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT' };
+}
+
+export async function getWorkFinancials(env, workId) {
+  await getWorkRaw(env, workId);
+  const [movements, priceRequests, ratioRequests, ratioHistory] = await Promise.all([
+    listApprovedPriceMovementsRaw(env, workId),
+    listPriceChangeRequests(env, workId),
+    listRatioChangeRequests(env, workId),
+    listRatioHistory(env, workId),
+  ]);
+  const currentPriceHalalas = sumApprovedPriceMovements(movements);
+  const ratio = await currentRatio(env, workId);
+  const person1Share = calculateShareHalalas(currentPriceHalalas, ratio.person_1_bps);
+  const person2Share = calculateShareHalalas(currentPriceHalalas, ratio.person_2_bps);
+  return {
+    work_id: workId,
+    price_state: currentPriceHalalas === null ? 'PRICE_UNSET' : 'PRICE_APPROVED',
+    current_price_halalas: currentPriceHalalas,
+    ratio,
+    shares: { person_1_halalas: person1Share, person_2_halalas: person2Share },
+    approved_payments_total_halalas: 0,
+    remaining_halalas: currentPriceHalalas,
+    remaining_projection: 'PRE_S7_APPROVED_PAYMENTS_ZERO',
+    movements,
+    price_requests: priceRequests,
+    ratio_requests: ratioRequests,
+    ratio_history: ratioHistory,
+  };
+}
+
+export async function listPriceMovements(env, workId) {
+  await getWorkRaw(env, workId);
+  return listApprovedPriceMovementsRaw(env, workId);
+}
+
+export async function listPriceChangeRequests(env, workId) {
+  await getWorkRaw(env, workId);
+  return (await env.DB.prepare(`SELECT id, work_id, movement_type, amount_halalas, reason, effective_at, requested_by, requested_at, work_version, state, approved_by, approved_at, approval_request_id, request_id
+    FROM price_change_requests WHERE work_id=?1 ORDER BY requested_at ASC, id ASC`).bind(workId).all()).results || [];
+}
+
+export async function createPriceChangeRequest(env, actorUid, requestId, workId, input) {
+  await ensureActor(env, actorUid);
+  const beforeWork = await getWorkRaw(env, workId);
+  const version = positiveVersion(input.version);
+  if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
+  const movementType = validatePriceMovementType(input.movement_type);
+  const amountHalalas = validateMovementAmount(movementType, parseMoneyHalalas(input.amount_riyals));
+  const currentMovements = await listApprovedPriceMovementsRaw(env, workId);
+  if (!currentMovements.length && movementType !== 'BASE') throw new DomainError('BASE_REQUIRED', 400);
+  if (currentMovements.length && movementType === 'BASE') throw new DomainError('BASE_ALREADY_SET', 400);
+  const reason = requiredString(input.reason, 'REASON_REQUIRED');
+  const effectiveAt = canonicalEventTimestamp(input.effective_at === undefined ? nowIso() : input.effective_at);
+  const id = newId('price_req');
+  const requestedAt = nowIso();
+  const after = { id, work_id: workId, movement_type: movementType, amount_halalas: amountHalalas, reason, effective_at: effectiveAt, requested_by: actorUid, requested_at: requestedAt, work_version: version, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO price_change_requests(id,work_id,movement_type,amount_halalas,reason,effective_at,requested_by,requested_at,work_version,state,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'PENDING',?10)`).bind(id, workId, movementType, amountHalalas, reason, effectiveAt, actorUid, requestedAt, version, requestId);
+  const audit = auditStatement(env, 'price_change_request', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, requestedAt);
+  await executeBatch(env, [mutation, audit]);
+  return after;
+}
+
+export async function approvePriceChangeRequest(env, actorUid, requestId, workId, requestIdToApprove) {
+  await ensureActor(env, actorUid);
+  const requestRow = await env.DB.prepare('SELECT * FROM price_change_requests WHERE id=?1').bind(requestIdToApprove).first();
+  if (!requestRow) throw new DomainError('PRICE_REQUEST_NOT_FOUND', 404);
+  if (requestRow.work_id !== workId) throw new DomainError('REQUEST_WORK_MISMATCH', 404);
+  if (requestRow.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
+  if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
+  const beforeWork = await getWorkRaw(env, workId);
+  if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
+  const movements = await listApprovedPriceMovementsRaw(env, workId);
+  if (requestRow.movement_type === 'BASE' && movements.length) throw new DomainError('BASE_ALREADY_SET', 409);
+  if (requestRow.movement_type !== 'BASE' && !movements.length) throw new DomainError('BASE_REQUIRED', 409);
+  const previousPrice = sumApprovedPriceMovements(movements) === null ? 0 : sumApprovedPriceMovements(movements);
+  const resultingPrice = safeFinancialAdd(previousPrice, Number(requestRow.amount_halalas));
+  if (resultingPrice < 0) throw new DomainError('S6_NEGATIVE_FINAL_PRICE_POLICY_UNRESOLVED', 409);
+  const approvedAt = nowIso();
+  const movementId = newId('price_move');
+  const afterRequest = { ...requestRow, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt, approval_request_id: requestId };
+  const afterMovement = { id: movementId, work_id: workId, price_request_id: requestIdToApprove, movement_type: requestRow.movement_type, amount_halalas: Number(requestRow.amount_halalas), reason: requestRow.reason, effective_at: requestRow.effective_at, requested_by: requestRow.requested_by, approved_by: actorUid, requested_at: requestRow.requested_at, approved_at: approvedAt, resulting_price_halalas: resultingPrice, request_id: requestId };
+  const workMutation = env.DB.prepare(`UPDATE works SET version=version+1, updated_by=?1, updated_at=?2 WHERE id=?3 AND version=?4 AND EXISTS (SELECT 1 FROM price_change_requests WHERE id=?5 AND state='PENDING' AND work_version=?4 AND requested_by<>?1)`).bind(actorUid, approvedAt, workId, beforeWork.version, requestIdToApprove);
+  const requestMutation = env.DB.prepare(`UPDATE price_change_requests SET state='APPROVED', approved_by=?1, approved_at=?2, approval_request_id=?3 WHERE id=?4 AND work_id=?5 AND state='PENDING' AND work_version=?6 AND EXISTS (SELECT 1 FROM works WHERE id=?5 AND version=?7)`).bind(actorUid, approvedAt, requestId, requestIdToApprove, workId, beforeWork.version, beforeWork.version + 1);
+  const movementMutation = env.DB.prepare(`INSERT INTO price_movements(id,work_id,price_request_id,movement_type,amount_halalas,reason,effective_at,requested_by,approved_by,requested_at,approved_at,resulting_price_halalas,request_id)
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13 WHERE EXISTS (SELECT 1 FROM price_change_requests WHERE id=?3 AND state='APPROVED' AND approval_request_id=?13)`).bind(movementId, workId, requestIdToApprove, requestRow.movement_type, Number(requestRow.amount_halalas), requestRow.reason, requestRow.effective_at, requestRow.requested_by, actorUid, requestRow.requested_at, approvedAt, resultingPrice, requestId);
+  const auditRequest = auditStatementWhen(env, 'price_change_request', requestIdToApprove, 'UPDATE', actorUid, requestRow, afterRequest, env.RUN_MARKER, `${requestId}:price_request`, approvedAt,
+    'EXISTS (SELECT 1 FROM price_change_requests WHERE id=?10 AND state=\'APPROVED\' AND approved_by=?11 AND approval_request_id=?12)', [requestIdToApprove, actorUid, requestId]);
+  const auditMovement = auditStatementWhen(env, 'price_movement', movementId, 'CREATE', actorUid, null, afterMovement, env.RUN_MARKER, `${requestId}:price_movement`, approvedAt,
+    'EXISTS (SELECT 1 FROM price_movements WHERE id=?10 AND work_id=?11 AND request_id=?12 AND resulting_price_halalas=?13)', [movementId, workId, requestId, resultingPrice]);
+  const results = await executeBatch(env, [workMutation, requestMutation, movementMutation, auditRequest, auditMovement]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return { request: afterRequest, movement: afterMovement, financials: await getWorkFinancials(env, workId) };
+}
+
+export async function listRatioChangeRequests(env, workId) {
+  await getWorkRaw(env, workId);
+  return (await env.DB.prepare(`SELECT id, work_id, person_1_bps, person_2_bps, reason, requested_by, requested_at, work_version, state, approved_by, approved_at, approval_request_id, request_id
+    FROM ratio_change_requests WHERE work_id=?1 ORDER BY requested_at ASC, id ASC`).bind(workId).all()).results || [];
+}
+
+export async function listRatioHistory(env, workId) {
+  await getWorkRaw(env, workId);
+  return (await env.DB.prepare(`SELECT id, work_id, old_person_1_bps, old_person_2_bps, new_person_1_bps, new_person_2_bps, reason, requested_by, approved_by, requested_at, approved_at, ratio_request_id, request_id
+    FROM ratio_history WHERE work_id=?1 ORDER BY approved_at ASC, id ASC`).bind(workId).all()).results || [];
+}
+
+export async function createRatioChangeRequest(env, actorUid, requestId, workId, input) {
+  await ensureActor(env, actorUid);
+  const beforeWork = await getWorkRaw(env, workId);
+  const version = positiveVersion(input.version);
+  if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
+  const nextRatio = validateRatioBps(input.person_1_bps, input.person_2_bps);
+  const oldRatio = await currentRatio(env, workId);
+  if (nextRatio.person_1_bps === oldRatio.person_1_bps && nextRatio.person_2_bps === oldRatio.person_2_bps) throw new DomainError('RATIO_UNCHANGED', 400);
+  const reason = requiredString(input.reason, 'REASON_REQUIRED');
+  const id = newId('ratio_req');
+  const requestedAt = nowIso();
+  const after = { id, work_id: workId, person_1_bps: nextRatio.person_1_bps, person_2_bps: nextRatio.person_2_bps, reason, requested_by: actorUid, requested_at: requestedAt, work_version: version, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO ratio_change_requests(id,work_id,person_1_bps,person_2_bps,reason,requested_by,requested_at,work_version,state,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'PENDING',?9)`).bind(id, workId, nextRatio.person_1_bps, nextRatio.person_2_bps, reason, actorUid, requestedAt, version, requestId);
+  const audit = auditStatement(env, 'ratio_change_request', id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, requestedAt);
+  await executeBatch(env, [mutation, audit]);
+  return after;
+}
+
+export async function approveRatioChangeRequest(env, actorUid, requestId, workId, requestIdToApprove) {
+  await ensureActor(env, actorUid);
+  const requestRow = await env.DB.prepare('SELECT * FROM ratio_change_requests WHERE id=?1').bind(requestIdToApprove).first();
+  if (!requestRow) throw new DomainError('RATIO_REQUEST_NOT_FOUND', 404);
+  if (requestRow.work_id !== workId) throw new DomainError('REQUEST_WORK_MISMATCH', 404);
+  if (requestRow.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
+  if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
+  const beforeWork = await getWorkRaw(env, workId);
+  if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
+  const oldRatio = await currentRatio(env, workId);
+  const approvedAt = nowIso();
+  const historyId = newId('ratio_hist');
+  const afterRequest = { ...requestRow, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt, approval_request_id: requestId };
+  const afterHistory = { id: historyId, work_id: workId, old_person_1_bps: oldRatio.person_1_bps, old_person_2_bps: oldRatio.person_2_bps, new_person_1_bps: Number(requestRow.person_1_bps), new_person_2_bps: Number(requestRow.person_2_bps), reason: requestRow.reason, requested_by: requestRow.requested_by, approved_by: actorUid, requested_at: requestRow.requested_at, approved_at: approvedAt, ratio_request_id: requestIdToApprove, request_id: requestId };
+  const workMutation = env.DB.prepare(`UPDATE works SET version=version+1, updated_by=?1, updated_at=?2 WHERE id=?3 AND version=?4 AND EXISTS (SELECT 1 FROM ratio_change_requests WHERE id=?5 AND state='PENDING' AND work_version=?4 AND requested_by<>?1)`).bind(actorUid, approvedAt, workId, beforeWork.version, requestIdToApprove);
+  const requestMutation = env.DB.prepare(`UPDATE ratio_change_requests SET state='APPROVED', approved_by=?1, approved_at=?2, approval_request_id=?3 WHERE id=?4 AND work_id=?5 AND state='PENDING' AND work_version=?6 AND EXISTS (SELECT 1 FROM works WHERE id=?5 AND version=?7)`).bind(actorUid, approvedAt, requestId, requestIdToApprove, workId, beforeWork.version, beforeWork.version + 1);
+  const historyMutation = env.DB.prepare(`INSERT INTO ratio_history(id,work_id,old_person_1_bps,old_person_2_bps,new_person_1_bps,new_person_2_bps,reason,requested_by,approved_by,requested_at,approved_at,ratio_request_id,request_id)
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13 WHERE EXISTS (SELECT 1 FROM ratio_change_requests WHERE id=?12 AND state='APPROVED' AND approval_request_id=?13)`).bind(historyId, workId, oldRatio.person_1_bps, oldRatio.person_2_bps, Number(requestRow.person_1_bps), Number(requestRow.person_2_bps), requestRow.reason, requestRow.requested_by, actorUid, requestRow.requested_at, approvedAt, requestIdToApprove, requestId);
+  const auditRequest = auditStatementWhen(env, 'ratio_change_request', requestIdToApprove, 'UPDATE', actorUid, requestRow, afterRequest, env.RUN_MARKER, `${requestId}:ratio_request`, approvedAt,
+    'EXISTS (SELECT 1 FROM ratio_change_requests WHERE id=?10 AND state=\'APPROVED\' AND approved_by=?11 AND approval_request_id=?12)', [requestIdToApprove, actorUid, requestId]);
+  const auditHistory = auditStatementWhen(env, 'ratio_history', historyId, 'CREATE', actorUid, null, afterHistory, env.RUN_MARKER, `${requestId}:ratio_history`, approvedAt,
+    'EXISTS (SELECT 1 FROM ratio_history WHERE id=?10 AND work_id=?11 AND request_id=?12 AND new_person_1_bps=?13)', [historyId, workId, requestId, Number(requestRow.person_1_bps)]);
+  const results = await executeBatch(env, [workMutation, requestMutation, historyMutation, auditRequest, auditHistory]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return { request: afterRequest, history: afterHistory, financials: await getWorkFinancials(env, workId) };
+}
