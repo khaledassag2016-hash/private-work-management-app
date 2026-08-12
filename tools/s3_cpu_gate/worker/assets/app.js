@@ -48,7 +48,8 @@ const labels = {
   CUSTOMER_STATUS_DERIVED: 'لا يمكن إدخال حالة العميل الوقائعية يدويًا؛ أضف واقعة موثقة أولًا.',
   WORK_STATUS_INVALID: 'حالة العمل غير مدعومة في نطاق S4.',
   FACT_TIME_INVALID: 'وقت الواقعة غير صالح. استخدم تاريخًا ووقتًا صحيحين بصيغة UTC.',
-  WARNING_CONTEXT_UNAVAILABLE: 'تعذر تحميل سجل التحذيرات قبل إنشاء العمل. راجع الاتصال ثم أعد المحاولة؛ لم تُعرض نتيجة ناقصة على أنها خالية من التحذيرات.',
+  WARNING_CONTEXT_UNAVAILABLE: 'تعذر تحميل سياق العميل قبل إنشاء العمل. راجع الاتصال ثم أعد المحاولة؛ لا يمكن الحفظ قبل تحقق التحذيرات والتاريخ المتاحين.',
+  PRE_AGREEMENT_CONTEXT_REQUIRED: 'يلزم نجاح تحميل تحذيرات العميل وتاريخه المتاح قبل إنشاء عمل جديد.',
   CUSTOMER_NAME_MISSING: 'اسم العميل غير متوفر حاليًا؛ يمكنك حفظ السجل واستكماله لاحقًا.',
   INTERNAL_ERROR: 'تعذر إكمال العملية بأمان. لم تعرض تفاصيل داخلية.',
 };
@@ -69,7 +70,7 @@ const WORK_STATUS_LABELS = Object.freeze({
   COMPLETED: 'مكتمل',
   DELIVERED: 'مسلم',
 });
-const CUSTOMER_STATUS_LABELS = Object.freeze({ normal: 'لا توجد واقعة وقائعية مشتقة', unpaid: 'لم يدفع — مشتق من واقعة موثقة', frequent_delay: 'تأخر — مشتق من واقعة موثقة', blocked: 'حظر/انقطاع — مشتق من واقعة موثقة', dispute: 'نزاع — مشتق من واقعة موثقة' });
+const CUSTOMER_STATUS_LABELS = Object.freeze({ normal: 'لا توجد حالة وقائعية مشتقة', unpaid: 'لم يدفع — مشتق من واقعة موثقة', blocked: 'حظر/انقطاع — مشتق من واقعة موثقة', dispute: 'نزاع — مشتق من واقعة موثقة' });
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -80,6 +81,11 @@ function dateLabel(value) {
   return Number.isNaN(date.getTime()) ? escapeHtml(value) : new Intl.DateTimeFormat('ar-SA', { dateStyle: 'medium' }).format(date);
 }
 function idLabel(value) { return value ? `${String(value).slice(0, 8)}…` : '—'; }
+function dateTimeLabel(value) {
+  if (!value) return 'غير متاح';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? escapeHtml(value) : new Intl.DateTimeFormat('ar-SA', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
 function requestId() { return crypto.randomUUID(); }
 function toast(message, kind = '') {
   const region = document.querySelector('.toast-region') || Object.assign(document.createElement('div'), { className: 'toast-region' });
@@ -220,22 +226,37 @@ function customerForm(customer = {}) {
   const duplicates = state.modal?.duplicateCandidates || [];
   const duplicateNotice = duplicates.length ? `<section class="notice warning" style="margin-bottom:1rem"><div><strong>يوجد عميل باسم مماثل.</strong><br/>${duplicates.map(item => `${escapeHtml(item.name || 'عميل دون اسم')} — ${escapeHtml(item.university || 'جامعة غير متاحة')}`).join('<br/>')}<br/><label><input type="checkbox" name="confirm_duplicate" value="yes" required/> راجعت السجلات وأؤكد أن هذا عميل جديد مستقل.</label></div></section>` : '';
   return `<form id="customer-form">${duplicateNotice}<input type="hidden" name="id" value="${escapeHtml(customer.id || '')}"/><input type="hidden" name="version" value="${escapeHtml(customer.version || '')}"/><div class="form-grid"><div class="field"><label>اسم العميل (عند توفره)</label><input class="input" name="name" value="${escapeHtml(customer.name || '')}"/><span class="hint">يمكن حفظ السجل دون اسم عندما لا تكون المعلومة متوفرة.</span></div><div class="field"><label>رقم التواصل</label><input class="input" name="contact" value="${escapeHtml(customer.contact || '')}" inputmode="tel"/></div><div class="field"><label>الدولة</label><select class="select" name="country">${options('country', customer.country)}</select></div><div class="field"><label>الجامعة</label><input class="input" name="university" value="${escapeHtml(customer.university || '')}"/><span class="hint">اختيارية عند عدم توفرها.</span></div><div class="field"><label>التخصص</label><select class="select" name="specialty">${options('specialty', customer.specialty)}</select><span class="hint">أدخله عند معرفته، دون منع حفظ المعلومة المفقودة.</span></div><div class="field"><label>حالة العميل المشتقة</label><div class="readonly-value" data-derived-customer-status="${escapeHtml(customer.status || 'normal')}">${escapeHtml(CUSTOMER_STATUS_LABELS[customer.status] || 'مشتقة من واقعة موثقة')}</div><span class="hint">لا يمكن اختراع حالة وقائعية من هذا النموذج؛ أضف documented fact لإثباتها.</span></div><div class="field full"><label>ملاحظات</label><textarea class="textarea" name="notes">${escapeHtml(customer.notes || '')}</textarea></div></div><div class="form-actions"><button class="button" type="submit">حفظ</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`; }
+function preAgreementCanSubmitNewWork(customerId) {
+  const context = state.modal?.preAgreementContext;
+  return Boolean(customerId && context?.customerId === customerId && context.status === 'VERIFIED');
+}
+function preAgreementContextMarkup(isNewWork, customerId) {
+  if (!isNewWork) return '';
+  const context = state.modal?.preAgreementContext || { customerId, status: customerId ? 'LOADING' : 'UNSELECTED', warnings: [], history: [] };
+  if (context.status === 'LOADING') return '<section class="notice info" data-pre-agreement-context="loading" data-pre-agreement-warning="loading">جارٍ تحميل تحذيرات العميل وتاريخ التعامل المتاح قبل بدء العمل. لا يمكن الحفظ حتى يكتمل التحقق.</section>';
+  if (context.status === 'ERROR') return `<section class="notice warning" data-pre-agreement-context="error" data-pre-agreement-warning="error"><strong>تعذر تحميل سياق العميل قبل الحفظ.</strong><p>${escapeHtml(errorMessage('WARNING_CONTEXT_UNAVAILABLE'))}</p><button class="button secondary" type="button" data-action="retry-pre-agreement-context">إعادة تحميل السياق</button></section>`;
+  if (context.status === 'UNSELECTED') return '<section class="notice info" data-pre-agreement-context="unselected" data-pre-agreement-warning="unselected">اختر العميل أولًا لتحميل التحذيرات وتاريخ التعامل المتاح قبل الحفظ.</section>';
+  const warnings = context.warnings || [];
+  const history = context.history || [];
+  const warningMarkup = warnings.length
+    ? `<section class="notice warning" data-pre-agreement-context="verified" data-pre-agreement-warning="present"><strong>تحذير قبل إنشاء العمل:</strong><div>${warnings.map(item => `${escapeHtml(item.warning_type)} — ${escapeHtml(item.source_ref)} (${dateTimeLabel(item.happened_at)})`).join('<br/>')}</div><p>ظهر التحذير من واقعة موثقة. يمكنك المتابعة؛ لا توجد موافقة إضافية أو workflow جديد.</p></section>`
+    : '<section class="notice info" data-pre-agreement-context="verified" data-pre-agreement-warning="none">تم التحقق من التحذيرات المتاحة: لا توجد تحذيرات موثقة لهذا العميل.</section>';
+  const historyMarkup = history.length
+    ? `<section class="notice info" data-pre-agreement-history="present"><strong>تاريخ التعامل المتاح قبل الاتفاق:</strong><ul class="fact-list">${history.map(item => `<li><strong>${escapeHtml(item.fact_type)}</strong><span>المصدر/المرجع: ${escapeHtml(item.source_ref || 'غير متاح')} — ${dateTimeLabel(item.happened_at)}</span></li>`).join('')}</ul></section>`
+    : '<section class="notice info" data-pre-agreement-history="none">تم تحميل تاريخ التعامل المتاح: لا توجد وقائع موثقة لهذا العميل.</section>';
+  return `${warningMarkup}${historyMarkup}`;
+}
 function workForm(work = {}) {
+  const isNewWork = !work.id;
   const customerId = work.customer_id || state.modal?.customerId || state.selectedCustomer?.id || '';
   const customerWorks = state.works.filter(item => item.customer_id === customerId && item.id !== work.id);
   const selectedStatus = WORK_STATUS_LABELS[work.status] ? work.status : 'NEW_REQUEST';
   const statusOptions = Object.entries(WORK_STATUS_LABELS).map(([value, label]) => `<option value="${value}" ${value === selectedStatus ? 'selected' : ''}>${label}</option>`).join('');
-  const warnings = state.modal?.customerWarnings || [];
-  const warningMarkup = state.modal?.warningLoading
-    ? '<section class="notice info" data-pre-agreement-warning="loading">جارٍ تحميل الوقائع الموثقة قبل بدء العمل...</section>'
-    : state.modal?.warningError
-      ? `<section class="notice warning" data-pre-agreement-warning="error"><strong>تعذر تحميل الوقائع الموثقة قبل الحفظ.</strong><p>${escapeHtml(errorMessage('WARNING_CONTEXT_UNAVAILABLE'))}</p></section>`
-      : warnings.length
-        ? `<section class="notice warning" data-pre-agreement-warning="present"><strong>تحذير قبل إنشاء العمل:</strong><div>${warnings.map(item => `${escapeHtml(item.warning_type)} — ${escapeHtml(item.source_ref)} (${dateLabel(item.happened_at)})`).join('<br/>')}</div><p>يمكنك المتابعة؛ هذا تنبيه مبني على سجل موثق وليس approval workflow.</p></section>`
-        : state.modal?.customerId
-        ? '<section class="notice info" data-pre-agreement-warning="none">لا توجد وقائع موثقة تحذيرية لهذا العميل.</section>'
-        : '<section class="notice info" data-pre-agreement-warning="unselected">اختر العميل لعرض الوقائع الموثقة قبل الحفظ.</section>';
-  return `<form id="work-form">${warningMarkup}<input type="hidden" name="id" value="${escapeHtml(work.id || '')}"/><input type="hidden" name="version" value="${escapeHtml(work.version || '')}"/><div class="form-grid"><div class="field"><label>العميل <span class="required">*</span></label><select class="select" id="work-customer" name="customer_id" required ${work.id ? 'disabled' : ''}><option value="">— اختر العميل —</option>${state.customers.map(customer => `<option value="${escapeHtml(customer.id)}" ${customer.id === customerId ? 'selected' : ''}>${escapeHtml(customer.name || idLabel(customer.id))}</option>`).join('')}</select>${work.id ? `<input type="hidden" name="customer_id" value="${escapeHtml(customerId)}"/>` : ''}</div><div class="field"><label>العنوان <span class="required">*</span></label><input class="input" name="title" value="${escapeHtml(work.title || '')}" required/><span class="hint">لا يكتفى بعنوان عام عندما تكون التفاصيل متاحة.</span></div><div class="field"><label>الدولة <span class="required">*</span></label><select class="select" name="country" required>${options('country', work.country)}</select></div><div class="field"><label>الجامعة</label><input class="input" name="university" value="${escapeHtml(work.university || '')}"/></div><div class="field"><label>التخصص</label><select class="select" name="specialty_key">${options('specialty', work.specialty_key)}</select></div><div class="field"><label>نوع العمل</label><select class="select" name="work_type_key">${options('work_type', work.work_type_key)}</select></div><div class="field"><label>المادة أو الرمز</label><input class="input" name="subject_or_course_code" value="${escapeHtml(work.subject_or_course_code || '')}"/></div><div class="field"><label>الكمية</label><input class="input" name="quantity" type="number" min="1" value="${escapeHtml(work.quantity || '')}"/></div><div class="field"><label>الحالة الأساسية الحالية</label><select class="select" name="status" data-controlled-work-status>${statusOptions}</select><span class="hint">قائمة S4 مضبوطة؛ لا تنشئ سجل انتقالات أو timeline.</span></div><div class="field"><label>علاقة العمل</label><select class="select" id="relationship-kind" name="relationship_kind"><option value="INDEPENDENT" ${work.relationship_kind !== 'CHILD' ? 'selected' : ''}>مستقل</option><option value="CHILD" ${work.relationship_kind === 'CHILD' ? 'selected' : ''}>تابع لعمل أكبر</option></select></div><div class="field" id="parent-field" ${work.relationship_kind === 'CHILD' ? '' : 'hidden'}><label>العمل الأصل</label><select class="select" name="parent_work_id"><option value="">— اختر العمل الأصل —</option>${customerWorks.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === work.parent_work_id ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('')}</select><span class="hint">التحقق النهائي من العلاقة يتم على الخادم.</span></div><div class="field full"><label>الوصف والمطلوب</label><textarea class="textarea" name="description">${escapeHtml(work.description || '')}</textarea></div></div><section class="notice info" style="margin-top:1rem">ينشأ العمل هنا بحالة <strong>PRICE_UNSET</strong> عند الإضافة. لا تمثل الواجهة السعر غير المحدد برقم 0 ولا تقدم workflow للتسعير.</section><div class="form-actions"><button class="button" type="submit">حفظ العمل</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`; }
+  const contextMarkup = preAgreementContextMarkup(isNewWork, customerId);
+  const submitDisabled = isNewWork && !preAgreementCanSubmitNewWork(customerId);
+  const submitHint = submitDisabled ? '<p class="hint" data-pre-agreement-submit-state="blocked">يُفعّل الحفظ بعد اختيار العميل والتحقق من التحذيرات وتاريخ التعامل المتاحين.</p>' : '';
+  return `<form id="work-form">${contextMarkup}<input type="hidden" name="id" value="${escapeHtml(work.id || '')}"/><input type="hidden" name="version" value="${escapeHtml(work.version || '')}"/><div class="form-grid"><div class="field"><label>العميل <span class="required">*</span></label><select class="select" id="work-customer" name="customer_id" required ${work.id ? 'disabled' : ''}><option value="">— اختر العميل —</option>${state.customers.map(customer => `<option value="${escapeHtml(customer.id)}" ${customer.id === customerId ? 'selected' : ''}>${escapeHtml(customer.name || idLabel(customer.id))}</option>`).join('')}</select>${work.id ? `<input type="hidden" name="customer_id" value="${escapeHtml(customerId)}"/>` : ''}</div><div class="field"><label>العنوان <span class="required">*</span></label><input class="input" name="title" value="${escapeHtml(work.title || '')}" required/><span class="hint">لا يكتفى بعنوان عام عندما تكون التفاصيل متاحة.</span></div><div class="field"><label>الدولة <span class="required">*</span></label><select class="select" name="country" required>${options('country', work.country)}</select></div><div class="field"><label>الجامعة</label><input class="input" name="university" value="${escapeHtml(work.university || '')}"/></div><div class="field"><label>التخصص</label><select class="select" name="specialty_key">${options('specialty', work.specialty_key)}</select></div><div class="field"><label>نوع العمل</label><select class="select" name="work_type_key">${options('work_type', work.work_type_key)}</select></div><div class="field"><label>المادة أو الرمز</label><input class="input" name="subject_or_course_code" value="${escapeHtml(work.subject_or_course_code || '')}"/></div><div class="field"><label>الكمية</label><input class="input" name="quantity" type="number" min="1" value="${escapeHtml(work.quantity || '')}"/></div><div class="field"><label>الحالة الأساسية الحالية</label><select class="select" name="status" data-controlled-work-status>${statusOptions}</select><span class="hint">قائمة S4 مضبوطة؛ لا تنشئ سجل انتقالات أو timeline.</span></div><div class="field"><label>علاقة العمل</label><select class="select" id="relationship-kind" name="relationship_kind"><option value="INDEPENDENT" ${work.relationship_kind !== 'CHILD' ? 'selected' : ''}>مستقل</option><option value="CHILD" ${work.relationship_kind === 'CHILD' ? 'selected' : ''}>تابع لعمل أكبر</option></select></div><div class="field" id="parent-field" ${work.relationship_kind === 'CHILD' ? '' : 'hidden'}><label>العمل الأصل</label><select class="select" name="parent_work_id"><option value="">— اختر العمل الأصل —</option>${customerWorks.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === work.parent_work_id ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('')}</select><span class="hint">التحقق النهائي من العلاقة يتم على الخادم.</span></div><div class="field full"><label>الوصف والمطلوب</label><textarea class="textarea" name="description">${escapeHtml(work.description || '')}</textarea></div></div><section class="notice info" style="margin-top:1rem">ينشأ العمل هنا بحالة <strong>PRICE_UNSET</strong> عند الإضافة. لا تمثل الواجهة السعر غير المحدد برقم 0 ولا تقدم workflow للتسعير.</section>${submitHint}<div class="form-actions"><button class="button" type="submit" ${submitDisabled ? 'disabled aria-disabled="true"' : ''}>حفظ العمل</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`;
+}
 function catalogForm(data) { return `<form id="catalog-form"><input type="hidden" name="kind" value="${escapeHtml(data.kind || '')}"/><div class="form-grid"><div class="field"><label>المعرف النصي <span class="required">*</span></label><input class="input" name="value_key" required pattern="[A-Za-z0-9_-]+"/><span class="hint">قيمة مستقرة فريدة للاستخدام الداخلي.</span></div><div class="field"><label>الاسم الظاهر <span class="required">*</span></label><input class="input" name="label" required/></div></div><div class="form-actions"><button class="button" type="submit">إضافة واستخدام القيمة</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`; }
 function factForm() { const customer = state.selectedCustomer; return `<form id="fact-form"><div class="form-grid"><div class="field"><label>نوع الواقعة <span class="required">*</span></label><select class="select" name="fact_type" required><option value="NON_PAYMENT">عدم دفع</option><option value="DELAY">تأخر</option><option value="BLOCKED">حظر/انقطاع</option><option value="DISPUTE">نزاع</option></select></div><div class="field"><label>العمل المرتبط (اختياري)</label><select class="select" name="work_id"><option value="">— دون عمل محدد —</option>${(customer.works || []).map(work => `<option value="${escapeHtml(work.id)}">${escapeHtml(work.title)}</option>`).join('')}</select></div><div class="field full"><label>المصدر أو الدليل <span class="required">*</span></label><input class="input" name="source_ref" required placeholder="مرجع موثق دون إدخال بيانات حساسة"/></div><div class="field"><label>وقت الواقعة <span class="required">*</span></label><input class="input" name="happened_at" type="datetime-local" required/></div><div class="field full"><label>تفاصيل مختصرة</label><textarea class="textarea" name="details"></textarea></div></div><section class="notice info" style="margin-top:1rem">لن يُنشأ تحذير يدوي؛ سيظهر التحذير فقط لأن هذه الواقعة الموثقة سجلت بنجاح.</section><div class="form-actions"><button class="button" type="submit">حفظ الواقعة</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`; }
 
@@ -264,6 +285,7 @@ function bindShell() {
   document.querySelectorAll('[data-action="edit-work"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'work', data: state.selectedWork, customerId: state.selectedWork.customer_id }; render(); }));
   document.querySelectorAll('[data-action="new-catalog"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'catalog', data: { kind: button.dataset.kind } }; render(); }));
   document.querySelectorAll('[data-action="new-fact"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'fact', data: {} }; render(); }));
+  document.querySelectorAll('[data-action="retry-pre-agreement-context"]').forEach(button => button.addEventListener('click', () => { const customerId = state.modal?.customerId; if (state.modal?.type === 'work' && !state.modal.data?.id && customerId) void refreshWorkCustomerContext(customerId, state.modal.data || {}); }));
   document.querySelectorAll('[data-action="close-modal"]').forEach(button => button.addEventListener('click', () => { state.modal = null; render(); }));
   document.querySelector('#customer-search')?.addEventListener('input', async event => { try { state.customers = await api(`/api/customers${queryString({ q: event.target.value })}`); render(); } catch (error) { toast(errorMessage(error.code), 'error'); } });
   bindModalForms();
@@ -309,26 +331,49 @@ async function submitCustomer(event) {
     toast('تم حفظ بيانات العميل.', '');
   });
 }
-async function submitWork(event) { event.preventDefault(); const values = formObject(event.currentTarget); const body = { customer_id: values.customer_id, title: values.title, country: values.country, university: nullable(values.university), specialty_key: nullable(values.specialty_key), work_type_key: nullable(values.work_type_key), subject_or_course_code: nullable(values.subject_or_course_code), status: values.status, quantity: values.quantity ? Number(values.quantity) : null, relationship_kind: values.relationship_kind, parent_work_id: values.relationship_kind === 'CHILD' ? nullable(values.parent_work_id) : null, description: nullable(values.description) }; await submitFlow(async () => { const result = values.id ? await api(`/api/works/${encodeURIComponent(values.id)}`, { method: 'PATCH', body: { ...body, version: Number(values.version) } }) : await api('/api/works', { method: 'POST', body }); state.modal = null; await loadDashboard(); await openWork(result.id); toast(values.id ? 'تم تحديث العمل.' : 'تم إنشاء العمل بسعر غير محدد.', ''); }); }
+async function submitWork(event) {
+  event.preventDefault();
+  const values = formObject(event.currentTarget);
+  if (!values.id && !preAgreementCanSubmitNewWork(values.customer_id)) {
+    toast(errorMessage('PRE_AGREEMENT_CONTEXT_REQUIRED'), 'error');
+    return;
+  }
+  const body = { customer_id: values.customer_id, title: values.title, country: values.country, university: nullable(values.university), specialty_key: nullable(values.specialty_key), work_type_key: nullable(values.work_type_key), subject_or_course_code: nullable(values.subject_or_course_code), status: values.status, quantity: values.quantity ? Number(values.quantity) : null, relationship_kind: values.relationship_kind, parent_work_id: values.relationship_kind === 'CHILD' ? nullable(values.parent_work_id) : null, description: nullable(values.description) };
+  await submitFlow(async () => {
+    const result = values.id ? await api(`/api/works/${encodeURIComponent(values.id)}`, { method: 'PATCH', body: { ...body, version: Number(values.version) } }) : await api('/api/works', { method: 'POST', body });
+    state.modal = null;
+    await loadDashboard();
+    await openWork(result.id);
+    toast(values.id ? 'تم تحديث العمل.' : 'تم إنشاء العمل بسعر غير محدد.', '');
+  });
+}
 async function submitCatalog(event) { event.preventDefault(); const values = formObject(event.currentTarget); await submitFlow(async () => { await api(`/api/catalog/${encodeURIComponent(values.kind)}`, { method: 'POST', body: { value_key: values.value_key, label: values.label } }); state.modal = null; await loadCatalogs(); render(); toast('أضيفت القيمة وأصبحت متاحة دون تعديل source code.', ''); }); }
 async function submitFact(event) { event.preventDefault(); const values = formObject(event.currentTarget); const parsed = new Date(values.happened_at); if (!Number.isFinite(parsed.getTime())) { toast(errorMessage('FACT_TIME_INVALID'), 'error'); return; } await submitFlow(async () => { await api('/api/facts', { method: 'POST', body: { customer_id: state.selectedCustomer.id, work_id: nullable(values.work_id), fact_type: values.fact_type, source_ref: values.source_ref, happened_at: parsed.toISOString(), details: values.details ? { note: values.details } : {} } }); state.modal = null; await openCustomer(state.selectedCustomer.id); toast('تم حفظ الواقعة؛ سيظهر التحذير المشتق عند انطباقه.', ''); }); }
 async function openNewWork(customerId = '') {
-  state.modal = { type: 'work', data: {}, customerId, warningLoading: Boolean(customerId), customerWarnings: [] };
+  const preAgreementContext = { customerId, status: customerId ? 'LOADING' : 'UNSELECTED', warnings: [], history: [], error: null };
+  state.modal = { type: 'work', data: {}, customerId, preAgreementContext };
   render();
   if (customerId) await refreshWorkCustomerContext(customerId, {});
 }
 async function refreshWorkCustomerContext(customerId, data = {}) {
-  state.modal = { type: 'work', data: { ...data, customer_id: customerId, parent_work_id: '' }, customerId, warningLoading: Boolean(customerId), customerWarnings: [] };
+  const preAgreementContext = { customerId, status: customerId ? 'LOADING' : 'UNSELECTED', warnings: [], history: [], error: null };
+  state.modal = { type: 'work', data: { ...data, customer_id: customerId, parent_work_id: '' }, customerId, preAgreementContext };
   render();
   if (!customerId) return;
+  const stillCurrent = () => state.modal?.type === 'work' && !state.modal.data?.id && state.modal.customerId === customerId;
   try {
-    const customerWarnings = await api(`/api/customers/${encodeURIComponent(customerId)}/warnings`);
-    state.modal = { ...state.modal, warningLoading: false, customerWarnings };
+    const [warnings, history] = await Promise.all([
+      api(`/api/customers/${encodeURIComponent(customerId)}/warnings`),
+      api(`/api/customers/${encodeURIComponent(customerId)}/history`),
+    ]);
+    if (!stillCurrent()) return;
+    state.modal = { ...state.modal, preAgreementContext: { customerId, status: 'VERIFIED', warnings, history, error: null } };
     render();
   } catch (error) {
-    state.modal = { ...state.modal, warningLoading: false, customerWarnings: [], warningError: error.code };
+    if (!stillCurrent()) return;
+    state.modal = { ...state.modal, preAgreementContext: { customerId, status: 'ERROR', warnings: [], history: [], error: error.code || 'WARNING_CONTEXT_UNAVAILABLE' } };
     render();
-    toast(errorMessage(error.code), 'error');
+    toast(errorMessage('WARNING_CONTEXT_UNAVAILABLE'), 'error');
   }
 }
 async function submitFlow(action) { if (state.busy) return; setBusy(true); try { await action(); } catch (error) { toast(errorMessage(error.code), 'error'); } finally { setBusy(false); } }
@@ -336,5 +381,5 @@ async function refreshForView() { try { if (state.view === 'dashboard' || state.
 async function openCustomer(customerId) { try { state.selectedCustomer = null; state.view = 'customer'; render(); const [customer, works, history, warnings] = await Promise.all([api(`/api/customers/${encodeURIComponent(customerId)}`), api(`/api/works${queryString({ customer_id: customerId })}`), api(`/api/customers/${encodeURIComponent(customerId)}/history`), api(`/api/customers/${encodeURIComponent(customerId)}/warnings`)]); state.selectedCustomer = { ...customer, works, history, warnings }; render(); } catch (error) { toast(errorMessage(error.code), 'error'); state.view = 'customers'; render(); } }
 async function openWork(workId) { try { state.selectedWork = null; state.view = 'work'; render(); const [work, similar] = await Promise.all([api(`/api/works/${encodeURIComponent(workId)}`), api(`/api/works/${encodeURIComponent(workId)}/similar`)]); state.selectedWork = { ...work, similar }; render(); } catch (error) { toast(errorMessage(error.code), 'error'); state.view = 'works'; render(); } }
 
-if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, openNewWork, refreshWorkCustomerContext, errorMessage });
+if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, openNewWork, refreshWorkCustomerContext, preAgreementCanSubmitNewWork, preAgreementContextMarkup, submitWork, errorMessage });
 authenticateExistingSession();
