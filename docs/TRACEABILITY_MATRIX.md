@@ -16,17 +16,17 @@ S6 final evidence: `docs/s6/S6_FINAL_VERIFICATION.md`. PR #71 أنجز Financial
 | FR-008 | متطلب وظيفي | S5 | title A→B→C/history + mandatory reason + execution-status history/reason/allowlist + UI flows | **PASS — S5 PR-A/PR-B؛ final verification PR #70** |
 | FR-009 | متطلب وظيفي | S6 | `s6_pr_a_financial_core.test.mjs`: BASE/increase/decrease/discount، immutable movements، stale/duplicate/negative fail-closed؛ `s6_pr_b_ui_acceptance.test.mjs`: current/history UI | **PASS — S6 PR #71/#72؛ final verification PR #73** |
 | FR-010 | متطلب وظيفي | S6 | S6 authoritative price/shares via `/financials` + Work/list/similar read models؛ post-mutation refetch؛ D-012 rounding | **PASS — authoritative current price/recalculation verified in S6** |
-| FR-011 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-011 في المرحلة S7 | مخطط |
-| FR-012 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-012 في المرحلة S7 | مخطط |
-| FR-013 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-013 في المرحلة S7 | مخطط |
+| FR-011 | متطلب وظيفي | S7 | `s7_pr_a_payments.test.mjs`: دفعات متعددة غير منتظمة؛ `s7_pr_c_ui_acceptance.test.mjs`: إدخال دفعة وإعادة جلب الحالة السلطوية | **PR-A core + PR-C UI acceptance ready for supervisory review** |
+| FR-012 | متطلب وظيفي | S7 | `s7_pr_a_payments.test.mjs`: paid/remaining/collection derivation؛ `s7_pr_c_ui_acceptance.test.mjs`: عرض التحصيل منفصلًا عن التنفيذ | **PR-A core + PR-C UI acceptance ready for supervisory review** |
+| FR-013 | متطلب وظيفي | S7 | `s7_pr_a_payments.test.mjs`: zero/partial collection؛ `s7_pr_c_ui_acceptance.test.mjs`: zero/unpaid and zero-price/PRICE_UNSET UI boundaries | **PR-A core + PR-C UI acceptance ready for supervisory review** |
 | FR-014 | متطلب وظيفي | S4 | AC-07: documented fact يولد warning projection مع source/date | متحقق في Gate 2 — PR #59 |
 | FR-015 | متطلب وظيفي | S4 | `/warnings` + `/history` ضمن pre-agreement context، وعرض fact type/source/date قبل New Work submit | **PASS — Gate 3 final verification** |
 | FR-016 | متطلب وظيفي | S4 | S4 similar-work read boundary؛ اعتمدت S6 لاحقًا مصدر السعر السلطوي، و` s4_gate2_acceptance.test.mjs` يثبت تكامل similar Work مع `current_price_halalas` من S6 مع بقاء legacy sentinel غير سلطوي | **S4 READ BOUNDARY PASS؛ S6 authoritative pricing dependency integration PASS** |
 | FR-017 | متطلب وظيفي | S6 | `s6_pr_a_financial_core.test.mjs` + `s6_pr_b_ui_acceptance.test.mjs`: default 30/70، D-009 exceptional ratio U1→U2 وU2→U1، self-approval rejected، history retained | **PASS — S6** |
-| FR-018 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-018 في المرحلة S7 | مخطط |
-| FR-019 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-019 في المرحلة S7 | مخطط |
-| FR-020 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-020 في المرحلة S7 | مخطط |
-| FR-021 | متطلب وظيفي | S7 | اختبار وظيفي موثق لـ FR-021 في المرحلة S7 | مخطط |
+| FR-018 | متطلب وظيفي | S7 | `s7_pr_b_settlement_core.test.mjs`: transfer ledger/P-03؛ `s7_pr_c_ui_acceptance.test.mjs`: transfer flow and authoritative settlement refetch | **PR-B core + PR-C UI acceptance ready for supervisory review** |
+| FR-019 | متطلب وظيفي | S7 | `s7_pr_b_settlement_core.test.mjs`: subscriptions/expenses boundaries؛ `s7_pr_c_ui_acceptance.test.mjs`: effective history and fail-closed expense/close UX | **PR-B core + PR-C UI acceptance ready for supervisory review** |
+| FR-020 | متطلب وظيفي | S7 | `s7_pr_b_settlement_core.test.mjs`: preview/close/reopen core؛ `s7_pr_c_ui_acceptance.test.mjs`: component preview, close/reopen UI, both approval directions | **PR-B core + PR-C UI acceptance ready for supervisory review** |
+| FR-021 | متطلب وظيفي | S7 | `s7_pr_b_settlement_core.test.mjs`: bounded work/cumulative counts؛ `s7_pr_c_ui_acceptance.test.mjs`: monthly component display | **PR-B core + PR-C UI acceptance ready for supervisory review** |
 | FR-022 | متطلب وظيفي | S8 | اختبار وظيفي موثق لـ FR-022 في المرحلة S8 | مخطط |
 | FR-023 | متطلب وظيفي | S5 | `s5_pr_a_domain_data_api.test.mjs`: منع hard delete، archive history/retention، بقاء السجل؛ إعادة تحقق البحث/التحليلات والاستعادة في المراحل المسندة | **PASS — S5 portion؛ reverify in S8/S10 as already assigned** |
 | FR-024 | متطلب وظيفي | S8 | اختبار وظيفي موثق لـ FR-024 في المرحلة S8 | مخطط |
@@ -40,8 +40,8 @@ S6 final evidence: `docs/s6/S6_FINAL_VERIFICATION.md`. PR #71 أنجز Financial
 | AC-02 | معيار قبول | S6 | `s6_pr_a_financial_core.test.mjs`: 1500 +200 +100 ثم -100/discount؛ pending no effect؛ approval history؛ UI/reload في `s6_pr_b_ui_acceptance.test.mjs` | **PASS — S6** |
 | AC-03 | معيار قبول | S5 | `s5_pr_b_ui_flows.test.mjs`: A→B→C؛ current title يصبح C والتاريخ السابق محفوظ | **PASS — S5 PR-B** |
 | AC-04 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs`: Customer واحد مع عدة Works مستقلة | متحقق في Gate 2 — PR #59 |
-| AC-05 | معيار قبول | S7 | سيناريو قبول AC-05 | مخطط |
-| AC-06 | معيار قبول | S7 | سيناريو قبول AC-06 | مخطط |
+| AC-05 | معيار قبول | S7 | `s7_pr_a_payments.test.mjs`: installments to exact remaining zero؛ `s7_pr_c_ui_acceptance.test.mjs`: payment UI/refetch | **PR-A core + PR-C UI acceptance ready for supervisory review** |
+| AC-06 | معيار قبول | S7 | `s7_pr_a_payments.test.mjs`: completed unpaid/partial derivation; `s7_pr_c_ui_acceptance.test.mjs`: completed execution remains independent from collection descriptor | **PR-A core + PR-C UI acceptance ready for supervisory review** |
 | AC-07 | معيار قبول | S4 | `s4_gate2_acceptance.test.mjs` + `s4_gate2_supervisory_repair.test.mjs`: loading/error يمنعان submit، retry يفعّل، warning/history ظاهران قبل submit، وverified-none يسمح بالمتابعة | **PASS — Gate 3 fail-closed final verification** |
 | AC-08 | معيار قبول | S8 | سيناريو قبول AC-08 | مخطط |
 | AC-09 | معيار قبول | S8 | سيناريو قبول AC-09 | مخطط |
