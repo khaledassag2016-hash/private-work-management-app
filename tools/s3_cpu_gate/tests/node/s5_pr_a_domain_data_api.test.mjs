@@ -648,7 +648,7 @@ test('S5 Endpoints are fully registered in handleApi and retrievable via fetch',
         body: JSON.stringify({ version: 3, status: directStatus, reason: 'Direct cancellation bypass' }),
       }), env);
       assert.equal(directStatusResp.status, 400);
-      assert.equal((await directStatusResp.json()).error.code, 'WORK_STATUS_DIRECT_FORBIDDEN');
+      assert.equal((await directStatusResp.json()).code, 'WORK_STATUS_DIRECT_FORBIDDEN');
     }
 
     // TEST 6: GET /api/works/:id/status-history via fetch
