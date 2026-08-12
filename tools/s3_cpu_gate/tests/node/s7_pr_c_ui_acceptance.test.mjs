@@ -167,6 +167,32 @@ test('S7 PR-C reload/reopen consumes payments and reversal requests from authori
   assert.doesNotMatch(appContent, /localStorage|sessionStorage|D1Database|\.prepare\(/);
 });
 
+test('S7 PR-C collection display keeps completed execution independent across zero, full, PRICE_UNSET, and zero-price financial truth', () => {
+  setup({ work: workPayload(financials({ paid: 0, collection: 'UNPAID' })) });
+  let html = ui.workPage();
+  assert.match(html, /مكتمل/); assert.match(html, /غير محصل/); assert.match(html, /1700\.00 ريال/);
+  setup({ work: workPayload(financials({ paid: 170000, collection: 'FINANCIALLY_CLOSED' })) });
+  html = ui.workPage();
+  assert.match(html, /مغلق ماليًا/); assert.match(html, /0\.00 ريال/);
+  const unset = financials(); unset.price_state = 'PRICE_UNSET'; unset.current_price_halalas = null; unset.remaining_halalas = null; unset.collection_status = 'PRICE_UNSET';
+  setup({ work: workPayload(unset) }); html = ui.workPage();
+  assert.match(html, /لا يمكن إدخال دفعة لأن السعر المعتمد غير محدد/); assert.doesNotMatch(html, /id="s7-payment-form"/);
+  const zero = financials({ price: 0, paid: 0, collection: 'FINANCIALLY_CLOSED' });
+  setup({ work: workPayload(zero) }); html = ui.workPage();
+  assert.match(html, /هذا العمل بسعر معتمد صفر؛ لا تُدخل دفعة موجبة/); assert.doesNotMatch(html, /id="s7-payment-form"/);
+  assert.match(ui.errorMessage('CLOSED_PERIOD_MUTATION_FORBIDDEN'), /إعادة فتح معتمدة/);
+});
+
+test('S7 PR-C executes both reopen approval directions through the same authoritative endpoint', async () => {
+  const calls = [];
+  installFinancialFetch();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => { calls.push({ path: new URL(url).pathname, method: options.method }); return originalFetch(url, options); };
+  setup({ uid: 'uid-two', role: 'person_2' }); await ui.loadFinancialWorkspace('2026-08'); await ui.handleApproveSettlementReopen('u1-to-u2');
+  setup({ uid: 'uid-one', role: 'person_1' }); await ui.loadFinancialWorkspace('2026-08'); await ui.handleApproveSettlementReopen('u2-to-u1');
+  assert.deepEqual(calls.filter(call => call.method === 'POST').map(call => call.path), ['/api/settlements/2026-08/reopen-requests/u1-to-u2/approve', '/api/settlements/2026-08/reopen-requests/u2-to-u1/approve']);
+});
+
 // The route is behaviorally exercised by the workspace fetch above; this guards its authenticated API contract surface.
 test('S7 PR-C settlement snapshot read route remains period-scoped and uses the existing authoritative snapshot list function', () => {
   const workerPath = fileURLToPath(new URL('../../src/worker/src/index.js', import.meta.url));
