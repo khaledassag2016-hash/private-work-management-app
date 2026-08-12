@@ -33,6 +33,7 @@ const labels = {
   WORK_COUNTRY_REQUIRED: 'الدولة مطلوبة لكل عمل.',
   JSON_INVALID: 'تعذر قراءة بيانات الطلب. أعد المحاولة.',
   NETWORK_ERROR: 'تعذر الاتصال بالخدمة. تحقق من الشبكة ثم أعد المحاولة.',
+  POST_MUTATION_REFRESH_FAILED: 'تم حفظ التغيير في الخادم، لكن تعذر تحديث العرض الحالي. أعد فتح العمل أو حدّث الصفحة للتحقق من الحالة السلطوية.',
   HTTP_401: 'انتهت الجلسة أو يلزم تسجيل الدخول مجددًا.',
   HTTP_403: 'لا تملك صلاحية تنفيذ هذه العملية.',
   HTTP_404: 'السجل المطلوب غير موجود أو لم يعد متاحًا.',
@@ -52,6 +53,22 @@ const labels = {
   PRE_AGREEMENT_CONTEXT_REQUIRED: 'يلزم نجاح تحميل تحذيرات العميل وتاريخه المتاح قبل إنشاء عمل جديد.',
   CUSTOMER_NAME_MISSING: 'اسم العميل غير متوفر حاليًا؛ يمكنك حفظ السجل واستكماله لاحقًا.',
   INTERNAL_ERROR: 'تعذر إكمال العملية بأمان. لم تعرض تفاصيل داخلية.',
+  EVENT_TIME_REQUIRED: 'يلزم إدخال وقت الحدث.',
+  EVENT_TIME_INVALID: 'وقت الحدث غير صالح.',
+  EVENT_TYPE_REQUIRED: 'نوع الحدث مطلوب.',
+  EVENT_DESCRIPTION_REQUIRED: 'وصف الحدث مطلوب.',
+  TITLE_REQUIRED: 'العنوان الجديد مطلوب.',
+  REASON_REQUIRED: 'السبب مطلوب ومبرر إلزاميًا.',
+  STALE_VERSION: 'تم تعديل العمل في جلسة أخرى؛ حدّث البيانات ثم أعد المحاولة.',
+  TARGET_STATUS_REQUIRED: 'الحالة المستهدفة مطلوبة لطلب الإلغاء.',
+  TARGET_STATUS_INVALID: 'الحالة المستهدفة لطلب الإلغاء غير صالحة.',
+  TARGET_STATUS_FORBIDDEN_FOR_ARCHIVE: 'لا يمكن تحديد حالة مستهدفة لطلب الأرشفة.',
+  SELF_APPROVAL_REJECTED: 'لا يمكن اعتماد طلبك الشخصي بموجب قواعد الموافقة الثنائية.',
+  ALREADY_FINALIZED: 'تم اعتماد أو إنهاء هذا الطلب مسبقًا.',
+  REQUEST_WORK_MISMATCH: 'مستند الطلب لا يتطابق مع العمل الحالي.',
+  REQUEST_NOT_FOUND: 'الطلب غير موجود.',
+  ACTION_REQUIRED: 'العملية المطلوبة غير محددة.',
+  ACTION_INVALID: 'العملية المطلوبة غير مدعومة.',
 };
 const WORK_STATUS_LABELS = Object.freeze({
   NEW_REQUEST: 'طلب جديد',
@@ -163,7 +180,10 @@ async function authenticateExistingSession() {
     const token = await adapter.getToken();
     if (!token) { state.auth.status = 'signed_out'; render(); return; }
     const ping = await api('/private/ping');
-    state.auth.status = 'signed_in'; state.auth.email = adapter.email || ''; state.auth.role = ping.role || '';
+    state.auth.status = 'signed_in';
+    state.auth.uid = ping.uid || '';
+    state.auth.email = adapter.email || '';
+    state.auth.role = ping.role || '';
     await Promise.all([loadCatalogs(), loadDashboard()]);
     render();
   } catch (error) {
@@ -224,9 +244,296 @@ function customerPage() {
 }
 function workPage() {
   const work = state.selectedWork; if (!work) return loading(); const similar = work.similar || [];
-  return `<section class="detail-header"><div><h2>${escapeHtml(work.title)}</h2><div class="detail-meta"><span>المعرف: ${escapeHtml(idLabel(work.id))}</span><span>العميل: ${escapeHtml(customerName(work.customer_id))}</span><span>العلاقة: ${escapeHtml(work.relationship_kind)}</span><span>${badgeForWork(work)}</span></div></div><button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button></section>
+  const statusText = WORK_STATUS_LABELS[work.status] || work.status;
+
+  // Sort events chronologically: effective_at ASC, created_at ASC, id ASC
+  const sortedEvents = [...(work.events || [])].sort((a, b) => {
+    const d1 = new Date(a.effective_at).getTime();
+    const d2 = new Date(b.effective_at).getTime();
+    if (d1 !== d2) return d1 - d2;
+    const c1 = new Date(a.created_at).getTime();
+    const c2 = new Date(b.created_at).getTime();
+    if (c1 !== c2) return c1 - c2;
+    return String(a.id).localeCompare(String(b.id));
+  });
+
+  const ordinaryStatuses = [
+    'NEW_REQUEST', 'REQUIREMENT_REVIEW', 'NEEDS_PRICING', 'WAITING_CLIENT_RESPONSE',
+    'NEEDS_FOLLOW_UP', 'AGREED', 'IN_PROGRESS', 'WAITING_CUSTOMER_INFO',
+    'WAITING_REVIEW', 'REVISION_REQUIRED', 'PAUSED', 'COMPLETED', 'DELIVERED'
+  ];
+
+  const archiveDisplay = work.is_archived ? '✅ مؤرشف' : 'غير مؤرشف';
+
+  return `
+  <section class="detail-header">
+    <div>
+      <h2>${escapeHtml(work.title)}</h2>
+      <div class="detail-meta">
+        <span>المعرف: ${escapeHtml(idLabel(work.id))}</span>
+        <span>العميل: ${escapeHtml(customerName(work.customer_id))}</span>
+        <span>العلاقة: ${escapeHtml(work.relationship_kind)}</span>
+        <span>${badgeForWork(work)}</span>
+        <span class="badge ok">الحالة الحالية: ${escapeHtml(statusText)}</span>
+        <span class="badge ${work.is_archived ? 'ok' : 'unset'}">الأرشفة: ${escapeHtml(archiveDisplay)}</span>
+        <span class="badge ok">الإصدار: ${escapeHtml(work.version)}</span>
+      </div>
+    </div>
+    <button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button>
+  </section>
   ${softWarningsMarkup(work)}
-  <section class="grid grid-2"><article class="card"><h2>البيانات الحالية</h2><div class="fact-list"><li><strong>الدولة والجامعة</strong><span>${escapeHtml(work.country || '—')} — ${escapeHtml(work.university || 'غير متاحة')}</span></li><li><strong>النوع والتخصص</strong><span>${escapeHtml(work.work_type_key || 'غير محدد')} — ${escapeHtml(work.specialty_key || 'غير محدد')}</span></li><li><strong>المادة/الرمز</strong><span>${escapeHtml(work.subject_or_course_code || 'غير متاح')}</span></li><li><strong>الوصف</strong><span>${escapeHtml(work.description || 'لا يوجد وصف')}</span></li></div></article><article class="card"><h2>أعمال مشابهة متاحة للقراءة</h2><p>لا تظهر أي حركة تسعير أو موافقات؛ هذه حدود قراءة S4 فقط.</p>${similar.length ? `<ul class="fact-list">${similar.map(item => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.work_type_key || 'غير محدد')} — ${dateLabel(item.created_at)} — ${item.price_state === 'PRICE_UNSET' ? 'سعر غير محدد' : 'سعر صفري'}</span></li>`).join('')}</ul>` : empty('لا توجد أعمال مشابهة ضمن البيانات المتاحة.')}</article></section>`;
+
+  <section class="grid grid-2" data-execution-collection-separation>
+    <article class="card" data-execution-status>
+      <h2>حالة التنفيذ</h2>
+      <p>الحالة السلطوية الحالية للعمل هي:</p>
+      <div class="badge ok">${escapeHtml(statusText)}</div>
+      <p class="hint">تُغيّر عبر مسارات التنفيذ وسجل الحالات فقط.</p>
+    </article>
+    <article class="card" data-collection-status>
+      <h2>حالة التحصيل</h2>
+      <p>لا توجد حالة تحصيل مشتقة أو مخترعة داخل S5.</p>
+      <p class="hint">المصدر المالي الحاكم غير متاح ضمن S5؛ سيأتي من S7. لا تُشتق هذه الحدود من <code>price_state</code>.</p>
+    </article>
+  </section>
+
+  <section class="grid grid-2">
+    <article class="card">
+      <h2>البيانات الحالية</h2>
+      <div class="fact-list">
+        <li><strong>الدولة والجامعة</strong><span>${escapeHtml(work.country || '—')} — ${escapeHtml(work.university || 'غير متاحة')}</span></li>
+        <li><strong>النوع والتخصص</strong><span>${escapeHtml(work.work_type_key || 'غير محدد')} — ${escapeHtml(work.specialty_key || 'غير محدد')}</span></li>
+        <li><strong>المادة/الرمز</strong><span>${escapeHtml(work.subject_or_course_code || 'غير متاح')}</span></li>
+        <li><strong>الوصف</strong><span>${escapeHtml(work.description || 'لا يوجد وصف')}</span></li>
+      </div>
+    </article>
+    <article class="card">
+      <h2>أعمال مشابهة متاحة للقراءة</h2>
+      <p>لا تظهر أي حركة تسعير أو موافقات؛ هذه حدود قراءة S4 فقط.</p>
+      ${similar.length ? `<ul class="fact-list">${similar.map(item => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.work_type_key || 'غير محدد')} — ${dateLabel(item.created_at)} — ${item.price_state === 'PRICE_UNSET' ? 'سعر غير حدد' : 'سعر صفري'}</span></li>`).join('')}</ul>` : empty('لا توجد أعمال مشابهة ضمن البيانات المتاحة.')}
+    </article>
+  </section>
+
+  <!-- S5 PR-B BUSINESS FLOWS -->
+  <section class="grid grid-2" style="margin-top: 1.5rem;">
+    <!-- CARD 1: EVENTS -->
+    <article class="card">
+      <h2>أحداث العمل</h2>
+      <p>تسجيل زمني لكافة الأنشطة والاتصالات المرتبطة بالعمل.</p>
+      <form id="s5-event-form" class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
+        <div class="field">
+          <label>النوع <span class="required">*</span></label>
+          <input class="input" name="event_type" required placeholder="مثال: اتصال، اجتماع، استلام" />
+        </div>
+        <div class="field">
+          <label>تاريخ ووقت الحدث <span class="required">*</span></label>
+          <input class="input" name="effective_at" type="datetime-local" required />
+        </div>
+        <div class="field full">
+          <label>الوصف <span class="required">*</span></label>
+          <input class="input" name="description" required placeholder="تفاصيل الحدث..." />
+        </div>
+        <div class="form-actions full">
+          <button class="button" type="submit" ${state.busy ? 'disabled' : ''}>إضافة حدث</button>
+        </div>
+      </form>
+      <div id="s5-events-list">
+        ${sortedEvents.length ? `
+          <ul class="fact-list">
+            ${sortedEvents.map(ev => `
+              <li>
+                <strong>${escapeHtml(ev.event_type)}</strong>
+                <span>الوصف: ${escapeHtml(ev.description)}</span>
+                <span style="font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem;">
+                  بواسطة: ${escapeHtml(idLabel(ev.actor_uid))} | وقت الحدث: ${dateTimeLabel(ev.effective_at)} | تاريخ التسجيل: ${dateTimeLabel(ev.created_at)}
+                </span>
+              </li>
+            `).join('')}
+          </ul>
+        ` : empty('لا توجد أحداث مسجلة لهذا العمل.')}
+      </div>
+    </article>
+
+    <!-- CARD 2: TITLE & EXECUTION STATUS CHANGES -->
+    <article class="card">
+      <!-- TITLE SECTION -->
+      <h2>تغيير العنوان وتاريخه</h2>
+      <p>يتطلب سببًا إلزاميًا لحفظ التغيير وتسجيله تاريخيًا.</p>
+      <form id="s5-title-form" class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
+        <div class="field">
+          <label>العنوان الجديد <span class="required">*</span></label>
+          <input class="input" name="new_title" required placeholder="أدخل العنوان الجديد..." />
+        </div>
+        <div class="field">
+          <label>سبب التغيير <span class="required">*</span></label>
+          <input class="input" name="reason" required placeholder="السبب الإلزامي..." />
+        </div>
+        <div class="form-actions full" style="margin-top: 0.5rem;">
+          <button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تحديث العنوان</button>
+        </div>
+      </form>
+      <div id="s5-title-history" style="margin-bottom: 2rem;">
+        <h4>سجل تغيير العناوين</h4>
+        ${work.titleHistory && work.titleHistory.length ? `
+          <ul class="fact-list">
+            ${work.titleHistory.map(th => `
+              <li>
+                <strong>العنوان القديم: ${escapeHtml(th.old_title)} ← الجديد: ${escapeHtml(th.new_title)}</strong>
+                <span>سبب التغيير: ${escapeHtml(th.reason)}</span>
+                <span style="font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem;">
+                  بواسطة: ${escapeHtml(idLabel(th.changed_by))} | وقت التغيير: ${dateTimeLabel(th.changed_at)}
+                </span>
+              </li>
+            `).join('')}
+          </ul>
+        ` : empty('لا يوجد تاريخ لتغييرات العنوان.')}
+      </div>
+
+      <hr style="border: 0; border-top: 1px solid var(--line); margin: 2rem 0;"/>
+
+      <!-- STATUS SECTION -->
+      <h2>تغيير حالة التنفيذ العادية</h2>
+      <p>المسارات المباشرة للمراحل العادية للتنفيذ (تستثنى منها حالات الإلغاء).</p>
+      <form id="s5-status-form" class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
+        <div class="field">
+          <label>الحالة العادية <span class="required">*</span></label>
+          <select class="select" name="status" required>
+            <option value="">— اختر الحالة —</option>
+            ${ordinaryStatuses.map(s => `<option value="${s}" ${work.status === s ? 'selected' : ''}>${escapeHtml(WORK_STATUS_LABELS[s] || s)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>سبب التغيير <span class="required">*</span></label>
+          <input class="input" name="reason" required placeholder="السبب الإلزامي..." />
+        </div>
+        <div class="form-actions full" style="margin-top: 0.5rem;">
+          <button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تحديث الحالة</button>
+        </div>
+      </form>
+      <div id="s5-status-history">
+        <h4>سجل تغيير حالات التنفيذ</h4>
+        ${work.statusHistory && work.statusHistory.length ? `
+          <ul class="fact-list">
+            ${work.statusHistory.map(sh => `
+              <li>
+                <strong>الحالة القديمة: ${escapeHtml(WORK_STATUS_LABELS[sh.old_status] || sh.old_status)} ← الجديدة: ${escapeHtml(WORK_STATUS_LABELS[sh.new_status] || sh.new_status)}</strong>
+                <span>السبب: ${escapeHtml(sh.reason)}</span>
+                <span style="font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem;">
+                  بواسطة: ${escapeHtml(idLabel(sh.changed_by))} | وقت التغيير: ${dateTimeLabel(sh.changed_at)}
+                </span>
+              </li>
+            `).join('')}
+          </ul>
+        ` : empty('لا يوجد تاريخ لتغييرات الحالة.')}
+      </div>
+    </article>
+  </section>
+
+  <section class="grid grid-2" style="margin-top: 1.5rem;">
+    <!-- CARD 3: REQUESTS GOVERNED FLOW (CANCEL / ARCHIVE) -->
+    <article class="card">
+      <h2>طلبات الإلغاء والأرشفة (تحتاج موافقة الحساب الآخر)</h2>
+      <p>يتطلب الإلغاء والأرشفة موافقة ثنائية مستقلة من الحساب الآخر (المستندة إلى دورة موافقة الطرفين).</p>
+
+      <!-- CANCEL REQUEST FORM -->
+      <div style="background: var(--canvas); padding: 1rem; border-radius: 12px; margin-top: 1rem;">
+        <h3>تقديم طلب إلغاء</h3>
+        <form id="s5-cancel-form" class="form-grid" style="margin-top: 0.5rem;">
+          <div class="field">
+            <label>الحالة المستهدفة لطلب الإلغاء <span class="required">*</span></label>
+            <select class="select" name="target_execution_status" required>
+              <option value="">— اختر الحالة المستهدفة —</option>
+              <option value="CANCELLED_BEFORE_EXECUTION">${escapeHtml(WORK_STATUS_LABELS.CANCELLED_BEFORE_EXECUTION)}</option>
+              <option value="PARTIALLY_STOPPED">${escapeHtml(WORK_STATUS_LABELS.PARTIALLY_STOPPED)}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>سبب طلب الإلغاء <span class="required">*</span></label>
+            <input class="input" name="reason" required placeholder="السبب الإلزامي..." />
+          </div>
+          <div class="form-actions full" style="margin-top: 0.5rem;">
+            <button class="button danger" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب إلغاء</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ARCHIVE REQUEST FORM -->
+      <div style="background: var(--canvas); padding: 1rem; border-radius: 12px; margin-top: 1rem; margin-bottom: 2rem;">
+        <h3>تقديم طلب أرشفة</h3>
+        <form id="s5-archive-form" class="form-grid" style="margin-top: 0.5rem;">
+          <div class="field full">
+            <label>سبب طلب الأرشفة <span class="required">*</span></label>
+            <input class="input" name="reason" required placeholder="السبب الإلزامي..." />
+          </div>
+          <div class="form-actions full" style="margin-top: 0.5rem;">
+            <button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب أرشفة</button>
+          </div>
+        </form>
+      </div>
+
+      <div>
+        <h4>قائمة طلبات الموافقة المعلقة والتاريخية</h4>
+        ${work.requests && work.requests.length ? `
+          <div class="fact-list" style="display: grid; gap: 0.75rem;">
+            ${work.requests.map(req => {
+              const isPending = req.state === 'PENDING';
+              const isSelf = req.requested_by === state.auth.uid;
+              const actionLabel = req.action === 'CANCEL' ? 'إلغاء' : 'أرشفة';
+              const targetLabel = req.target_execution_status ? ` ← ${escapeHtml(WORK_STATUS_LABELS[req.target_execution_status] || req.target_execution_status)}` : '';
+              return `
+                <div style="border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; background: ${isPending ? 'var(--warning-soft)' : 'var(--success-soft)'};">
+                  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                    <strong>طلب ${actionLabel}${targetLabel}</strong>
+                    <span class="badge ${isPending ? 'unset' : 'ok'}">${isPending ? 'معلق بانتظار الاعتماد' : 'تم الاعتماد ومطابقة الطلب'}</span>
+                  </div>
+                  <div style="font-size: 0.75rem; margin-top: 0.35rem;"><strong>السبب:</strong> ${escapeHtml(req.reason)}</div>
+                  <div style="font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem;">
+                    الطالب: ${escapeHtml(idLabel(req.requested_by))} | وقت الطلب: ${dateTimeLabel(req.requested_at)}
+                  </div>
+                  ${req.approved_by ? `
+                    <div style="font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem;">
+                      المعتمد: ${escapeHtml(idLabel(req.approved_by))} | وقت الاعتماد: ${dateTimeLabel(req.approved_at)}
+                    </div>
+                  ` : ''}
+                  ${isPending ? `
+                    <div style="margin-top: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                      ${isSelf ? `
+                        <span class="badge warn" style="font-size: 0.65rem;">بانتظار اعتماد الحساب الآخر (لا يمكنك اعتماد طلبك بموجب الموافقة الثنائية)</span>
+                      ` : `
+                        <button class="button" data-action="approve-request" data-request-id="${req.id}" style="min-height: 28px; padding: 0.2rem 0.6rem; font-size: 0.7rem; background: var(--teal);" ${state.busy ? 'disabled' : ''}>اعتماد الطلب</button>
+                      `}
+                    </div>
+                  ` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : empty('لا توجد طلبات معلقة أو معتمدة.')}
+      </div>
+    </article>
+
+    <!-- CARD 4: ARCHIVE HISTORY -->
+    <article class="card">
+      <h2>تاريخ عمليات الأرشفة</h2>
+      <p>السجل الدائم والكامل لعمليات أرشفة هذا العمل (مستقل عن حالة التنفيذ الجارية).</p>
+      <div id="s5-archive-history" style="margin-top: 1rem;">
+        ${work.archiveHistory && work.archiveHistory.length ? `
+          <ul class="fact-list">
+            ${work.archiveHistory.map(ah => `
+              <li>
+                <strong>أرشفة كاملة ومؤمنة للعمل</strong>
+                <span>السبب والمبرر: ${escapeHtml(ah.reason)}</span>
+                <span style="font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem;">
+                  بواسطة: ${escapeHtml(idLabel(ah.archived_by))} | وقت الأرشفة: ${dateTimeLabel(ah.archived_at)}
+                </span>
+              </li>
+            `).join('')}
+          </ul>
+        ` : empty('لم يتم أرشفة هذا العمل من قبل.')}
+      </div>
+    </article>
+  </section>
+  `;
 }
 function modalMarkup() {
   if (!state.modal) return '';
@@ -302,6 +609,12 @@ function bindShell() {
   document.querySelectorAll('[data-action="close-modal"]').forEach(button => button.addEventListener('click', () => { state.modal = null; render(); }));
   document.querySelector('#customer-search')?.addEventListener('input', async event => { try { state.customers = await api(`/api/customers${queryString({ q: event.target.value })}`); render(); } catch (error) { toast(errorMessage(error.code), 'error'); } });
   bindModalForms();
+  document.querySelector('#s5-event-form')?.addEventListener('submit', submitEvent);
+  document.querySelector('#s5-title-form')?.addEventListener('submit', submitTitle);
+  document.querySelector('#s5-status-form')?.addEventListener('submit', submitStatus);
+  document.querySelector('#s5-cancel-form')?.addEventListener('submit', submitCancel);
+  document.querySelector('#s5-archive-form')?.addEventListener('submit', submitArchive);
+  document.querySelectorAll('[data-action="approve-request"]').forEach(button => button.addEventListener('click', () => handleApproveRequest(button.dataset.requestId)));
 }
 function formObject(form) { return Object.fromEntries(new FormData(form).entries()); }
 function nullable(value) { return value === '' ? null : value; }
@@ -356,8 +669,7 @@ async function submitWork(event) {
     const result = values.id ? await api(`/api/works/${encodeURIComponent(values.id)}`, { method: 'PATCH', body: { ...body, version: Number(values.version) } }) : await api('/api/works', { method: 'POST', body });
     state.modal = null;
     await loadDashboard();
-    await openWork(result.id);
-    toast(values.id ? 'تم تحديث العمل.' : 'تم إنشاء العمل بسعر غير محدد.', '');
+    await refreshWorkAfterMutation(result.id, values.id ? 'تم تحديث العمل.' : 'تم إنشاء العمل بسعر غير محدد.');
   });
 }
 async function submitCatalog(event) { event.preventDefault(); const values = formObject(event.currentTarget); await submitFlow(async () => { await api(`/api/catalog/${encodeURIComponent(values.kind)}`, { method: 'POST', body: { value_key: values.value_key, label: values.label } }); state.modal = null; await loadCatalogs(); render(); toast('أضيفت القيمة وأصبحت متاحة دون تعديل source code.', ''); }); }
@@ -392,7 +704,193 @@ async function refreshWorkCustomerContext(customerId, data = {}) {
 async function submitFlow(action) { if (state.busy) return; setBusy(true); try { await action(); } catch (error) { toast(errorMessage(error.code), 'error'); } finally { setBusy(false); } }
 async function refreshForView() { try { if (state.view === 'dashboard' || state.view === 'customers' || state.view === 'works') await loadDashboard(); if (state.view === 'catalogs') await loadCatalogs(); render(); } catch (error) { toast(errorMessage(error.code), 'error'); } }
 async function openCustomer(customerId) { try { state.selectedCustomer = null; state.view = 'customer'; render(); const [customer, works, history, warnings] = await Promise.all([api(`/api/customers/${encodeURIComponent(customerId)}`), api(`/api/works${queryString({ customer_id: customerId })}`), api(`/api/customers/${encodeURIComponent(customerId)}/history`), api(`/api/customers/${encodeURIComponent(customerId)}/warnings`)]); state.selectedCustomer = { ...customer, works, history, warnings }; render(); } catch (error) { toast(errorMessage(error.code), 'error'); state.view = 'customers'; render(); } }
-async function openWork(workId) { try { state.selectedWork = null; state.view = 'work'; render(); const [work, similar] = await Promise.all([api(`/api/works/${encodeURIComponent(workId)}`), api(`/api/works/${encodeURIComponent(workId)}/similar`)]); state.selectedWork = { ...work, similar }; render(); } catch (error) { toast(errorMessage(error.code), 'error'); state.view = 'works'; render(); } }
+async function refreshWorkAfterMutation(workId, successMessage) {
+  const refreshed = await openWork(workId, { reason: 'post-mutation' });
+  if (refreshed) toast(successMessage, '');
+  return refreshed;
+}
+async function openWork(workId, { reason = 'navigation' } = {}) {
+  try {
+    state.selectedWork = null;
+    state.view = 'work';
+    render();
+    const [work, similar, events, titleHistory, statusHistory, archiveHistory, requests] = await Promise.all([
+      api(`/api/works/${encodeURIComponent(workId)}`),
+      api(`/api/works/${encodeURIComponent(workId)}/similar`),
+      api(`/api/works/${encodeURIComponent(workId)}/events`),
+      api(`/api/works/${encodeURIComponent(workId)}/title-history`),
+      api(`/api/works/${encodeURIComponent(workId)}/status-history`),
+      api(`/api/works/${encodeURIComponent(workId)}/archive-history`),
+      api(`/api/works/${encodeURIComponent(workId)}/requests`)
+    ]);
+    state.selectedWork = {
+      ...work,
+      similar,
+      events,
+      titleHistory,
+      statusHistory,
+      archiveHistory,
+      requests
+    };
+    render();
+    return true;
+  } catch (error) {
+    toast(errorMessage(reason === 'post-mutation' ? 'POST_MUTATION_REFRESH_FAILED' : error.code), 'error');
+    state.view = 'works';
+    render();
+    return false;
+  }
+}
 
-if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, workPage, softWarningsMarkup, softWarningLabel, openWork, openNewWork, refreshWorkCustomerContext, preAgreementCanSubmitNewWork, preAgreementContextMarkup, submitWork, errorMessage });
+async function submitEvent(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = formObject(form);
+  const parsed = new Date(values.effective_at);
+  if (!Number.isFinite(parsed.getTime())) {
+    toast(errorMessage('EVENT_TIME_INVALID'), 'error');
+    return;
+  }
+  await submitFlow(async () => {
+    await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/events`, {
+      method: 'POST',
+      body: {
+        event_type: values.event_type,
+        description: values.description,
+        effective_at: parsed.toISOString()
+      }
+    });
+    await refreshWorkAfterMutation(state.selectedWork.id, 'تم تسجيل الحدث بنجاح.');
+  });
+}
+
+async function submitTitle(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = formObject(form);
+  const version = state.selectedWork.version;
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/title`, {
+        method: 'POST',
+        body: {
+          version,
+          new_title: values.new_title,
+          reason: values.reason
+        }
+      });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تحديث عنوان العمل والتاريخ بنجاح.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
+        toast(errorMessage('VERSION_CONFLICT'), 'error');
+        await openWork(state.selectedWork.id);
+      } else {
+        throw error;
+      }
+    }
+  });
+}
+
+async function submitStatus(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = formObject(form);
+  const version = state.selectedWork.version;
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/status`, {
+        method: 'POST',
+        body: {
+          version,
+          status: values.status,
+          reason: values.reason
+        }
+      });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تحديث حالة التنفيذ بنجاح.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
+        toast(errorMessage('VERSION_CONFLICT'), 'error');
+        await openWork(state.selectedWork.id);
+      } else {
+        throw error;
+      }
+    }
+  });
+}
+
+async function submitCancel(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = formObject(form);
+  const version = state.selectedWork.version;
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/requests`, {
+        method: 'POST',
+        body: {
+          version,
+          action: 'CANCEL',
+          reason: values.reason,
+          target_execution_status: values.target_execution_status
+        }
+      });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تقديم طلب الإلغاء، بانتظار موافقة الحساب الآخر.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
+        toast(errorMessage('VERSION_CONFLICT'), 'error');
+        await openWork(state.selectedWork.id);
+      } else {
+        throw error;
+      }
+    }
+  });
+}
+
+async function submitArchive(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = formObject(form);
+  const version = state.selectedWork.version;
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/requests`, {
+        method: 'POST',
+        body: {
+          version,
+          action: 'ARCHIVE',
+          reason: values.reason
+        }
+      });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تقديم طلب الأرشفة، بانتظار موافقة الحساب الآخر.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
+        toast(errorMessage('VERSION_CONFLICT'), 'error');
+        await openWork(state.selectedWork.id);
+      } else {
+        throw error;
+      }
+    }
+  });
+}
+
+async function handleApproveRequest(reqId) {
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/requests/${encodeURIComponent(reqId)}/approve`, {
+        method: 'POST',
+        body: {}
+      });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم اعتماد الطلب وتطبيقه بنجاح بموجب الموافقة الثنائية.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
+        toast(errorMessage('VERSION_CONFLICT'), 'error');
+        await openWork(state.selectedWork.id);
+      } else {
+        throw error;
+      }
+    }
+  });
+}
+
+if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, workPage, softWarningsMarkup, softWarningLabel, openWork, authenticateExistingSession, openNewWork, refreshWorkCustomerContext, preAgreementCanSubmitNewWork, preAgreementContextMarkup, submitWork, errorMessage, submitEvent, submitTitle, submitStatus, submitCancel, submitArchive, handleApproveRequest });
 authenticateExistingSession();
