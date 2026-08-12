@@ -8,7 +8,8 @@
 - SHA-256 المعتمد: `6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b`.
 - حجم المرجع: `63710` بايت.
 - القرارات اللاحقة الحاكمة: `docs/DECISION_LOG.md`.
-- هذه الحالة تصبح حالة `main` المعتمدة عند Squash-merge لـPR #70 واجتياز التحقق اللاحق للدمج.
+- آخر `main` تنفيذي متحقق منه قبل بوابة الإغلاق الإدارية S6 هو `0de57ef07f015506c0ef9afa9956413916743442` الناتج من Squash-merge لـPR #72.
+- PR #73 هي بوابة تحقق/إغلاق إدارية docs-only؛ تصبح حالة S6 أدناه نافذة بعد نجاح final-head CI، Squash-merge، التحقق من `main` بعد الدمج، وإغلاق Issue #5.
 
 ## حالة المراحل
 
@@ -16,10 +17,12 @@
 - `S2 = CLOSED_COMPLETE`.
 - `S3 = CLOSED_BLOCKED_DEFERRED` وفق D-008؛ لا يحول أي `NOT_REACHED` إلى PASS ولا يعلن S3 COMPLETE.
 - `S4 = CLOSED_COMPLETE`.
-- `S5 = CLOSED_COMPLETE` بعد إتمام بوابة الإغلاق PR #70 والتحقق اللاحق للدمج.
-- `S5_COMPLETE = TRUE` بعد إتمام الشرط السابق.
-- `S6 = AUTHORIZED_NOT_STARTED` بعد إغلاق Issue #4؛ لا يبدأ التنفيذ إلا بتفويض S6 مستقل ومن baseline نهائي متحقق منه.
-- `S7..S11 = NOT_STARTED` ضمن نطاقاتها المقررة.
+- `S5 = CLOSED_COMPLETE`.
+- `S5_COMPLETE = TRUE`.
+- `S6 = CLOSED_COMPLETE` بعد اكتمال بوابة الإغلاق PR #73 والشروط المذكورة أعلاه.
+- `S6_COMPLETE = TRUE` بعد اكتمال الشرط السابق.
+- `S7 = AUTHORIZED_NOT_STARTED` بعد إغلاق Issue #5؛ التنفيذ يحتاج تعليمات S7 `FINAL_ACTIVATED` مرتبطة بالـmain النهائي بعد S6.
+- `S8..S11 = NOT_STARTED` ضمن نطاقاتها المقررة.
 
 ## S4 — آخر إقفال سابق
 
@@ -79,18 +82,15 @@
 - Base main SHA: `6c35fad443f6ce90ba3834784ac471372c2df8ec`.
 - النطاق: توثيق تحقق S5 النهائي، تحديث الحالة الإدارية، تحديث ملخص الإشراف ومصفوفة التتبع فقط؛ لا تغيير runtime ولا بدء S6.
 - Evidence: `docs/s5/S5_FINAL_VERIFICATION.md`.
-- الإقفال يصبح نافذًا بعد final-head CI + مراجعة مستقلة + Squash merge + تحقق `main` بعد الدمج + إغلاق Issue #4.
 
 ## حكم S5 النهائي
-
-بناءً على PR-A وPR-B والتحقق المستقل:
 
 - `FR-007 = PASS`.
 - `FR-008 = PASS`.
 - `FR-023_S5_PORTION = PASS`؛ إعادة التحقق في البحث/التحليلات/الاستعادة تبقى في المراحل المسندة لها.
 - `AC-03 = PASS`.
 - `AC-12 = PASS`.
-- `P-05_S5_CANCEL_ARCHIVE = PASS`؛ جزء تعديل السعر يبقى S6.
+- `P-05_S5_CANCEL_ARCHIVE = PASS`.
 - `EXECUTION_COLLECTION_SEPARATION = PASS` دون اختراع collection state.
 - `NO_HARD_DELETE = PASS`.
 - `DUAL_APPROVAL = PASS`.
@@ -98,7 +98,80 @@
 - `AUDIT_HISTORY_APPEND_ONLY = PASS`.
 - `SOURCE_PACKAGE_PARITY = PASS`.
 - `S4_REGRESSION = PASS`.
-- `NO_S6_S7_SCOPE_LEAK = PASS`.
+- `CLOUD_WRITE = NO`.
+- `REAL_DATA = NO`.
+- `SECRETS_ADDED = NO`.
+
+## S6 — Issue #5
+
+النطاق الحاكم:
+
+- FR-009 — الحركات السعرية الموثقة والسعر الحالي.
+- FR-010 — إعادة الحساب والحصص من السعر المعتمد.
+- FR-017 — النسبة الافتراضية 30/70 والاستثناء الموثق وفق D-009.
+- AC-02 — السعر الأساسي والتعديلات المتتابعة مع التاريخ الصحيح.
+- P-05 — جزء تعديل السعر بموافقتين من حسابين مختلفين.
+- D-012 — تقريب كل حصة بشكل مستقل إلى أقرب هللة، وexact 0.5 half-up.
+
+### PR-A — Financial Core
+
+- PR: #71.
+- Base main SHA: `c26c874c19054c610b273150d533938552036c42`.
+- Final reviewed head: `0b18c62cc0c8c5ab025b7473e5a23e3243babf63`.
+- Squash/main SHA: `281ca5490f9c498d0f34a71c6081e65108e89abe`.
+- Final-head CI: Foundation `31614196766` SUCCESS؛ S2 `31614196675` SUCCESS؛ S3 CPU Gate Static `31614196721` SUCCESS.
+- العقد التنفيذي: `docs/s6/S6_EXECUTION_CONTRACT.md`.
+
+### PR-B — Pricing UI / Acceptance / Read Integration
+
+- PR: #72.
+- Base main SHA: `281ca5490f9c498d0f34a71c6081e65108e89abe`.
+- Final reviewed head: `fdbd7f0fe21409849ad98a161aac4a3dde72bf8b`.
+- Squash/main SHA: `0de57ef07f015506c0ef9afa9956413916743442`.
+- Final-head CI:
+  - Foundation `31618901526` — SUCCESS.
+  - S2 architecture validation `31618901361` — SUCCESS.
+  - S3 CPU Gate Static `31618901360` — SUCCESS.
+- Post-merge:
+  - Foundation push run `31619376196` — SUCCESS.
+  - S3 CPU Gate Static push run `31619376114` — SUCCESS on attempt 2 on the identical main SHA. Attempt 1 stopped during pinned PowerShell download with transient `curl (56) Connection died`; no implementation/test step had started.
+- D1 Free-tier read repair verified:
+  - `listWorks` with 200 Works = 3 read queries and binding widths `[0,100,100]`.
+  - `getSimilarWorks` with 50 results = 3 read queries and binding widths `[1,6,50]`.
+  - no per-row pricing N+1 remains; each bulk price query uses at most 100 bindings.
+
+### PR-C — Final Verification / Administrative Closure
+
+- PR: #73.
+- Branch: `s6/pr-c-final-verification-closure`.
+- Base main SHA: `0de57ef07f015506c0ef9afa9956413916743442`.
+- النطاق: docs/admin only؛ لا runtime، لا Cloud write، لا S7 implementation.
+- Evidence: `docs/s6/S6_FINAL_VERIFICATION.md`.
+- الإقفال يصبح نافذًا فقط بعد final-head CI + مراجعة مستقلة + Squash merge + تحقق `main` بعد الدمج + إغلاق Issue #5 completed.
+
+## حكم S6 النهائي
+
+- `FR-009 = PASS`.
+- `FR-010 = PASS`.
+- `FR-017 = PASS`.
+- `AC-02 = PASS`.
+- `P-05_S6_PRICE_CHANGE = PASS`.
+- `DEFAULT_RATIO_30_70 = PASS`.
+- `D009_RATIO_DUAL_APPROVAL = PASS`.
+- `D012_ROUNDING = PASS`.
+- `PENDING_NO_EFFECT = PASS`.
+- `SELF_APPROVAL_REJECTED = PASS`.
+- `STALE_DUPLICATE_SAFE = PASS`.
+- `PRICE_PREVIOUS_NEW_HISTORY = PASS`.
+- `AUTHORITATIVE_S6_PRICE_READ_MODEL = PASS`.
+- `LEGACY_S4_PRICE_FIELDS_NON_AUTHORITATIVE = PASS`.
+- `D1_QUERY_BUDGET = PASS`.
+- `API_SPA_ENVELOPE = PASS`.
+- `POST_MUTATION_AUTHORITATIVE_REFETCH = PASS`.
+- `SOURCE_PACKAGE_PARITY = PASS`.
+- `S4_S5_REGRESSION = PASS`.
+- `NO_S7_SCOPE_LEAK = PASS`.
+- `S6_NEGATIVE_FINAL_PRICE_POLICY = UNRESOLVED_FAIL_CLOSED`؛ لا قرار منتج مخترع ولا أثر مالي عند الرفض.
 - `CLOUD_WRITE = NO`.
 - `REAL_DATA = NO`.
 - `SECRETS_ADDED = NO`.
@@ -109,17 +182,17 @@
 - `Q-002 = RESOLVED` عبر D-010: تصحيح/إلغاء دفعة بقيد عكسي موثق وموافقتين؛ S7.
 - `Q-003 = RESOLVED` عبر D-011: monthly soft-close وإعادة فتح استثنائية بموافقتين؛ S7.
 - `Q-004 = RESOLVED` عبر D-012: nearest halala وexact 0.5 tie = half-up.
-- D-013 كان استثناءً تشغيليًا خاصًا بـS5 فقط ولا ينتقل إلى S6.
+- D-013 كان استثناءً تشغيليًا خاصًا بـS5 فقط ولا ينتقل إلى S6 أو S7.
 
 ## المرحلة التالية
 
-بعد اكتمال دمج PR #70 وإغلاق Issue #4:
+بعد اكتمال دمج PR #73 وإغلاق Issue #5:
 
-- Issue #5 — `[S6] الأسعار وطلبات الموافقة الثنائية` يبقى مفتوحًا.
-- `NEXT_STAGE = S6`.
-- `NEXT_ACTION = START_S6_PR_A_ONLY_AFTER_EXPLICIT_S6_ACTIVATION`.
-- يجب أن يبدأ S6 من SHA `main` الناتج بعد دمج PR #70، لا من SHA قديم ولا من فرع S5.
-- لا يبدأ S7 أو أي Cloud write تلقائيًا.
+- Issue #6 — `[S7] الدفعات والتسويات والمصاريف` يبقى مفتوحًا.
+- `NEXT_STAGE = S7`.
+- `NEXT_ACTION = START_S7_PR_A_ONLY_AFTER_FINAL_ACTIVATED_INSTRUCTION`.
+- يجب أن يبدأ S7 من SHA `main` الناتج بعد دمج PR #73، لا من SHA PR #72 ولا من أي فرع S6.
+- لا Cloud write ولا stable promotion تلقائيًا.
 
 ## Stable refs
 
