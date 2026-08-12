@@ -49,6 +49,7 @@
     "src/worker/assets/index.html",
     "src/worker/assets/styles.css",
     "src/worker/src/index.js",
+    "src/worker/migrations/0005_s5_domain_data_api.sql",
     "tests/pester/Common.Tests.ps1",
     "tests/pester/CpuGate.Tests.ps1",
     "tests/pester/FirebaseProtoJsonRecordsCount.Tests.ps1",
@@ -67,6 +68,7 @@
     "tests/node/s4_gate2_ui.test.mjs",
     "tests/node/s4_gate3_final_verification.test.mjs",
     "tests/node/s4_final_supervisory_repair.test.mjs",
+    "tests/node/s5_pr_a_domain_data_api.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
@@ -82,6 +84,7 @@
     "worker/assets/app.js",
     "worker/assets/index.html",
     "worker/assets/styles.css",
-    "worker/src/index.js"
+    "worker/src/index.js",
+    "worker/migrations/0005_s5_domain_data_api.sql"
   ]
 }

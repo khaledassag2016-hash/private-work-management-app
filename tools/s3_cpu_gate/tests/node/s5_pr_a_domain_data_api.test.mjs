@@ -17,12 +17,15 @@ import worker, {
   listWorkTitleHistory,
   changeWorkStatus,
   listWorkStatusHistory,
+  listWorkArchiveHistory,
   createCancelArchiveRequest,
   approveCancelArchiveRequest,
   listCancelArchiveRequests,
+  updateWork,
 } from '../../src/worker/src/index.js';
 
 const schemaPath = fileURLToPath(new URL('../../src/worker/schema.sql', import.meta.url));
+const migrationPath = fileURLToPath(new URL('../../src/worker/migrations/0005_s5_domain_data_api.sql', import.meta.url));
 
 class D1Statement {
   constructor(database, sql) {
@@ -91,9 +94,8 @@ test('S5 FR-007: Work Events are unlimited, chronological, and append-only', asy
     assert.equal(events.length, 4);
     assert.equal(events[0].id, e1.id);
     assert.equal(events[1].id, e2.id);
-    const lastTwo = [events[2].id, events[3].id].sort();
-    const expectedLastTwo = [e3.id, e4.id].sort();
-    assert.deepEqual(lastTwo, expectedLastTwo);
+    const expectedLastTwo = [e3, e4].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)).map(event => event.id);
+    assert.deepEqual([events[2].id, events[3].id], expectedLastTwo);
 
     // Test malformed event timestamps are rejected
     await assert.rejects(createWorkEvent(env, 'uid-one', 'req-event-5', work.id, { event_type: 'COMMENT', description: 'Bad time', effective_at: 'not-a-date' }), /EVENT_TIME_INVALID/);
@@ -150,6 +152,9 @@ test('S5 FR-008: Work Title History records transitions and requires mandatory r
     // Stale version/lost update rejection
     await assert.rejects(changeWorkTitle(env, 'uid-one', 'req-title-4', work.id, { version: 1, new_title: 'Stale Title', reason: 'Stale update test' }), /VERSION_CONFLICT/);
 
+    await assert.rejects(updateWork(env, 'uid-one', 'req-title-bypass', work.id, { version: w2.version, title: 'PATCH bypass' }), /TITLE_CHANGE_OUT_OF_SCOPE/);
+    assert.equal((await listWorkTitleHistory(env, work.id)).length, 2);
+
     // Append-only enforcement on title history
     assert.throws(() => database.exec(`UPDATE work_title_history SET reason = 'tampered'`), /work_title_history is append only/);
     assert.throws(() => database.exec(`DELETE FROM work_title_history`), /work_title_history is append only/);
@@ -193,8 +198,9 @@ test('S5 Execution Status History: records transitions, enforces reason, and val
     // Invalid status rejected
     await assert.rejects(changeWorkStatus(env, 'uid-one', 'req-status-4', work.id, { version: w2.version, status: 'INVALID_STATUS', reason: 'Try to set fake status' }), /WORK_STATUS_INVALID/);
 
-    // Direct ARCHIVED is rejected by validateWorkStatus (blocked from direct status change)
+    // Direct archive and direct cancellation status are both rejected outside P-05.
     await assert.rejects(changeWorkStatus(env, 'uid-one', 'req-status-5', work.id, { version: w2.version, status: 'ARCHIVED', reason: 'Direct archive' }), /WORK_STATUS_INVALID/);
+    await assert.rejects(updateWork(env, 'uid-one', 'req-status-bypass', work.id, { version: w2.version, status: 'CANCELLED_BEFORE_EXECUTION' }), /STATUS_CHANGE_OUT_OF_SCOPE/);
 
     // Append-only enforcement on status history
     assert.throws(() => database.exec(`UPDATE work_status_history SET reason = 'tampered'`), /work_status_history is append only/);
@@ -205,7 +211,7 @@ test('S5 Execution Status History: records transitions, enforces reason, and val
 test('S5 Cancel / Archive Requests: Pending model, targets, and dual-approval mechanics', async () => {
   const { database, env } = fixture();
   try {
-    const { work } = await setupCustomerAndWork(env);
+    const { work, customer } = await setupCustomerAndWork(env);
 
     // Create a CANCEL request (User 1 requested)
     const cancelReq = await createCancelArchiveRequest(env, 'uid-one', 'req-cancel-1', work.id, { version: work.version, action: 'CANCEL', reason: 'Client withdrew', target_execution_status: 'CANCELLED_BEFORE_EXECUTION' });
@@ -221,6 +227,9 @@ test('S5 Cancel / Archive Requests: Pending model, targets, and dual-approval me
     const updatedWork = await changeWorkTitle(env, 'uid-one', 'req-title-mod', work.id, { version: work.version, new_title: 'Some New Title', reason: 'Title mod' });
     assert.equal(updatedWork.version, 2);
     await assert.rejects(approveCancelArchiveRequest(env, 'uid-two', 'req-approve-2', work.id, cancelReq.id), /STALE_VERSION/);
+
+    const other = await createWork(env, 'uid-one', 'work-create-2', { customer_id: customer.id, title: 'Other Work', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT' });
+    await assert.rejects(approveCancelArchiveRequest(env, 'uid-two', 'req-cross-work', other.id, cancelReq.id), /REQUEST_WORK_MISMATCH/);
 
     // Create a new CANCEL request with current version 2 (User 2 requests)
     const cancelReq2 = await createCancelArchiveRequest(env, 'uid-two', 'req-cancel-2', work.id, { version: updatedWork.version, action: 'CANCEL', reason: 'Client withdrew again', target_execution_status: 'PARTIALLY_STOPPED' });
@@ -261,12 +270,15 @@ test('S5 Archive Request: retains all historical records and blocks direct updat
 
     // User 2 approves User 1's archive request
     const approvedResult = await approveCancelArchiveRequest(env, 'uid-two', 'req-arch-app-1', work.id, archiveReq.id);
-    assert.equal(approvedResult.work.status, 'ARCHIVED');
+    assert.equal(approvedResult.work.status, workV2.status);
+    assert.equal(approvedResult.work.is_archived, true);
 
     // Archive retains all work records and does not delete anything!
     const archivedWork = await getWork(env, work.id);
     assert.equal(archivedWork.id, work.id);
-    assert.equal(archivedWork.status, 'ARCHIVED');
+    assert.equal(archivedWork.status, workV2.status);
+    assert.equal(archivedWork.is_archived, true);
+    assert.equal((await listWorkArchiveHistory(env, work.id)).length, 1);
 
     const events = await listWorkEvents(env, work.id);
     assert.equal(events.length, 1);
@@ -309,6 +321,45 @@ test('S5 Complete Audit Log check', async () => {
     assert.ok(titleAudit);
     assert.equal(titleAudit.actor_uid, 'uid-two');
   } finally { database.close(); }
+});
+
+test('S5 migration upgrades a populated S4-shaped database without losing data', () => {
+  const database = new DatabaseSync(':memory:');
+  try {
+    database.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE app_users (uid TEXT PRIMARY KEY, role TEXT NOT NULL, active INTEGER NOT NULL, run_marker TEXT NOT NULL);
+      CREATE TABLE works (
+        id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'IN_PROGRESS', version INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO app_users VALUES ('uid-one','person_1',1,'run-s5');
+      INSERT INTO works VALUES ('old-work','old-customer','Legacy work','IN_PROGRESS',4,'uid-one','2026-08-01T00:00:00.000Z','uid-one','2026-08-02T00:00:00.000Z');
+    `);
+    database.exec(readFileSync(migrationPath, 'utf8'));
+    const legacy = database.prepare('SELECT id, title, status, version FROM works WHERE id=?').get('old-work');
+    assert.equal(legacy.id, 'old-work');
+    assert.equal(legacy.title, 'Legacy work');
+    assert.equal(legacy.status, 'IN_PROGRESS');
+    assert.equal(legacy.version, 4);
+    const columns = database.prepare('PRAGMA table_info(works)').all().map(row => row.name);
+    assert.ok(columns.includes('archived_at'));
+    assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='work_archive_history'").get());
+    assert.throws(() => database.prepare("DELETE FROM works WHERE id='old-work'").run(), /hard delete is not allowed/);
+  } finally { database.close(); }
+});
+
+test('S5 source and packaged worker copies remain byte-for-byte identical', () => {
+  const sourceRoot = fileURLToPath(new URL('../../src/worker/', import.meta.url));
+  const packagedRoot = fileURLToPath(new URL('../../worker/', import.meta.url));
+  for (const relativePath of ['schema.sql', 'src/index.js', 'migrations/0005_s5_domain_data_api.sql']) {
+    assert.equal(
+      readFileSync(join(sourceRoot, relativePath), 'utf8'),
+      readFileSync(join(packagedRoot, relativePath), 'utf8'),
+      `worker mirror mismatch: ${relativePath}`,
+    );
+  }
 });
 
 
@@ -391,7 +442,11 @@ async function signToken(privateKey, kid, uid) {
   return `${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`;
 }
 
-test('S5 Endpoints are fully registered in handleApi and retrievable via fetch', async () => {
+const OPENSSL_AVAILABLE = (() => {
+  try { execFileSync('openssl', ['version'], { stdio: 'ignore' }); return true; } catch { return false; }
+})();
+
+test('S5 Endpoints are fully registered in handleApi and retrievable via fetch', { skip: !OPENSSL_AVAILABLE }, async () => {
   const { database, env } = fixture();
   const originalFetch = globalThis.fetch;
   try {

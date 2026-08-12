@@ -119,7 +119,6 @@ const WORK_STATUS_ALLOWLIST = Object.freeze([
   'PARTIALLY_STOPPED',
   'COMPLETED',
   'DELIVERED',
-  'ARCHIVED',
 ]);
 function newId(prefix) { return `${prefix}-${crypto.randomUUID()}`; }
 function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
@@ -256,7 +255,7 @@ function softWorkDetailWarnings(work) {
   return warnings;
 }
 function workReadModel(work) {
-  return { ...work, soft_warnings: softWorkDetailWarnings(work) };
+  return { ...work, is_archived: Boolean(work.archived_at), soft_warnings: softWorkDetailWarnings(work) };
 }
 function workMutationResponse(work) {
   return workReadModel(work);
@@ -345,6 +344,7 @@ export async function updateWork(env, actorUid, requestId, id, input) {
   const version = positiveVersion(input.version);
   if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
   if (input.price_state !== undefined || input.price_minor_units !== undefined) throw new DomainError('PRICING_OUT_OF_SCOPE', 400);
+  if (input.title !== undefined && input.title !== before.title) throw new DomainError('TITLE_CHANGE_OUT_OF_SCOPE', 400);
   const validated = await validateWorkInput(env, { ...input, customer_id: before.customer_id }, before);
   if (input.status !== undefined && input.status !== before.status) throw new DomainError('STATUS_CHANGE_OUT_OF_SCOPE', 400);
   const updatedAt = nowIso();
@@ -500,6 +500,9 @@ async function handleApi(request, env, requestId, scenario, user) {
     if (parts[3] === 'status-history' && method === 'GET') {
       return Response.json({ ok: true, data: await listWorkStatusHistory(env, workId), requestId });
     }
+    if (parts[3] === 'archive-history' && method === 'GET') {
+      return Response.json({ ok: true, data: await listWorkArchiveHistory(env, workId), requestId });
+    }
     if (parts[3] === 'requests') {
       if (parts.length === 4) {
         if (method === 'GET') return Response.json({ ok: true, data: await listCancelArchiveRequests(env, workId), requestId });
@@ -563,7 +566,8 @@ export async function changeWorkTitle(env, actorUid, requestId, workId, input) {
   const historyId = newId('title_hist');
   const workMutation = env.DB.prepare(`UPDATE works SET title=?1, version=version+1, updated_by=?2, updated_at=?3 WHERE id=?4 AND version=?5`).bind(newTitle, actorUid, changedAt, workId, version);
   const historyMutation = env.DB.prepare(`INSERT INTO work_title_history(id, work_id, old_title, new_title, reason, changed_at, changed_by, request_id)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`).bind(historyId, workId, before.title, newTitle, reason, changedAt, actorUid, requestId);
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+    WHERE EXISTS (SELECT 1 FROM works WHERE id=?2 AND version=?9 AND title=?4)`).bind(historyId, workId, before.title, newTitle, reason, changedAt, actorUid, requestId, version + 1);
   const after = { ...before, title: newTitle, updated_by: actorUid, updated_at: changedAt, version: version + 1 };
   const audit = auditStatement(env, 'work', workId, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, changedAt, true);
   const results = await executeBatch(env, [workMutation, historyMutation, audit]);
@@ -587,7 +591,8 @@ export async function changeWorkStatus(env, actorUid, requestId, workId, input) 
   const historyId = newId('status_hist');
   const workMutation = env.DB.prepare(`UPDATE works SET status=?1, version=version+1, updated_by=?2, updated_at=?3 WHERE id=?4 AND version=?5`).bind(newStatus, actorUid, changedAt, workId, version);
   const historyMutation = env.DB.prepare(`INSERT INTO work_status_history(id, work_id, old_status, new_status, reason, changed_at, changed_by, request_id)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`).bind(historyId, workId, before.status, newStatus, reason, changedAt, actorUid, requestId);
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+    WHERE EXISTS (SELECT 1 FROM works WHERE id=?2 AND version=?9 AND status=?4)`).bind(historyId, workId, before.status, newStatus, reason, changedAt, actorUid, requestId, version + 1);
   const after = { ...before, status: newStatus, updated_by: actorUid, updated_at: changedAt, version: version + 1 };
   const audit = auditStatement(env, 'work', workId, 'UPDATE', actorUid, before, after, env.RUN_MARKER, requestId, changedAt, true);
   const results = await executeBatch(env, [workMutation, historyMutation, audit]);
@@ -631,30 +636,64 @@ export async function approveCancelArchiveRequest(env, actorUid, requestId, work
   await ensureActor(env, actorUid);
   const requestRow = await env.DB.prepare('SELECT * FROM cancel_archive_requests WHERE id = ?1').bind(reqId).first();
   if (!requestRow) throw new DomainError('REQUEST_NOT_FOUND', 404);
+  if (requestRow.work_id !== workId) throw new DomainError('REQUEST_WORK_MISMATCH', 404);
   if (requestRow.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const beforeWork = await getWorkRaw(env, workId);
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
   const approvedAt = nowIso();
-  const newStatus = requestRow.action === 'CANCEL' ? requestRow.target_execution_status : 'ARCHIVED';
+  const newStatus = requestRow.action === 'CANCEL' ? requestRow.target_execution_status : beforeWork.status;
   const statusHistId = newId('status_hist');
+  const archiveHistId = newId('archive_hist');
 
-  const requestMutation = env.DB.prepare(`UPDATE cancel_archive_requests SET state='APPROVED', approved_by=?1, approved_at=?2 WHERE id=?3 AND state='PENDING'`).bind(actorUid, approvedAt, reqId);
-  const workMutation = env.DB.prepare(`UPDATE works SET status=?1, version=version+1, updated_by=?2, updated_at=?3 WHERE id=?4 AND version=?5`).bind(newStatus, actorUid, approvedAt, workId, beforeWork.version);
+  const workMutation = env.DB.prepare(`UPDATE works SET
+      status=?1,
+      archived_at=CASE WHEN ?2='ARCHIVE' THEN ?3 ELSE archived_at END,
+      archived_by=CASE WHEN ?2='ARCHIVE' THEN ?4 ELSE archived_by END,
+      archive_request_id=CASE WHEN ?2='ARCHIVE' THEN ?5 ELSE archive_request_id END,
+      version=version+1, updated_by=?4, updated_at=?3
+    WHERE id=?6 AND version=?7
+      AND EXISTS (SELECT 1 FROM cancel_archive_requests WHERE id=?5 AND work_id=?6 AND state='PENDING' AND work_version=?7 AND requested_by<>?4)`)
+    .bind(newStatus, requestRow.action, approvedAt, actorUid, reqId, workId, beforeWork.version);
+  const requestMutation = env.DB.prepare(`UPDATE cancel_archive_requests
+    SET state='APPROVED', approved_by=?1, approved_at=?2
+    WHERE id=?3 AND work_id=?4 AND state='PENDING' AND work_version=?5
+      AND EXISTS (SELECT 1 FROM works WHERE id=?4 AND version=?6)`)
+    .bind(actorUid, approvedAt, reqId, workId, beforeWork.version, beforeWork.version + 1);
   const historyMutation = env.DB.prepare(`INSERT INTO work_status_history(id, work_id, old_status, new_status, reason, changed_at, changed_by, request_id)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`).bind(statusHistId, workId, beforeWork.status, newStatus, `Approved ${requestRow.action} request: ${requestRow.reason}`, approvedAt, actorUid, requestId);
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+    WHERE ?9='CANCEL' AND EXISTS (SELECT 1 FROM cancel_archive_requests WHERE id=?10 AND state='APPROVED' AND approved_by=?7)`)
+    .bind(statusHistId, workId, beforeWork.status, newStatus, `Approved ${requestRow.action} request: ${requestRow.reason}`, approvedAt, actorUid, requestId, requestRow.action, reqId);
+  const archiveHistoryMutation = env.DB.prepare(`INSERT INTO work_archive_history(id, work_id, archived_at, archived_by, reason, request_id)
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6
+    WHERE ?7='ARCHIVE' AND EXISTS (SELECT 1 FROM works WHERE id=?2 AND archived_at=?3 AND archive_request_id=?8)`)
+    .bind(archiveHistId, workId, approvedAt, actorUid, requestRow.reason, requestId, requestRow.action, reqId);
 
-  const afterWork = { ...beforeWork, status: newStatus, updated_by: actorUid, updated_at: approvedAt, version: beforeWork.version + 1 };
+  const afterWork = {
+    ...beforeWork,
+    status: newStatus,
+    archived_at: requestRow.action === 'ARCHIVE' ? approvedAt : beforeWork.archived_at,
+    archived_by: requestRow.action === 'ARCHIVE' ? actorUid : beforeWork.archived_by,
+    archive_request_id: requestRow.action === 'ARCHIVE' ? reqId : beforeWork.archive_request_id,
+    updated_by: actorUid,
+    updated_at: approvedAt,
+    version: beforeWork.version + 1,
+  };
   const afterRequest = { ...requestRow, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt };
 
   const auditRequest = auditStatement(env, 'cancel_archive_request', reqId, 'UPDATE', actorUid, requestRow, afterRequest, env.RUN_MARKER, requestId + ':req', approvedAt, true);
   const auditWork = auditStatement(env, 'work', workId, 'UPDATE', actorUid, beforeWork, afterWork, env.RUN_MARKER, requestId + ':work', approvedAt, true);
 
-  const results = await executeBatch(env, [requestMutation, workMutation, historyMutation, auditRequest, auditWork]);
-  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1) {
+  const results = await executeBatch(env, [workMutation, requestMutation, historyMutation, archiveHistoryMutation, auditRequest, auditWork]);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || (requestRow.action === 'CANCEL' && Number(results[2]?.meta?.changes) !== 1) || (requestRow.action === 'ARCHIVE' && Number(results[3]?.meta?.changes) !== 1)) {
     throw new DomainError('TRANSACTION_FAILED', 409);
   }
   return { request: afterRequest, work: workReadModel(afterWork) };
+}
+
+export async function listWorkArchiveHistory(env, workId) {
+  await getWorkRaw(env, workId);
+  return (await env.DB.prepare('SELECT id, work_id, archived_at, archived_by, reason, request_id FROM work_archive_history WHERE work_id = ?1 ORDER BY archived_at ASC, id ASC').bind(workId).all()).results || [];
 }
 
 export async function listCancelArchiveRequests(env, workId) {

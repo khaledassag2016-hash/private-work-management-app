@@ -60,6 +60,12 @@ EXPECTED_COVERAGE = {
 }
 EXPECTED_OPEN_DECISIONS = set()
 EXPECTED_RESOLVED_DECISIONS = {"Q-001", "Q-002", "Q-003", "Q-004"}
+EXPECTED_DECISION_MAPPING = {
+    "Q-001": "D-009",
+    "Q-002": "D-010",
+    "Q-003": "D-011",
+    "Q-004": "D-012",
+}
 EXPECTED_RECORDED_DECISIONS = {f"D-{number:03d}" for number in range(1, 14)}
 
 
@@ -259,12 +265,30 @@ def main() -> int:
 
     decision_log = read_text("docs/DECISION_LOG.md")
     approved_decisions = set(re.findall(r"\bD-\d{3}\b", decision_log))
-    open_decisions = set(re.findall(r"\bQ-\d{3}\b", decision_log))
+    decision_rows = {
+        match.group(1): match.group(2)
+        for match in re.finditer(
+            r"^\|\s*(Q-\d{3})\s*\|.*?\|\s*(D-\d{3})\s*\|\s*([^|]+?)\s*\|\s*$",
+            decision_log,
+            flags=re.MULTILINE,
+        )
+    }
+    open_decisions = {
+        match.group(1)
+        for match in re.finditer(
+            r"^\|\s*(Q-\d{3})\s*\|.*?\|\s*([^|]+?)\s*\|\s*$",
+            decision_log,
+            flags=re.MULTILINE,
+        )
+        if match.group(2).strip() not in {"محسوم", "Resolved"}
+    }
     if approved_decisions != EXPECTED_RECORDED_DECISIONS:
         errors.append(
             f"DECISION LOG approved IDs mismatch: {sorted(approved_decisions)}"
         )
-    if open_decisions != EXPECTED_RESOLVED_DECISIONS:
+    if decision_rows != EXPECTED_DECISION_MAPPING:
+        errors.append(f"DECISION LOG Q-to-D mapping mismatch: {decision_rows}")
+    if open_decisions != EXPECTED_OPEN_DECISIONS:
         errors.append(f"DECISION LOG open IDs mismatch: {sorted(open_decisions)}")
 
     source_notes = read_text("docs/SOURCE_NOTES.md")
@@ -281,7 +305,7 @@ def main() -> int:
     for identifier in sorted(EXPECTED_RESOLVED_DECISIONS):
         if identifier not in project_rules:
             errors.append(
-                f"PROJECT RULES missing unresolved-decision guard: {identifier}"
+                f"PROJECT RULES missing resolved-decision reference: {identifier}"
             )
 
     text_extensions = {".md", ".py", ".txt", ".yml", ".yaml", ".json"}
