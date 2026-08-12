@@ -1,167 +1,135 @@
 # PROJECT_SUPERVISION_BRIEF
 
-> **الغرض:** ملخص إشرافي تشغيلي حديث للجلسات الجديدة. لا يستبدل المرجع الحاكم، بل يحدد ما يجب قراءته والحالة الحالية وكيفية الانتقال بين المراحل.
+> Operational supervisory handoff. This file does not replace the governing Word requirements or dated decisions.
 
-## 1. المشروع والمرجع الحاكم
+## 1. Governing order
 
-- المشروع: **Private Work Management App**.
-- المستودع الرسمي: `khaledassag2016-hash/private-work-management-app`.
-- المستودع خاص.
-- المستخدمان النهائيان: حسابان معتمدان فقط.
-- المرجع الحاكم الأعلى: `docs/APPROVED_REQUIREMENTS.docx`.
-- SHA-256 المعتمد: `6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b`.
-- الحجم: `63710` بايت.
+1. `docs/APPROVED_REQUIREMENTS.docx` — SHA-256 `6cb2e99449deb287b2008baf23e091efe45a89f3edfb15df721c933271d6b65b`, size 63710 bytes.
+2. `docs/DECISION_LOG.md`.
+3. `PROJECT_STATE.md`.
+4. `docs/TRACEABILITY_MATRIX.md`.
+5. Current stage Issue, execution contract and PR evidence.
 
-## 2. ترتيب الحاكمية
+Never substitute conversation memory, an agent report or `docs/REQUIREMENTS.md` for the governing Word file.
 
-عند أي اختلاف:
-
-1. `docs/APPROVED_REQUIREMENTS.docx` بالبصمة المعتمدة.
-2. القرارات المؤرخة في `docs/DECISION_LOG.md`.
-3. `PROJECT_STATE.md` للحالة التشغيلية الحالية.
-4. `docs/TRACEABILITY_MATRIX.md` لتوزيع المتطلبات والاختبارات.
-5. Issue المرحلة وعقود التنفيذ وPull Requests الخاصة بها.
-
-لا تعتمد على ذاكرة محادثة أو تقرير وكيل بدل GitHub الفعلي.
-
-## 3. الحالة الحالية
-
-هذه الحالة تصبح نافذة بعد نجاح final-head CI وSquash-merge لـPR #73 والتحقق من `main` بعد الدمج وإغلاق Issue #5:
+## 2. Current stage state
 
 - `S1 = CLOSED_COMPLETE`.
 - `S2 = CLOSED_COMPLETE`.
-- `S3 = CLOSED_BLOCKED_DEFERRED` وفق D-008، وليست S3 COMPLETE.
+- `S3 = CLOSED_BLOCKED_DEFERRED` under D-008; not S3 COMPLETE.
 - `S4 = CLOSED_COMPLETE`.
 - `S5 = CLOSED_COMPLETE`.
 - `S6 = CLOSED_COMPLETE`.
-- `S6_COMPLETE = TRUE`.
-- Issue #5 تغلق completed بعد تحقق PR #73.
-- `S7 = AUTHORIZED_NOT_STARTED`.
-- Issue #6 `[S7] الدفعات والتسويات والمصاريف` هي المرحلة التالية.
-- S8 وما بعدها لم تبدأ.
+- `S7 = CLOSED_COMPLETE` after PR #77 final-head CI, Squash merge, post-merge verification and Issue #6 closure.
+- `S8 = AUTHORIZED_NOT_STARTED` after the same S7 closure condition.
+- `S9..S11 = NOT_STARTED`.
 
-### S5 evidence chain
+## 3. S5/S6 evidence retained
 
-- PR-A #68:
-  - final head `c64d83998998bcefff1b21962d961344b47de29d`
-  - Squash/main `3c6bb5dbdd5074517d4568b6b4a3c5c355c856cd`
-- PR-B #69:
-  - final head `eb19187a9450dad0da92562a90e9cc168eaba38f`
-  - Squash/main `6c35fad443f6ce90ba3834784ac471372c2df8ec`
-  - final-head CI: S3 `31607393828` SUCCESS؛ S2 `31607393809` SUCCESS
-  - Node `65/65`، Python `80/80`، Pester `291/291`، Foundation/S2/Secret Scan/Payload-ZIP PASS
-  - post-merge S3 run `31607788819` SUCCESS
-- PR-C #70: final-verification/administrative closure only; evidence `docs/s5/S5_FINAL_VERIFICATION.md`.
+S5: PR #68/#69 implementation and PR #70 final verification. Work events, title/status history, cancel/archive dual approval, no hard delete and execution/collection separation remain regression-protected. Evidence: `docs/s5/S5_FINAL_VERIFICATION.md`.
 
-### S6 evidence chain
+S6: PR #71/#72 implementation and PR #73 final verification. Authoritative pricing movements, 30/70 plus dual-approved exceptions, D-012 rounding and bounded D1 list/similar reads remain regression-protected. Final S6 main before S7: `12a4520ea62e8fb32cd33519bf4b12137d43576b`. Evidence: `docs/s6/S6_FINAL_VERIFICATION.md`.
 
-- PR-A #71:
-  - base `c26c874c19054c610b273150d533938552036c42`
-  - final head `0b18c62cc0c8c5ab025b7473e5a23e3243babf63`
-  - Squash/main `281ca5490f9c498d0f34a71c6081e65108e89abe`
-  - final-head CI: Foundation `31614196766` SUCCESS؛ S2 `31614196675` SUCCESS؛ S3 `31614196721` SUCCESS
-- PR-B #72:
-  - base `281ca5490f9c498d0f34a71c6081e65108e89abe`
-  - final head `fdbd7f0fe21409849ad98a161aac4a3dde72bf8b`
-  - Squash/main `0de57ef07f015506c0ef9afa9956413916743442`
-  - final-head CI: Foundation `31618901526` SUCCESS؛ S2 `31618901361` SUCCESS؛ S3 `31618901360` SUCCESS
-  - post-merge Foundation `31619376196` SUCCESS
-  - post-merge S3 `31619376114` SUCCESS on attempt 2; attempt 1 failed only during external PowerShell archive download with `curl (56) Connection died`, before implementation/test execution
-- PR-C #73:
-  - branch `s6/pr-c-final-verification-closure`
-  - base `0de57ef07f015506c0ef9afa9956413916743442`
-  - docs/admin only; evidence `docs/s6/S6_FINAL_VERIFICATION.md`
+The unresolved S6 negative-final-price policy remains fail-closed.
 
-## 4. ما ثبت في S5
+## 4. S7 final evidence chain
 
-- FR-007: Work Events غير محدودة، زمنية، append-only، بهوية وتاريخ.
-- FR-008: العنوان الحالي رسمي؛ العناوين السابقة وأسبابها محفوظة؛ execution-status history محفوظ بسبب وتاريخ.
-- FR-023: لا hard delete؛ الإلغاء/الأرشفة يبقيان السجل والتاريخ قابلين للتتبع.
-- AC-03: A→B→C يحتفظ بالتاريخ.
-- AC-12 وP-05 S5: CANCEL/ARCHIVE يحتاجان حسابين مختلفين، ولا self-approval.
-- execution status وcollection-status boundary معروضان منفصلين؛ S5 لا تخترع حالة تحصيل.
+### PR-A #74 — Payments / Collections / Reversals
 
-## 5. ما ثبت في S6
+- Final head `c3387b772ee457bfb88d7ec3dc06090947776dd7`.
+- Squash/main `1e1637451bdd1e63ad82a6782cb1fa2b010cb347`.
+- Final-head CI: Foundation `31631306517`, S2 `31631306390`, S3 `31631306391` SUCCESS.
+- D-010 reversal is append-only, two-account approved and original payment remains immutable.
 
-- FR-009: BASE / increase / decrease / discount موثقة كسجل حركات معتمد؛ السابق والجديد والسبب والطرفان والتوقيت محفوظة.
-- FR-010: السعر الحالي السلطوي مشتق من حركات S6 المعتمدة، وتُعاد الحصص منه دون الاعتماد على legacy S4 price sentinel.
-- FR-017: 30/70 افتراضي، والاستثناء الموثق يحتاج حسابين مختلفين وفق D-009.
-- AC-02: تدفقات 1500 ثم الزيادات/النقص والخصم ثبتت مع history وإعادة فتح.
-- P-05 S6: تعديل السعر request → other-account approval؛ self-approval مرفوض.
-- D-012: nearest halala وexact .5 half-up لكل حصة بشكل مستقل، بلا residual rebalance.
-- pending لا يغير الحقيقة المعتمدة؛ stale/duplicate fail closed.
-- `S6_NEGATIVE_FINAL_PRICE_POLICY_UNRESOLVED` يبقى fail-closed دون اختراع قرار منتج.
-- Work/list/similar/UI تستخدم `pricing_state`, `current_price_halalas`, `pricing_source = S6_APPROVED_PRICE_MOVEMENTS` كمصدر حاكم؛ legacy S4 fields محفوظة لكنها غير سلطوية.
-- D1 query budget: 200 Work في `listWorks` = 3 read queries وبحد أقصى 100 bindings لكل bulk query؛ 50 similar Works = 3 read queries؛ لا N+1 pricing reads.
-- لا payment ledger أو settlement/expense/subscription/transfer mutations من S7.
+### PR-B #75 — Transfers / Subscriptions / Expenses / Settlement Core
 
-## 6. القرارات الحالية المهمة
+- Final head `d52254bafcd9dcec2dda454dbef869caee6b4117`.
+- Squash/main `0eb382f7146cb1730e64a37bec1bb46876f500b8`.
+- Final-head CI: Foundation `31638405137`, S2 `31638405056`, S3 `31638405045` SUCCESS.
+- Node `116/116`; PR-B focused `15/15`.
+- D1 measurement: settlement `8` reads, max bind `71`; transfer/subscription/common-expense lists `1` each.
+- D-011, D-014, D-015 and D-016 implemented with closed-period guards and immutable history.
 
-- D-006: Workers Free + Workers Static Assets + D1 Free + Firebase Authentication Spark/Email-Password؛ حسابان فقط؛ لا Billing/بطاقة/خدمة مدفوعة؛ الأموال integer halalas ولا floating point.
-- D-007: لا direct main؛ final-head CI؛ stable refs لا تتحرك تلقائيًا.
-- D-008: S3 مغلقة إداريًا `CLOSED-BLOCKED/DEFERRED` وليست COMPLETE.
-- D-009 / Q-001: تغيير النسبة الاستثنائية يحتاج موافقة الحسابين المختلفين؛ requester لا يوافق طلبه؛ reason/requester/approver/timestamp/audit.
-- D-010 / Q-002: تصحيح/إلغاء دفعة بقيد عكسي موثق وموافقتين؛ S7.
-- D-011 / Q-003: soft monthly close وإعادة فتح استثنائية بموافقتين؛ S7.
-- D-012 / Q-004: nearest halala؛ exact 0.5 halala tie = half-up.
-- D-013: استثناء تشغيلي خاص بـS5 فقط؛ **لا يمتد إلى S6 أو S7**.
+### PR-C #76 — Financial UI / Business Flows / Integrated Acceptance
 
-## 7. ضوابط غير قابلة للتجاوز
+- Base `0eb382f7146cb1730e64a37bec1bb46876f500b8`.
+- Final head `1f15df2c6605b007d32d7698f604d948b42e4a91`.
+- Squash/main `7539b8289b75e3702d19d84fb29c04f20a98d0e6`.
+- Final-head CI: Foundation `31641996434`, S2 `31641996429`, S3 `31641996442` SUCCESS.
+- Focused acceptance `9/9`; full Node `125/125`.
+- Final repair proved `confirmed_at`, distinct `received_by` / `recorded_by`, real Worker/DB flows, both reopen approval directions, history reload and no client per-Work N+1.
+- Post-merge Foundation `31642292225` SUCCESS.
+- Post-merge S3 `31642292237` SUCCESS with all validation steps successful.
 
-- لا direct edits على `main`.
-- كل مرحلة/إصلاح في branch وPR مستقل.
-- Squash merge فقط بعد final-head CI ومراجعة إشرافية.
-- لا مرحلة COMPLETE قبل acceptance + regression + `PROJECT_STATE.md` + post-merge verification.
-- لا بيانات عملاء حقيقية أو كلمات مرور أو tokens أو service keys في GitHub.
-- لا Cloud write أو Billing أو بطاقة أو خطة مدفوعة دون تفويض مستقل يطابق القرارات.
-- لا hard delete للسجلات التنفيذية أو المالية.
-- لا قرار منتج مفترض؛ أي نقص غير محسوم يعود للإشراف.
-- لا stable promotion تلقائيًا.
+### PR-D #77 — Final Verification / Administrative Closure
 
-## 8. المعمارية الحالية
+- Branch `s7/pr-d-final-verification-closure`.
+- Base `7539b8289b75e3702d19d84fb29c04f20a98d0e6`.
+- Docs/admin only. No runtime, no cloud write, no S8 implementation.
+- Evidence `docs/s7/S7_FINAL_VERIFICATION.md`.
+- After final-head CI, Squash merge and post-merge verification, close Issue #6 as completed and activate S8 from the exact resulting `main` SHA.
+
+## 5. S7 authoritative behavior inherited by later stages
+
+- Ordinary payment belongs to exactly one Work.
+- Payment correction/cancellation uses D-010 reversal; original facts are not rewritten or deleted.
+- Work settlement membership uses nullable authoritative `confirmed_at` only; unconfirmed Work is outside monthly settlement.
+- Approved receipts affect settlement according to actual `received_by`; `recorded_by` remains separately auditable.
+- `final_balance_halalas > 0` means person_1 owes person_2; negative means the reverse.
+- Prior balance is the latest valid prior monthly settlement final balance; reopened prior snapshots are invalid until reclosed.
+- Monthly close is soft; exceptional reopen requires the other account under D-011.
+- Exactly two subscriptions; current baseline aggregate 13,650 halalas. Do not invent names or individual amounts.
+- Subscription changes/cancellation recorded in month M affect settlement month M+1; no daily prorating.
+- P-02: person_2 pays subscriptions, shared half/half.
+- P-03: person_1 pays transfer fees, shared half/half.
+- P-04: Work ratio is applied to authoritative current Work price before shared subscription/fee/expense settlement effects.
+- Generic shared-expense allocation without an approved rule stays fail-closed for settlement closing.
+- Overpayment beyond remaining stays `S7_OVERPAYMENT_POLICY_UNRESOLVED` fail-closed.
+
+## 6. Architecture and zero-cost constraints
 
 - API: Cloudflare Workers Free.
-- الواجهة: Cloudflare Workers Static Assets.
-- البيانات: Cloudflare D1 Free عبر binding داخلي.
-- المصادقة: Firebase Authentication Spark، Email/Password، حسابان ينشئهما المشرف.
-- self-sign-up وPhone/SMS وAnonymous ومزودو الهوية الآخرون معطلون وفق D-006.
-- APIs الخاصة fail closed؛ D1 لا يُوصل مباشرة من المتصفح.
-- S7 يجب أن يحافظ على bounded D1 reads؛ لا N+1 financial list/read models.
+- Static UI: Cloudflare Workers Static Assets.
+- Database: Cloudflare D1 Free via internal binding.
+- Authentication: Firebase Auth Spark, Email/Password, two supervisor-created accounts only.
+- Private APIs fail closed; browser never connects directly to D1.
+- No mandatory Billing, card, PayGo or paid service.
+- Money is integer halalas within the JavaScript safe-integer range; no floating-point financial math.
+- No Cloud writes are authorized merely by starting a software stage.
 
-## 9. بدء S7
+## 7. Permanent delivery rules
 
-S7 = Issue #6: **الدفعات والتسويات والمصاريف**.
+- Never edit `main` directly.
+- Independent branch + PR for every stage/change.
+- Final-head CI is required; Squash merge only.
+- A stage is not complete until acceptance, prior-stage regression, `PROJECT_STATE.md` update and post-merge verification.
+- Never commit real customer data, passwords, tokens or service keys.
+- Do not invent unresolved product policy; fail closed, defer or request a governing decision.
+- Stable refs never move automatically.
+- Manus and any other coding agent must not push concurrently to the same PR.
+- Avoid repeated supervisory stop loops: executor self-repairs within one PR; supervision performs one consolidated final review, at most one consolidated repair batch for discovered defects, then targeted recheck + full regression + final-head CI and immediate merge if clean.
 
-لا يبدأ التنفيذ من PR #72 أو أي فرع S6. بعد الإغلاق النهائي لـPR #73 يجب:
+## 8. S8 activation boundary
 
-1. قراءة `main` النهائي بعد Squash-merge لـPR #73 وتثبيت SHA الناتج بوصفه `S7_BASE_MAIN_SHA`.
-2. قراءة Word + DECISION_LOG + PROJECT_STATE + TRACEABILITY + Issue #6 + `FINANCIAL_INTEGER_RULE.md` + عقد S6 الفعلي.
-3. استخدام تعليمات S7 `FINAL_ACTIVATED` فقط؛ Prepared V3 ليست إذن تنفيذ.
-4. بدء S7 PR-A فقط من ذلك SHA.
+Issue #7 is `[S8] البحث والتقارير والتصدير`.
 
-حدود S7 المعتمدة قبل التفعيل النهائي:
+Core S8 scope:
 
-- ordinary payment واحد يرتبط بـWork واحد؛ multi-work payment allocation يبقى `DEFERRED / NO_STAGE_ASSIGNED` ما لم يصدر قرار معتمد لاحقًا.
-- الاشتراكان: `subscription_count = 2` والإجمالي الحالي `136.5 SAR = 13,650 halalas`؛ لا تُخترع أسماء أو قيم فردية أو تقسيم 68.25/68.25.
-- الأسماء والقيم الفردية للاشتراكين `UNKNOWN / OPTIONAL UNTIL EXPLICITLY PROVIDED/APPROVED`، ولا تمنع استخدام الإجمالي عندما تكفي القاعدة الحاكمة.
-- تصحيح/إلغاء payment يخضع D-010 reversal، وإعادة فتح settlement تخضع D-011.
-- كل القيم المالية integer halalas، no float financial math.
-- N+1 D1 reads ممنوعة؛ يلزم query-budget regression بقياس فعلي على fixtures كبيرة.
-- لا S8 analytics/export scope.
+- FR-022 — Work search/filter.
+- FR-024 — Excel export for defined scopes.
+- FR-025 — organized Arabic RTL Excel.
+- FR-029 — configurable age-based alerts for no price/no reply/no payment.
+- FR-030 — statistics by type/specialty/country/university/period.
+- AC-08, AC-09, AC-10.
+- Reverify FR-023/AC-12 archive/history visibility when S8 search/analytics consume archived records.
 
-## 10. درس جودة مستمر
+S8 must not start from PR #76 or any S7 branch. It starts only from the exact `main` SHA produced by PR #77 after S7 closure. Execution is authorized only by the S8 `FINAL_ACTIVATED` package tied to that SHA.
 
-- لا تعتبر اسم test أو تقرير الوكيل دليلًا؛ المعيار هو assertions والطبقة الفعلية.
-- لكل claim: `Requirement/Risk → exact test file → exact test name → exact assertions`.
-- approval both-directions المطلوب في UI يجب أن ينفذ الاتجاهين داخل UI test نفسه إذا كان الادعاء UI-layer.
-- API/SPA envelope يجب أن يبقى عقدًا موحدًا.
-- mutation write success لا يساوي refreshed UI success؛ لا نجاح UX نهائي قبل authoritative refetch.
-- النص العربي المرئي يحتاج sanity scan.
-- أي list/read مالي جديد يجب اختباره ضد D1 query budget، لا فحص مصدر فقط.
+S8 must consume authoritative S6/S7 financial facts; historical/supporting price data may support classification but must not become the sole classifier. Search must include current and old titles and archived history where required. Excel verification must be structural and automated; no manual user QA is required when objective automation is possible.
 
-## 11. Stable refs
+## 9. Stable refs
 
-لا تحرك تلقائيًا:
+- `stable/2026-08-09-be14a389` -> `be14a389d7e11f1df9f935999d888e7e2295c8a3`.
+- `stable/2026-08-09-643de962` -> `643de962dc8631f68a42e3796c4a096a29c4e14c`.
 
-- `stable/2026-08-09-be14a389` → `be14a389d7e11f1df9f935999d888e7e2295c8a3`.
-- `stable/2026-08-09-643de962` → `643de962dc8631f68a42e3796c4a096a29c4e14c`.
+Do not move them without a separate explicit stable-promotion decision.
