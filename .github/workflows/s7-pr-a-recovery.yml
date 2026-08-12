@@ -1,0 +1,43 @@
+name: S7 PR-A Recovery
+
+on:
+  push:
+    paths:
+      - '.recovery/s7-pr-a/GO'
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct and apply verified checkpoint patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .recovery/s7-pr-a/patch.b64.* | tr -d '\n\r' | base64 -d | gzip -d > /tmp/s7-pr-a.patch
+          echo '98cf7a11139b10862a32de5d8a1c35a428251953b909d52dd20016971d548f04  /tmp/s7-pr-a.patch' | sha256sum -c -
+          git rm -f tools/s3_cpu_gate/src/worker/schema.sql tools/s3_cpu_gate/worker/schema.sql
+          git apply --index --whitespace=nowarn /tmp/s7-pr-a.patch
+          test "$(git hash-object docs/s7/S7_EXECUTION_CONTRACT.md)" = '50439e9143c99b731806082e51477f6ce327986a'
+          test "$(git hash-object tools/s3_cpu_gate/package-manifest.json)" = '27c31adf28d1935815773ca5c0c7a00ae1b8835b'
+          test "$(git hash-object tools/s3_cpu_gate/src/worker/migrations/0007_s7_payments_collections_reversals.sql)" = 'a01e6efc3a87a7133408acfad386fe140f2fb4f0'
+          test "$(git hash-object tools/s3_cpu_gate/src/worker/schema.sql)" = 'a1d413dbb119752b3c0a86f43ec4c2bfb5e8a2a9'
+          test "$(git hash-object tools/s3_cpu_gate/src/worker/src/index.js)" = 'a73c86050ab41ee7071b919652c1a97d419ecc52'
+          test "$(git hash-object tools/s3_cpu_gate/tests/node/s6_pr_a_financial_core.test.mjs)" = '082a6e124464468a4d25b5c11f7d294fee81cbcb'
+          test "$(git hash-object tools/s3_cpu_gate/tests/node/s7_pr_a_payments.test.mjs)" = 'a747bc0085ae5b9c46adfd26c8a5b6708a1f419f'
+          test "$(git hash-object tools/s3_cpu_gate/worker/migrations/0007_s7_payments_collections_reversals.sql)" = 'a01e6efc3a87a7133408acfad386fe140f2fb4f0'
+          test "$(git hash-object tools/s3_cpu_gate/worker/schema.sql)" = 'a1d413dbb119752b3c0a86f43ec4c2bfb5e8a2a9'
+          test "$(git hash-object tools/s3_cpu_gate/worker/src/index.js)" = 'a73c86050ab41ee7071b919652c1a97d419ecc52'
+      - name: Commit restored checkpoint content
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'S7 Recovery Automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'feat(s7): restore PR-A payments collections checkpoint'
+          git push origin HEAD:s7/pr-a-payments-collections-core
