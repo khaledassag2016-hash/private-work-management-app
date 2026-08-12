@@ -3,6 +3,8 @@
 -- The three ALTER statements are intentionally additive; the migration smoke
 -- test applies them to a populated S4 database and verifies data retention.
 
+DROP TRIGGER IF EXISTS trg_audit_probe_insert_log;
+DROP TRIGGER IF EXISTS trg_audit_probe_update_log;
 DROP TRIGGER IF EXISTS trg_audit_log_no_update;
 DROP TRIGGER IF EXISTS trg_audit_log_no_delete;
 DROP INDEX IF EXISTS ix_audit_log_run_entity;
@@ -33,6 +35,18 @@ BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
 CREATE TRIGGER IF NOT EXISTS trg_audit_log_no_delete
 BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
+CREATE TRIGGER IF NOT EXISTS trg_audit_probe_insert_log
+AFTER INSERT ON s3_audit_probe
+BEGIN
+  INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+  VALUES ('s3_audit_probe',NEW.entity_id,'CREATE',NEW.updated_by,NEW.changed_at,NULL,NEW.value_json,NEW.run_marker,NEW.request_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_audit_probe_update_log
+AFTER UPDATE ON s3_audit_probe
+BEGIN
+  INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+  VALUES ('s3_audit_probe',NEW.entity_id,'UPDATE',NEW.updated_by,NEW.changed_at,OLD.value_json,NEW.value_json,NEW.run_marker,NEW.request_id);
+END;
 
 ALTER TABLE works ADD COLUMN archived_at TEXT;
 ALTER TABLE works ADD COLUMN archived_by TEXT;

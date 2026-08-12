@@ -410,6 +410,36 @@ test('S5 migration upgrades a populated S4-shaped database without losing data',
       BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
       CREATE TRIGGER trg_audit_log_no_delete BEFORE DELETE ON audit_log
       BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;
+      CREATE TABLE s3_audit_probe (
+        entity_id TEXT PRIMARY KEY NOT NULL,
+        value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+        version INTEGER NOT NULL CHECK (version >= 1),
+        updated_by TEXT NOT NULL,
+        changed_at TEXT NOT NULL,
+        run_marker TEXT NOT NULL,
+        request_id TEXT NOT NULL UNIQUE,
+        FOREIGN KEY (updated_by) REFERENCES app_users(uid) ON UPDATE RESTRICT ON DELETE RESTRICT
+      );
+      CREATE TRIGGER trg_audit_probe_authorized_insert
+      BEFORE INSERT ON s3_audit_probe
+      WHEN NOT EXISTS (SELECT 1 FROM app_users WHERE uid=NEW.updated_by AND active=1 AND run_marker=NEW.run_marker)
+      BEGIN SELECT RAISE(ABORT, 'actor not authorized'); END;
+      CREATE TRIGGER trg_audit_probe_authorized_update
+      BEFORE UPDATE ON s3_audit_probe
+      WHEN NOT EXISTS (SELECT 1 FROM app_users WHERE uid=NEW.updated_by AND active=1 AND run_marker=NEW.run_marker)
+      BEGIN SELECT RAISE(ABORT, 'actor not authorized'); END;
+      CREATE TRIGGER trg_audit_probe_insert_log
+      AFTER INSERT ON s3_audit_probe
+      BEGIN
+        INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+        VALUES ('s3_audit_probe',NEW.entity_id,'CREATE',NEW.updated_by,NEW.changed_at,NULL,NEW.value_json,NEW.run_marker,NEW.request_id);
+      END;
+      CREATE TRIGGER trg_audit_probe_update_log
+      AFTER UPDATE ON s3_audit_probe
+      BEGIN
+        INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id)
+        VALUES ('s3_audit_probe',NEW.entity_id,'UPDATE',NEW.updated_by,NEW.changed_at,OLD.value_json,NEW.value_json,NEW.run_marker,NEW.request_id);
+      END;
       CREATE TABLE works (
         id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, title TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'IN_PROGRESS', version INTEGER NOT NULL DEFAULT 1,
@@ -434,6 +464,16 @@ test('S5 migration upgrades a populated S4-shaped database without losing data',
 
     const legacyAfter = database.prepare('SELECT id, entity_type, entity_id, action, actor_uid, created_at, before_json, after_json, run_marker, request_id FROM audit_log WHERE id=41').get();
     assert.deepEqual(legacyAfter, legacyBefore);
+    database.prepare('INSERT INTO s3_audit_probe(entity_id,value_json,version,updated_by,changed_at,run_marker,request_id) VALUES (?,?,?,?,?,?,?)')
+      .run('probe-after-migration', '{"state":"created"}', 1, 'uid-one', '2026-08-03T00:00:00.000Z', 'run-s5', 'probe-insert-request');
+    const probeInsertAudit = database.prepare("SELECT entity_type, action, actor_uid, before_json, after_json, request_id FROM audit_log WHERE request_id='probe-insert-request'").get();
+    assert.deepEqual({ ...probeInsertAudit }, { entity_type: 's3_audit_probe', action: 'CREATE', actor_uid: 'uid-one', before_json: null, after_json: '{"state":"created"}', request_id: 'probe-insert-request' });
+    database.prepare('UPDATE s3_audit_probe SET value_json=?, version=?, changed_at=?, request_id=? WHERE entity_id=?')
+      .run('{"state":"updated"}', 2, '2026-08-04T00:00:00.000Z', 'probe-update-request', 'probe-after-migration');
+    const probeUpdateAudit = database.prepare("SELECT entity_type, action, actor_uid, before_json, after_json, request_id FROM audit_log WHERE request_id='probe-update-request'").get();
+    assert.deepEqual({ ...probeUpdateAudit }, { entity_type: 's3_audit_probe', action: 'UPDATE', actor_uid: 'uid-one', before_json: '{"state":"created"}', after_json: '{"state":"updated"}', request_id: 'probe-update-request' });
+    const staleTriggerReferences = database.prepare("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND instr(sql, 'audit_log_s4') > 0").all();
+    assert.equal(staleTriggerReferences.length, 0);
     database.prepare('INSERT INTO work_events(id,work_id,event_type,description,effective_at,created_at,actor_uid,request_id) VALUES (?,?,?,?,?,?,?,?)')
       .run('event-after-migration', 'old-work', 'NOTE', 'S5 event', '2026-08-03T00:00:00.000Z', '2026-08-03T00:00:00.000Z', 'uid-one', 'event-after-migration');
     database.prepare('INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id) VALUES (?,?,?,?,?,?,?,?,?)')
