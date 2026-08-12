@@ -69,6 +69,18 @@ const labels = {
   REQUEST_NOT_FOUND: 'الطلب غير موجود.',
   ACTION_REQUIRED: 'العملية المطلوبة غير محددة.',
   ACTION_INVALID: 'العملية المطلوبة غير مدعومة.',
+  PRICE_REQUEST_NOT_FOUND: 'طلب السعر غير موجود.',
+  RATIO_REQUEST_NOT_FOUND: 'طلب النسبة غير موجود.',
+  MOVEMENT_TYPE_REQUIRED: 'نوع حركة السعر مطلوب.',
+  MOVEMENT_TYPE_INVALID: 'نوع حركة السعر غير مدعوم.',
+  MOVEMENT_SIGN_INVALID: 'إشارة قيمة الحركة لا تطابق نوعها.',
+  BASE_REQUIRED: 'يجب اعتماد السعر الأساسي أولًا.',
+  BASE_ALREADY_SET: 'تم اعتماد السعر الأساسي لهذا العمل مسبقًا.',
+  RATIO_INVALID: 'يجب أن تكون النسبتان صحيحتين ومجموعهما 100%.',
+  S6_NEGATIVE_FINAL_PRICE_POLICY_UNRESOLVED: 'لا يمكن اعتماد هذه الحركة لأنها تجعل السعر النهائي سالبًا. لم يتغير السعر الحالي.',
+  APPROVAL_REQUIRED: 'لا يمكن اعتماد الطلب إلا بالحساب الآخر.',
+  PRICE_APPROVED: 'السعر معتمد من حركات S6.',
+  PRICE_UNSET: 'لا توجد حركة BASE معتمدة بعد.',
 };
 const WORK_STATUS_LABELS = Object.freeze({
   NEW_REQUEST: 'طلب جديد',
@@ -211,7 +223,21 @@ function shell(content) {
 function pageTitle() { return ({ dashboard: 'نظرة عامة', customers: 'العملاء', works: 'الأعمال', catalogs: 'القوائم', customer: 'سجل العميل', work: 'تفاصيل العمل' }[state.view] || 'إدارة الأعمال'); }
 function empty(message) { return `<div class="empty">${escapeHtml(message)}</div>`; }
 function loading(message = 'جارٍ تحميل البيانات…') { return `<div class="loading"><span class="spinner"></span>${escapeHtml(message)}</div>`; }
-function badgeForWork(work) { return work.price_state === 'PRICE_UNSET' ? '<span class="badge unset">السعر غير محدد</span>' : '<span class="badge zero">سعر صفري</span>'; }
+function isPricingUnset(work) { return (work.pricing_state || work.price_state) === 'PRICE_UNSET'; }
+function moneyLabel(value) {
+  if (value === null || value === undefined) return 'غير محدد';
+  const amount = Number(value);
+  if (!Number.isSafeInteger(amount)) return 'غير متاح';
+  const sign = amount < 0 ? '-' : '';
+  const absolute = Math.abs(amount);
+  return `${sign}${Math.trunc(absolute / 100)}.${String(absolute % 100).padStart(2, '0')} ريال (${amount} هللة)`;
+}
+function movementLabel(type) { return ({ BASE: 'سعر أساسي', INCREASE: 'زيادة', DECREASE: 'نقصان', DISCOUNT: 'خصم' }[type] || type || 'حركة سعر'); }
+function requestStateLabel(stateValue) { return stateValue === 'PENDING' ? 'معلق — لا يغير السعر المعتمد' : stateValue === 'APPROVED' ? 'معتمد' : stateValue || 'غير معروف'; }
+function badgeForWork(work) {
+  if (isPricingUnset(work)) return '<span class="badge unset">السعر غير محدد</span>';
+  return `<span class="badge ok">${escapeHtml(moneyLabel(work.current_price_halalas))}</span>`;
+}
 function softWarningLabel(warning) {
   return ({
     WORK_DETAIL_UNIVERSITY_MISSING: 'الجامعة غير متوفرة.',
@@ -223,8 +249,26 @@ function softWarningsMarkup(work) {
   if (!warnings.length) return '';
   return `<section class="notice info" data-soft-warnings="present"><strong>تفاصيل يفضّل استكمالها عند توفرها:</strong><ul class="fact-list">${warnings.map(warning => `<li data-soft-warning-code="${escapeHtml(warning.code)}"><strong>${escapeHtml(softWarningLabel(warning))}</strong><span>الحفظ مسموح؛ هذه المعلومة غير متوفرة حاليًا وليست واقعة موثقة أو تحذير عميل.</span></li>`).join('')}</ul></section>`;
 }
+function financialRequestCard(request, kind) {
+  const isPending = request.state === 'PENDING';
+  const isSelf = request.requested_by === state.auth.uid;
+  const approvalAction = kind === 'price' ? 'approve-price-request' : 'approve-ratio-request';
+  const title = kind === 'price' ? movementLabel(request.movement_type) : `استثناء النسبة ${request.person_1_bps}/${request.person_2_bps}`;
+  return `<div class="financial-request ${isPending ? 'pending' : 'approved'}" data-financial-request="${escapeHtml(request.id)}"><div class="toolbar"><strong>${escapeHtml(title)}</strong><span class="badge ${isPending ? 'unset' : 'ok'}">${escapeHtml(requestStateLabel(request.state))}</span></div><div class="financial-meta"><span>السبب: ${escapeHtml(request.reason)}</span><span>الطالب: ${escapeHtml(idLabel(request.requested_by))}</span><span>وقت الطلب: ${dateTimeLabel(request.requested_at)}</span>${request.approved_by ? `<span>الموافق: ${escapeHtml(idLabel(request.approved_by))} — ${dateTimeLabel(request.approved_at)}</span>` : ''}</div>${kind === 'price' ? `<div class="financial-meta"><span>القيمة: ${escapeHtml(moneyLabel(request.amount_halalas))}</span><span>التاريخ التجاري: ${dateTimeLabel(request.effective_at)}</span></div>` : ''}${isPending ? (isSelf ? '<span class="badge warn">بانتظار اعتماد الحساب الآخر؛ لا يمكنك اعتماد طلبك</span>' : `<button class="button secondary" data-action="${approvalAction}" data-request-id="${escapeHtml(request.id)}" ${state.busy ? 'disabled' : ''}>اعتماد الطلب</button>`) : ''}</div>`;
+}
+function financialMarkup(work) {
+  const financials = work.financials || {};
+  const currentPrice = financials.current_price_halalas ?? work.current_price_halalas ?? null;
+  const pricingState = financials.price_state || work.pricing_state || (currentPrice === null ? 'PRICE_UNSET' : 'PRICE_APPROVED');
+  const ratio = financials.ratio || { person_1_bps: 3000, person_2_bps: 7000, source: 'DEFAULT' };
+  const movements = Array.isArray(financials.movements) ? financials.movements : [];
+  const priceRequests = Array.isArray(financials.price_requests) ? financials.price_requests : [];
+  const ratioRequests = Array.isArray(financials.ratio_requests) ? financials.ratio_requests : [];
+  const ratioHistory = Array.isArray(financials.ratio_history) ? financials.ratio_history : [];
+  return `<section class="s6-financial-core" data-s6-financial-core><div class="grid grid-3"><article class="stat"><small>السعر المعتمد</small><strong data-authoritative-price>${escapeHtml(pricingState === 'PRICE_UNSET' ? 'PRICE_UNSET' : moneyLabel(currentPrice))}</strong><span class="hint">المصدر: approved S6 price movements؛ حقول S4 القديمة ليست مصدر الحقيقة بعد S6.</span></article><article class="stat"><small>المتبقي قبل S7</small><strong>${escapeHtml(moneyLabel(financials.remaining_halalas ?? currentPrice))}</strong><span class="hint">${escapeHtml(financials.remaining_projection || 'PRE_S7_APPROVED_PAYMENTS_ZERO')}</span></article><article class="stat"><small>النسبة الحالية</small><strong>${escapeHtml(`${ratio.person_1_bps}/${ratio.person_2_bps} bps`)}</strong><span class="hint">${escapeHtml(ratio.source === 'DEFAULT' ? 'الافتراضية 30% / 70%' : 'استثناء معتمد موثق')}</span></article></div><div class="grid grid-2" style="margin-top:1rem"><article class="card"><h2>الحصص المعتمدة</h2><ul class="fact-list"><li><strong>الشخص الأول</strong><span>${escapeHtml(moneyLabel(financials.shares?.person_1_halalas))}</span></li><li><strong>الشخص الثاني</strong><span>${escapeHtml(moneyLabel(financials.shares?.person_2_halalas))}</span></li></ul></article><article class="card"><h2>طلبات السعر والنسبة</h2><p class="hint">الطلبات المعلقة منفصلة عن السعر والنسبة المعتمدين.</p><form id="s6-price-form" class="form-grid"><div class="field"><label>نوع الحركة</label><select class="select" name="movement_type" required><option value="BASE">سعر أساسي</option><option value="INCREASE">زيادة</option><option value="DECREASE">نقصان</option><option value="DISCOUNT">خصم</option></select></div><div class="field"><label>القيمة بالريال</label><input class="input" name="amount_riyals" inputmode="decimal" placeholder="1500.00" required/></div><div class="field"><label>التاريخ التجاري</label><input class="input" name="effective_at" type="datetime-local"/></div><div class="field full"><label>السبب</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب حركة سعر</button></div></form><form id="s6-ratio-form" class="form-grid" style="margin-top:1rem"><div class="field"><label>نسبة الشخص الأول (bps)</label><input class="input" name="person_1_bps" type="number" min="0" max="10000" step="1" value="${escapeHtml(ratio.person_1_bps)}" required/></div><div class="field"><label>نسبة الشخص الثاني (bps)</label><input class="input" name="person_2_bps" type="number" min="0" max="10000" step="1" value="${escapeHtml(ratio.person_2_bps)}" required/></div><div class="field full"><label>سبب الاستثناء</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button secondary" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب استثناء النسبة</button></div></form></article></div><div class="grid grid-2" style="margin-top:1rem"><article class="card"><h2>تاريخ حركات السعر المعتمدة</h2>${movements.length ? `<ul class="fact-list">${movements.map(item => `<li><strong>${escapeHtml(movementLabel(item.movement_type))}: ${escapeHtml(moneyLabel(item.amount_halalas))}</strong><span>السابق: ${escapeHtml(moneyLabel(item.previous_price_halalas))} ← الجديد: ${escapeHtml(moneyLabel(item.new_price_halalas))}</span><span>السبب: ${escapeHtml(item.reason)} — التاريخ التجاري: ${dateTimeLabel(item.effective_at)}</span><span>الطالب: ${escapeHtml(idLabel(item.requested_by))} — الموافق: ${escapeHtml(idLabel(item.approved_by))} — وقت الاعتماد: ${dateTimeLabel(item.approved_at)}</span></li>`).join('')}</ul>` : empty('لا توجد حركة BASE معتمدة بعد.')}</article><article class="card"><h2>تاريخ النسب والطلبات</h2>${ratioHistory.length ? `<ul class="fact-list">${ratioHistory.map(item => `<li><strong>${escapeHtml(`${item.old_person_1_bps}/${item.old_person_2_bps} → ${item.new_person_1_bps}/${item.new_person_2_bps} bps`)}</strong><span>السبب: ${escapeHtml(item.reason)} — طلب: ${dateTimeLabel(item.requested_at)} — اعتماد: ${dateTimeLabel(item.approved_at)}</span></li>`).join('')}</ul>` : empty('لا توجد استثناءات نسبة معتمدة؛ النسبة الافتراضية 30/70.')}</article></div><section class="card" style="margin-top:1rem"><h2>حالة الطلبات</h2>${priceRequests.length ? `<h3>طلبات السعر</h3>${priceRequests.map(item => financialRequestCard(item, 'price')).join('')}` : ''}${ratioRequests.length ? `<h3>طلبات النسبة</h3>${ratioRequests.map(item => financialRequestCard(item, 'ratio')).join('')}` : (!priceRequests.length ? empty('لا توجد طلبات مالية.') : '')}</section></section>`;
+}
 function dashboard() {
-  const followUp = state.works.filter(work => work.price_state === 'PRICE_UNSET');
+  const followUp = state.works.filter(isPricingUnset);
   return `<div class="grid grid-3"><div class="stat"><small>العملاء المسجلون</small><strong>${state.customers.length}</strong></div><div class="stat"><small>الأعمال الحالية</small><strong>${state.works.length}</strong></div><div class="stat"><small>تحتاج متابعة سعر</small><strong class="accent">${followUp.length}</strong></div></div>
   <section class="card" style="margin-top:1rem"><div class="toolbar"><div><h2>أعمال بلا سعر</h2><p>هذه قائمة متابعة تشغيلية فقط؛ لا تمثل سعرًا بقيمة صفر.</p></div><button class="button" data-action="new-work" type="button">إضافة عمل</button></div>${followUp.length ? worksTable(followUp) : empty('لا توجد أعمال بسعر غير محدد حاليًا.')}</section>`;
 }
@@ -282,6 +326,7 @@ function workPage() {
     <button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button>
   </section>
   ${softWarningsMarkup(work)}
+  ${financialMarkup(work)}
 
   <section class="grid grid-2" data-execution-collection-separation>
     <article class="card" data-execution-status>
@@ -291,9 +336,9 @@ function workPage() {
       <p class="hint">تُغيّر عبر مسارات التنفيذ وسجل الحالات فقط.</p>
     </article>
     <article class="card" data-collection-status>
-      <h2>حالة التحصيل</h2>
-      <p>لا توجد حالة تحصيل مشتقة أو مخترعة داخل S5.</p>
-      <p class="hint">المصدر المالي الحاكم غير متاح ضمن S5؛ سيأتي من S7. لا تُشتق هذه الحدود من <code>price_state</code>.</p>
+      <h2>حدود التحصيل قبل S7</h2>
+      <p>لا توجد حالة تحصيل أو payment mutation داخل S6.</p>
+      <p class="hint">المتبقي المعروض في Financial Core هو PRE-S7 projection فقط؛ لا يُشتق من legacy price_state ولا يُنشئ مصدر تحصيل.</p>
     </article>
   </section>
 
@@ -309,8 +354,8 @@ function workPage() {
     </article>
     <article class="card">
       <h2>أعمال مشابهة متاحة للقراءة</h2>
-      <p>لا تظهر أي حركة تسعير أو موافقات؛ هذه حدود قراءة S4 فقط.</p>
-      ${similar.length ? `<ul class="fact-list">${similar.map(item => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.work_type_key || 'غير محدد')} — ${dateLabel(item.created_at)} — ${item.price_state === 'PRICE_UNSET' ? 'سعر غير حدد' : 'سعر صفري'}</span></li>`).join('')}</ul>` : empty('لا توجد أعمال مشابهة ضمن البيانات المتاحة.')}
+      <p>السعر المعروض هنا هو السعر الحالي المعتمد من S6، وليس legacy price_minor_units.</p>
+      ${similar.length ? `<ul class="fact-list">${similar.map(item => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.work_type_key || 'غير محدد')} — ${dateLabel(item.created_at)}</span><span data-similar-authoritative-price>السعر الحالي: ${escapeHtml(item.pricing_state === 'PRICE_UNSET' ? 'PRICE_UNSET' : moneyLabel(item.current_price_halalas))}</span></li>`).join('')}</ul>` : empty('لا توجد أعمال مشابهة ضمن البيانات المتاحة.')}
     </article>
   </section>
 
@@ -614,7 +659,11 @@ function bindShell() {
   document.querySelector('#s5-status-form')?.addEventListener('submit', submitStatus);
   document.querySelector('#s5-cancel-form')?.addEventListener('submit', submitCancel);
   document.querySelector('#s5-archive-form')?.addEventListener('submit', submitArchive);
+  document.querySelector('#s6-price-form')?.addEventListener('submit', submitPriceChange);
+  document.querySelector('#s6-ratio-form')?.addEventListener('submit', submitRatioChange);
   document.querySelectorAll('[data-action="approve-request"]').forEach(button => button.addEventListener('click', () => handleApproveRequest(button.dataset.requestId)));
+  document.querySelectorAll('[data-action="approve-price-request"]').forEach(button => button.addEventListener('click', () => handleApprovePriceRequest(button.dataset.requestId)));
+  document.querySelectorAll('[data-action="approve-ratio-request"]').forEach(button => button.addEventListener('click', () => handleApproveRatioRequest(button.dataset.requestId)));
 }
 function formObject(form) { return Object.fromEntries(new FormData(form).entries()); }
 function nullable(value) { return value === '' ? null : value; }
@@ -714,9 +763,10 @@ async function openWork(workId, { reason = 'navigation' } = {}) {
     state.selectedWork = null;
     state.view = 'work';
     render();
-    const [work, similar, events, titleHistory, statusHistory, archiveHistory, requests] = await Promise.all([
+    const [work, similar, financials, events, titleHistory, statusHistory, archiveHistory, requests] = await Promise.all([
       api(`/api/works/${encodeURIComponent(workId)}`),
       api(`/api/works/${encodeURIComponent(workId)}/similar`),
+      api(`/api/works/${encodeURIComponent(workId)}/financials`),
       api(`/api/works/${encodeURIComponent(workId)}/events`),
       api(`/api/works/${encodeURIComponent(workId)}/title-history`),
       api(`/api/works/${encodeURIComponent(workId)}/status-history`),
@@ -726,6 +776,7 @@ async function openWork(workId, { reason = 'navigation' } = {}) {
     state.selectedWork = {
       ...work,
       similar,
+      financials,
       events,
       titleHistory,
       statusHistory,
@@ -873,6 +924,60 @@ async function submitArchive(event) {
   });
 }
 
+function optionalIsoDate(value) {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+}
+async function submitPriceChange(event) {
+  event.preventDefault();
+  const values = formObject(event.currentTarget);
+  const effectiveAt = optionalIsoDate(values.effective_at);
+  if (values.effective_at && !effectiveAt) { toast(errorMessage('EVENT_TIME_INVALID'), 'error'); return; }
+  const version = state.selectedWork.version;
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/price-requests`, { method: 'POST', body: { version, movement_type: values.movement_type, amount_riyals: values.amount_riyals, reason: values.reason, ...(effectiveAt ? { effective_at: effectiveAt } : {}) } });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تقديم طلب حركة السعر؛ لا يتغير السعر المعتمد قبل موافقة الحساب الآخر.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') { toast(errorMessage('VERSION_CONFLICT'), 'error'); await openWork(state.selectedWork.id); } else throw error;
+    }
+  });
+}
+async function submitRatioChange(event) {
+  event.preventDefault();
+  const values = formObject(event.currentTarget);
+  const version = state.selectedWork.version;
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/ratio-requests`, { method: 'POST', body: { version, person_1_bps: Number(values.person_1_bps), person_2_bps: Number(values.person_2_bps), reason: values.reason } });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تقديم طلب استثناء النسبة؛ لا تتغير النسبة قبل الموافقة الثنائية.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') { toast(errorMessage('VERSION_CONFLICT'), 'error'); await openWork(state.selectedWork.id); } else throw error;
+    }
+  });
+}
+async function handleApprovePriceRequest(reqId) {
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/price-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST', body: {} });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم اعتماد حركة السعر وتحديث السعر السلطوي.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') { toast(errorMessage('VERSION_CONFLICT'), 'error'); await openWork(state.selectedWork.id); } else throw error;
+    }
+  });
+}
+async function handleApproveRatioRequest(reqId) {
+  await submitFlow(async () => {
+    try {
+      await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/ratio-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST', body: {} });
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم اعتماد استثناء النسبة وتحديث الحصص السلطوية.');
+    } catch (error) {
+      if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') { toast(errorMessage('VERSION_CONFLICT'), 'error'); await openWork(state.selectedWork.id); } else throw error;
+    }
+  });
+}
+
 async function handleApproveRequest(reqId) {
   await submitFlow(async () => {
     try {
@@ -892,5 +997,5 @@ async function handleApproveRequest(reqId) {
   });
 }
 
-if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, workPage, softWarningsMarkup, softWarningLabel, openWork, authenticateExistingSession, openNewWork, refreshWorkCustomerContext, preAgreementCanSubmitNewWork, preAgreementContextMarkup, submitWork, errorMessage, submitEvent, submitTitle, submitStatus, submitCancel, submitArchive, handleApproveRequest });
+if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, workPage, softWarningsMarkup, softWarningLabel, openWork, authenticateExistingSession, openNewWork, refreshWorkCustomerContext, preAgreementCanSubmitNewWork, preAgreementContextMarkup, submitWork, errorMessage, submitEvent, submitTitle, submitStatus, submitCancel, submitArchive, submitPriceChange, submitRatioChange, handleApproveRequest, handleApprovePriceRequest, handleApproveRatioRequest, financialMarkup });
 authenticateExistingSession();

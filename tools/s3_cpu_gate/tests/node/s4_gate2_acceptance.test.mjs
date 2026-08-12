@@ -6,11 +6,15 @@ import { fileURLToPath } from 'node:url';
 import {
   createCatalogValue,
   createCustomer,
+  approvePriceChangeRequest,
   createDocumentedFact,
+  createPriceChangeRequest,
   createWork,
   getCustomerHistory,
   getCustomerWarnings,
   getSimilarWorks,
+  getWork,
+  getWorkFinancials,
   listCatalog,
   listWorks,
   updateCustomer,
@@ -103,7 +107,9 @@ test('AC-07 and AC-13: runtime catalog addition, documented fact, warning projec
     const firstCustomer = await createCustomer(env, 'ui-person-one', 'customer-create-ui-2', customerPayload());
     const secondCustomer = await createCustomer(env, 'ui-person-two', 'customer-create-ui-3', customerPayload({ name: 'Synthetic Similar Customer', country: 'SYN_NEW_COUNTRY' }));
     const firstWork = await createWork(env, 'ui-person-one', 'work-create-ui-3', workPayload(firstCustomer.id));
-    await createWork(env, 'ui-person-two', 'work-create-ui-4', workPayload(secondCustomer.id, { country: 'SYN_COUNTRY', title: 'Synthetic Similar Work' }));
+    const secondWork = await createWork(env, 'ui-person-two', 'work-create-ui-4', workPayload(secondCustomer.id, { country: 'SYN_COUNTRY', title: 'Synthetic Similar Work' }));
+    const baseRequest = await createPriceChangeRequest(env, 'ui-person-one', 's6-similar-base-request', firstWork.id, { version: firstWork.version, movement_type: 'BASE', amount_riyals: '1500.00', reason: 'S6 similar authoritative base', effective_at: '2026-08-01T09:00:00.000Z' });
+    await approvePriceChangeRequest(env, 'ui-person-two', 's6-similar-base-approval', firstWork.id, baseRequest.id);
     await createDocumentedFact(env, 'ui-person-one', 'fact-create-ui-1', {
       customer_id: firstCustomer.id,
       work_id: firstWork.id,
@@ -113,14 +119,45 @@ test('AC-07 and AC-13: runtime catalog addition, documented fact, warning projec
       details: { note: 'Synthetic only' },
     });
 
-    const [warnings, history, similar] = await Promise.all([getCustomerWarnings(env, firstCustomer.id), getCustomerHistory(env, firstCustomer.id), getSimilarWorks(env, firstWork.id)]);
+    const [warnings, history, similar, authoritativeWork, financials] = await Promise.all([getCustomerWarnings(env, firstCustomer.id), getCustomerHistory(env, firstCustomer.id), getSimilarWorks(env, secondWork.id), getWork(env, firstWork.id), getWorkFinancials(env, firstWork.id)]);
     assert.deepEqual(warnings.map(item => item.warning_type), ['NON_PAYMENT']);
     assert.equal(warnings[0].source_ref, 'synthetic-documented-payment-evidence');
     assert.equal(history.length, 1);
     assert.equal(history[0].fact_type, 'NON_PAYMENT');
+    assert.equal(authoritativeWork.pricing_state, 'PRICE_APPROVED');
+    assert.equal(authoritativeWork.current_price_halalas, 150000);
+    assert.equal(authoritativeWork.price_state, 'PRICE_UNSET');
+    assert.equal(authoritativeWork.price_minor_units, null);
+    assert.equal(authoritativeWork.pricing_source, 'S6_APPROVED_PRICE_MOVEMENTS');
+    assert.equal(financials.current_price_halalas, 150000);
     assert.equal(similar.length, 1);
-    assert.equal(similar[0].title, 'Synthetic Similar Work');
+    assert.equal(similar[0].title, 'Synthetic UI Work');
+    assert.equal(similar[0].pricing_state, 'PRICE_APPROVED');
+    assert.equal(similar[0].current_price_halalas, 150000);
+    assert.equal(similar[0].price_state, 'PRICE_UNSET');
     assert.throws(() => database.exec("INSERT INTO customer_warning_projection(fact_id,customer_id,warning_type) VALUES ('manual','x','MANUAL')"), /view/);
+  } finally { database.close(); }
+});
+
+test('S6 PR-B backdated effective date preserves approval-order transition and current price', async () => {
+  const { database, env } = fixture();
+  try {
+    await seedCatalogs(env);
+    const customer = await createCustomer(env, 'ui-person-one', 's6-backdated-customer', customerPayload({ name: 'Backdated Customer' }));
+    const work = await createWork(env, 'ui-person-one', 's6-backdated-work', workPayload(customer.id, { title: 'Backdated Work' }));
+    const base = await createPriceChangeRequest(env, 'ui-person-one', 's6-backdated-base-request', work.id, { version: 1, movement_type: 'BASE', amount_riyals: '1500.00', reason: 'Base approved now', effective_at: '2026-08-10T12:00:00.000Z' });
+    const baseApproval = await approvePriceChangeRequest(env, 'ui-person-two', 's6-backdated-base-approval', work.id, base.id);
+    const workAfterBase = await getWork(env, work.id);
+    const increase = await createPriceChangeRequest(env, 'ui-person-two', 's6-backdated-increase-request', work.id, { version: workAfterBase.version, movement_type: 'INCREASE', amount_riyals: '200.00', reason: 'Backdated scope change', effective_at: '2026-08-01T12:00:00.000Z' });
+    const increaseApproval = await approvePriceChangeRequest(env, 'ui-person-one', 's6-backdated-increase-approval', work.id, increase.id);
+    const financials = await getWorkFinancials(env, work.id);
+    assert.equal(baseApproval.financials.current_price_halalas, 150000);
+    assert.equal(increaseApproval.financials.current_price_halalas, 170000);
+    assert.deepEqual(financials.movements.map(item => item.previous_price_halalas), [null, 150000]);
+    assert.deepEqual(financials.movements.map(item => item.new_price_halalas), [150000, 170000]);
+    assert.equal(financials.movements[1].effective_at, '2026-08-01T12:00:00.000Z');
+    assert.ok(new Date(financials.movements[0].approved_at).getTime() <= new Date(financials.movements[1].approved_at).getTime());
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM price_movements WHERE work_id=?').get(work.id).count, 2);
   } finally { database.close(); }
 });
 

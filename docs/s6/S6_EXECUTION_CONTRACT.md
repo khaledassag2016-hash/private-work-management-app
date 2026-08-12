@@ -102,3 +102,12 @@ S6 PR-A does not create payments, installments, allocation, correction/reversal 
 ## Negative final-price status
 
 `S6_NEGATIVE_FINAL_PRICE_POLICY_UNRESOLVED` is a fail-closed edge marker, not a new product decision. The normal acceptance examples use non-negative prices.
+
+
+## PR-B read integration boundary
+
+بعد دمج S6، تبقى حقولا S4 legacy `works.price_state` و`works.price_minor_units` محفوظتين كما هما لأغراض التوافق التاريخي وS4 legacy sentinel فقط. لا تمثل هذه الحقول السعر الحالي المعتمد عندما توجد منظومة S6.
+
+مصدر السعر السلطوي في Work read model وWork detail و`similar-work` هو `price_movements` المعتمدة عبر `S6_APPROVED_PRICE_MOVEMENTS`. تعرض read models الحقول المشتقة `pricing_state` و`current_price_halalas` و`pricing_source`، مع إبقاء `legacy_price_state` و`legacy_price_minor_units` للشفافية وعدم كسر S4. لا يعرض UI قيمة legacy `PRICE_UNSET` باعتبارها حقيقة حالية بعد اعتماد BASE.
+
+تُشتق `previous_price_halalas` و`new_price_halalas` من immutable approved history بترتيب `approved_at ASC, id ASC`. يبقى `effective_at` تاريخ العمل/التاريخ التجاري مستقلًا وظاهرًا، ولا يغير ترتيب الموافقة أو يسبب إعادة حساب مضللة عند وصول حركة backdated.

@@ -263,6 +263,40 @@ function softWorkDetailWarnings(work) {
 function workReadModel(work) {
   return { ...work, is_archived: Boolean(work.archived_at), soft_warnings: softWorkDetailWarnings(work) };
 }
+function workPricingReadModel(work, currentPriceHalalas) {
+  return {
+    ...workReadModel(work),
+    pricing_state: currentPriceHalalas === null ? 'PRICE_UNSET' : 'PRICE_APPROVED',
+    current_price_halalas: currentPriceHalalas,
+    pricing_source: 'S6_APPROVED_PRICE_MOVEMENTS',
+    legacy_price_state: work.price_state,
+    legacy_price_minor_units: work.price_minor_units,
+  };
+}
+async function authoritativeWorkReadModel(env, work) {
+  const movements = await listApprovedPriceMovementsRaw(env, work.id);
+  return workPricingReadModel(work, sumApprovedPriceMovements(movements));
+}
+const MAX_BULK_PRICE_LOOKUP_BINDINGS = 100;
+async function bulkCurrentPriceMap(env, works) {
+  const workIds = [...new Set(works.map(work => work.id).filter(Boolean))];
+  const currentByWork = new Map();
+  for (let offset = 0; offset < workIds.length; offset += MAX_BULK_PRICE_LOOKUP_BINDINGS) {
+    const chunk = workIds.slice(offset, offset + MAX_BULK_PRICE_LOOKUP_BINDINGS);
+    const placeholders = chunk.map((_, index) => `?${index + 1}`).join(',');
+    const rows = (await env.DB.prepare(`SELECT work_id, amount_halalas, approved_at, id
+      FROM price_movements WHERE work_id IN (${placeholders}) ORDER BY work_id ASC, approved_at ASC, id ASC`).bind(...chunk).all()).results || [];
+    for (const row of rows) {
+      const previous = currentByWork.has(row.work_id) ? currentByWork.get(row.work_id) : 0;
+      currentByWork.set(row.work_id, safeFinancialAdd(previous, Number(row.amount_halalas)));
+    }
+  }
+  return currentByWork;
+}
+async function bulkAuthoritativeWorkReadModels(env, works) {
+  const currentByWork = await bulkCurrentPriceMap(env, works);
+  return works.map(work => workPricingReadModel(work, currentByWork.has(work.id) ? currentByWork.get(work.id) : null));
+}
 function workMutationResponse(work) {
   return workReadModel(work);
 }
@@ -331,7 +365,7 @@ async function getWorkRaw(env, id) {
 }
 
 export async function getWork(env, id) {
-  return workReadModel(await getWorkRaw(env, id));
+  return authoritativeWorkReadModel(env, await getWorkRaw(env, id));
 }
 
 export async function listWorks(env, query = {}) {
@@ -341,7 +375,7 @@ export async function listWorks(env, query = {}) {
   }
   const sql = `SELECT * FROM works ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT 200`;
   const rows = (await env.DB.prepare(sql).bind(...values).all()).results || [];
-  return rows.map(workReadModel);
+  return bulkAuthoritativeWorkReadModels(env, rows);
 }
 
 export async function updateWork(env, actorUid, requestId, id, input) {
@@ -417,9 +451,10 @@ export async function getCustomerWarnings(env, customerId) {
 }
 
 export async function getSimilarWorks(env, workId) {
-  const work = await getWork(env, workId);
-  return (await env.DB.prepare(`SELECT id,customer_id,title,work_type_key,specialty_key,country,university,status,price_state,price_minor_units,created_at
+  const work = await getWorkRaw(env, workId);
+  const rows = (await env.DB.prepare(`SELECT id,customer_id,title,work_type_key,specialty_key,country,university,status,price_state,price_minor_units,created_at
     FROM works WHERE id <> ?1 AND country = ?2 AND (?3 IS NULL OR work_type_key = ?3) AND (?4 IS NULL OR specialty_key = ?4) ORDER BY created_at DESC LIMIT 50`).bind(workId, work.country, work.work_type_key, work.specialty_key).all()).results || [];
+  return bulkAuthoritativeWorkReadModels(env, rows);
 }
 
 export async function applyAuditMutation(env, actorUid, requestId, value) {
@@ -847,8 +882,15 @@ function validateMovementAmount(movementType, amountHalalas) {
 }
 
 async function listApprovedPriceMovementsRaw(env, workId) {
-  return (await env.DB.prepare(`SELECT id, work_id, price_request_id, movement_type, amount_halalas, reason, effective_at, requested_by, approved_by, requested_at, approved_at, resulting_price_halalas, request_id
-    FROM price_movements WHERE work_id=?1 ORDER BY effective_at ASC, approved_at ASC, id ASC`).bind(workId).all()).results || [];
+  const rows = (await env.DB.prepare(`SELECT id, work_id, price_request_id, movement_type, amount_halalas, reason, effective_at, requested_by, approved_by, requested_at, approved_at, resulting_price_halalas, request_id
+    FROM price_movements WHERE work_id=?1 ORDER BY approved_at ASC, id ASC`).bind(workId).all()).results || [];
+  let current = null;
+  return rows.map(row => {
+    const previous = current;
+    const next = safeFinancialAdd(previous === null ? 0 : previous, Number(row.amount_halalas));
+    current = next;
+    return { ...row, previous_price_halalas: previous, new_price_halalas: next };
+  });
 }
 
 function sumApprovedPriceMovements(movements) {
