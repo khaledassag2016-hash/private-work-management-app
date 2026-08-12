@@ -315,42 +315,39 @@ test('S5 Cancel / Archive Requests: Pending model, targets, and dual-approval me
   } finally { database.close(); }
 });
 
-test('S5 Archive Request: retains all historical records and blocks direct updates on requests', async () => {
+test('S5 Archive Request: both request directions, self-approval rejection, status preservation, and retained history', async () => {
   const { database, env } = fixture();
   try {
-    const { work } = await setupCustomerAndWork(env);
+    const { customer, work } = await setupCustomerAndWork(env);
 
-    // Create some work events and title history beforehand
+    // Direction 1: User 1 requests ARCHIVE, User 2 approves.
     await createWorkEvent(env, 'uid-one', 'req-ev-1', work.id, { event_type: 'NOTE', description: 'Step 1 done', effective_at: '2026-08-11T12:00:00.000Z' });
     await changeWorkTitle(env, 'uid-one', 'req-ti-1', work.id, { version: work.version, new_title: 'Final Product', reason: 'Ready' });
-
     const workV2 = await getWork(env, work.id);
+    const archiveReqOne = await createCancelArchiveRequest(env, 'uid-one', 'req-arch-1', work.id, { version: workV2.version, action: 'ARCHIVE', reason: 'Archiving finished work' });
+    assert.equal(archiveReqOne.target_execution_status, null);
+    await assert.rejects(approveCancelArchiveRequest(env, 'uid-one', 'req-arch-self-1', work.id, archiveReqOne.id), /SELF_APPROVAL_REJECTED/);
+    const approvedOne = await approveCancelArchiveRequest(env, 'uid-two', 'req-arch-app-1', work.id, archiveReqOne.id);
+    assert.equal(approvedOne.work.status, workV2.status);
+    assert.equal(approvedOne.work.is_archived, true);
 
-    // Create ARCHIVE request (User 1 requests)
-    const archiveReq = await createCancelArchiveRequest(env, 'uid-one', 'req-arch-1', work.id, { version: workV2.version, action: 'ARCHIVE', reason: 'Archiving finished work' });
-    assert.equal(archiveReq.target_execution_status, null);
-
-    // User 2 approves User 1's archive request
-    const approvedResult = await approveCancelArchiveRequest(env, 'uid-two', 'req-arch-app-1', work.id, archiveReq.id);
-    assert.equal(approvedResult.work.status, workV2.status);
-    assert.equal(approvedResult.work.is_archived, true);
-
-    // Archive retains all work records and does not delete anything!
-    const archivedWork = await getWork(env, work.id);
-    assert.equal(archivedWork.id, work.id);
-    assert.equal(archivedWork.status, workV2.status);
-    assert.equal(archivedWork.is_archived, true);
+    const archivedOne = await getWork(env, work.id);
+    assert.equal(archivedOne.status, workV2.status);
+    assert.equal(archivedOne.is_archived, true);
     assert.equal((await listWorkArchiveHistory(env, work.id)).length, 1);
+    assert.equal((await listWorkEvents(env, work.id)).length, 1);
+    assert.equal((await listWorkTitleHistory(env, work.id))[0].new_title, 'Final Product');
 
-    const events = await listWorkEvents(env, work.id);
-    assert.equal(events.length, 1);
-    assert.equal(events[0].description, 'Step 1 done');
+    // Direction 2: User 2 requests ARCHIVE, User 1 approves on a separate work.
+    const secondWork = await createWork(env, 'uid-one', 'work-create-2', { customer_id: customer.id, title: 'Second Work', country: 'SA', work_type_key: 'REPORT', specialty_key: 'IT', university: 'Synthetic Uni' });
+    const archiveReqTwo = await createCancelArchiveRequest(env, 'uid-two', 'req-arch-2', secondWork.id, { version: secondWork.version, action: 'ARCHIVE', reason: 'Second archive direction' });
+    await assert.rejects(approveCancelArchiveRequest(env, 'uid-two', 'req-arch-self-2', secondWork.id, archiveReqTwo.id), /SELF_APPROVAL_REJECTED/);
+    const approvedTwo = await approveCancelArchiveRequest(env, 'uid-one', 'req-arch-app-2', secondWork.id, archiveReqTwo.id);
+    assert.equal(approvedTwo.work.status, secondWork.status);
+    assert.equal(approvedTwo.work.is_archived, true);
+    assert.equal((await listWorkArchiveHistory(env, secondWork.id)).length, 1);
 
-    const titleHist = await listWorkTitleHistory(env, work.id);
-    assert.equal(titleHist.length, 1);
-    assert.equal(titleHist[0].new_title, 'Final Product');
-
-    // Prevent any DELETE/UPDATE of requests
+    // Prevent any DELETE/UPDATE of requests.
     assert.throws(() => database.exec(`DELETE FROM cancel_archive_requests`), /cancel_archive_requests is append only/);
     assert.throws(() => database.exec(`UPDATE cancel_archive_requests SET reason = 'hack'`), /already finalized|cannot update request fields/);
   } finally { database.close(); }

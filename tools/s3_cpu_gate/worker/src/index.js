@@ -744,7 +744,7 @@ export default {
     }
     try {
       const auth = await readAuthorized(request, env, requestId, scenario);
-      if (url.pathname === '/private/ping') return Response.json({ ok: true, requestId, role: auth.user.role, uid: auth.user.uid });
+      if (url.pathname === '/private/ping') return Response.json({ ok: true, data: { role: auth.user.role, uid: auth.user.uid }, requestId });
       if (isAuditMutation) {
         const body = await parseRequestJson(request);
         const audit = await applyAuditMutation(env, auth.user.uid, requestId, body.value);

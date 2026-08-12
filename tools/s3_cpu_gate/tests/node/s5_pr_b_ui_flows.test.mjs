@@ -480,15 +480,53 @@ describe('S5 PR-B UI Flows', () => {
     });
   });
 
-  it('19. no invented collection-state semantics', () => {
+  it('19. execution and collection are separate without deriving collection from price_state', () => {
     setupTestEnv();
-    state.selectedWork = { id: 'w1', version: 1, is_archived: false };
+    state.selectedWork = { id: 'w1', version: 1, status: 'IN_PROGRESS', price_state: 'PRICE_UNSET', is_archived: false };
     const html = testApp.workPage();
-    // Verify absolutely no collection/billing/pricing words exist in S5
-    assert.doesNotMatch(html, /collection|reversal|settlement|discount|overdue|unresolved/i);
+    assert.match(html, /data-execution-status/);
+    assert.match(html, /حالة التنفيذ/);
+    assert.match(html, /data-collection-status/);
+    assert.match(html, /حالة التحصيل/);
+    const collectionCard = html.split('data-collection-status')[1].split('</article>')[0];
+    assert.match(collectionCard, /المصدر المالي الحاكم غير متاح ضمن S5/);
+    assert.doesNotMatch(collectionCard, /PRICE_UNSET|سعر غير محدد|سعر صفري/);
   });
 
-  it('20. source/package asset parity where required', () => {
+  it('20. authorized SPA session reads uid and role from ping data envelope', async () => {
+    setupTestEnv();
+    window.__PRIVATE_WORK_APP_CONFIG__.email = 'user-2@test.com';
+    window.__PRIVATE_WORK_APP_CONFIG__.getIdToken = async () => 'mock-token';
+    globalThis.fetch = async (url) => {
+      const path = new URL(url).pathname;
+      const data = path === '/private/ping'
+        ? { uid: 'uid-two', role: 'person_2' }
+        : path.startsWith('/api/catalog/') || path === '/api/customers' || path === '/api/works' ? [] : {};
+      return { ok: true, json: async () => ({ ok: true, data }) };
+    };
+    await testApp.authenticateExistingSession();
+    assert.equal(state.auth.uid, 'uid-two');
+    assert.equal(state.auth.role, 'person_2');
+    delete window.__PRIVATE_WORK_APP_CONFIG__.getIdToken;
+  });
+
+  it('21. successful mutation with failed authoritative refetch shows no success state', async () => {
+    setupTestEnv();
+    state.selectedWork = { id: 'w1', version: 1, title: 'Old Title' };
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) return { ok: true, json: async () => ({ ok: true, data: { id: 'w1', title: 'New Title' } }) };
+      return { ok: false, status: 503, json: async () => ({ ok: false, code: 'HTTP_503' }) };
+    };
+    globalThis.FormData = class FormData { entries() { return [['new_title', 'New Title'], ['reason', 'Fix title']]; } };
+    await testApp.submitTitle({ preventDefault: () => {}, currentTarget: {} });
+    assert.equal(state.view, 'works');
+    assert.equal(state.selectedWork, null);
+    assert.equal(state.busy, false);
+  });
+
+  it('22. source/package asset parity where required', () => {
     const srcContent = readFileSync(fileURLToPath(new URL('../../src/worker/assets/app.js', import.meta.url)), 'utf8');
     const pkgContent = readFileSync(fileURLToPath(new URL('../../worker/assets/app.js', import.meta.url)), 'utf8');
     assert.equal(srcContent, pkgContent);

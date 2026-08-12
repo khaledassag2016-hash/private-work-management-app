@@ -33,6 +33,7 @@ const labels = {
   WORK_COUNTRY_REQUIRED: 'الدولة مطلوبة لكل عمل.',
   JSON_INVALID: 'تعذر قراءة بيانات الطلب. أعد المحاولة.',
   NETWORK_ERROR: 'تعذر الاتصال بالخدمة. تحقق من الشبكة ثم أعد المحاولة.',
+  POST_MUTATION_REFRESH_FAILED: 'تم حفظ التغيير في الخادم، لكن تعذر تحديث العرض الحالي. أعد فتح العمل أو حدّث الصفحة للتحقق من الحالة السلطوية.',
   HTTP_401: 'انتهت الجلسة أو يلزم تسجيل الدخول مجددًا.',
   HTTP_403: 'لا تملك صلاحية تنفيذ هذه العملية.',
   HTTP_404: 'السجل المطلوب غير موجود أو لم يعد متاحًا.',
@@ -281,6 +282,20 @@ function workPage() {
     <button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button>
   </section>
   ${softWarningsMarkup(work)}
+
+  <section class="grid grid-2" data-execution-collection-separation>
+    <article class="card" data-execution-status>
+      <h2>حالة التنفيذ</h2>
+      <p>الحالة السلطوية الحالية للعمل هي:</p>
+      <div class="badge ok">${escapeHtml(statusText)}</div>
+      <p class="hint">تُغيّر عبر مسارات التنفيذ وسجل الحالات فقط.</p>
+    </article>
+    <article class="card" data-collection-status>
+      <h2>حالة التحصيل</h2>
+      <p>لا توجد حالة تحصيل مشتقة أو مخترعة داخل S5.</p>
+      <p class="hint">المصدر المالي الحاكم غير متاح ضمن S5؛ سيأتي من S7. لا تُشتق هذه الحدود من <code>price_state</code>.</p>
+    </article>
+  </section>
 
   <section class="grid grid-2">
     <article class="card">
@@ -654,8 +669,7 @@ async function submitWork(event) {
     const result = values.id ? await api(`/api/works/${encodeURIComponent(values.id)}`, { method: 'PATCH', body: { ...body, version: Number(values.version) } }) : await api('/api/works', { method: 'POST', body });
     state.modal = null;
     await loadDashboard();
-    await openWork(result.id);
-    toast(values.id ? 'تم تحديث العمل.' : 'تم إنشاء العمل بسعر غير محدد.', '');
+    await refreshWorkAfterMutation(result.id, values.id ? 'تم تحديث العمل.' : 'تم إنشاء العمل بسعر غير محدد.');
   });
 }
 async function submitCatalog(event) { event.preventDefault(); const values = formObject(event.currentTarget); await submitFlow(async () => { await api(`/api/catalog/${encodeURIComponent(values.kind)}`, { method: 'POST', body: { value_key: values.value_key, label: values.label } }); state.modal = null; await loadCatalogs(); render(); toast('أضيفت القيمة وأصبحت متاحة دون تعديل source code.', ''); }); }
@@ -690,7 +704,12 @@ async function refreshWorkCustomerContext(customerId, data = {}) {
 async function submitFlow(action) { if (state.busy) return; setBusy(true); try { await action(); } catch (error) { toast(errorMessage(error.code), 'error'); } finally { setBusy(false); } }
 async function refreshForView() { try { if (state.view === 'dashboard' || state.view === 'customers' || state.view === 'works') await loadDashboard(); if (state.view === 'catalogs') await loadCatalogs(); render(); } catch (error) { toast(errorMessage(error.code), 'error'); } }
 async function openCustomer(customerId) { try { state.selectedCustomer = null; state.view = 'customer'; render(); const [customer, works, history, warnings] = await Promise.all([api(`/api/customers/${encodeURIComponent(customerId)}`), api(`/api/works${queryString({ customer_id: customerId })}`), api(`/api/customers/${encodeURIComponent(customerId)}/history`), api(`/api/customers/${encodeURIComponent(customerId)}/warnings`)]); state.selectedCustomer = { ...customer, works, history, warnings }; render(); } catch (error) { toast(errorMessage(error.code), 'error'); state.view = 'customers'; render(); } }
-async function openWork(workId) {
+async function refreshWorkAfterMutation(workId, successMessage) {
+  const refreshed = await openWork(workId, { reason: 'post-mutation' });
+  if (refreshed) toast(successMessage, '');
+  return refreshed;
+}
+async function openWork(workId, { reason = 'navigation' } = {}) {
   try {
     state.selectedWork = null;
     state.view = 'work';
@@ -714,10 +733,12 @@ async function openWork(workId) {
       requests
     };
     render();
+    return true;
   } catch (error) {
-    toast(errorMessage(error.code), 'error');
+    toast(errorMessage(reason === 'post-mutation' ? 'POST_MUTATION_REFRESH_FAILED' : error.code), 'error');
     state.view = 'works';
     render();
+    return false;
   }
 }
 
@@ -739,8 +760,7 @@ async function submitEvent(event) {
         effective_at: parsed.toISOString()
       }
     });
-    await openWork(state.selectedWork.id);
-    toast('تم تسجيل الحدث بنجاح.', '');
+    await refreshWorkAfterMutation(state.selectedWork.id, 'تم تسجيل الحدث بنجاح.');
   });
 }
 
@@ -759,8 +779,7 @@ async function submitTitle(event) {
           reason: values.reason
         }
       });
-      await openWork(state.selectedWork.id);
-      toast('تم تحديث عنوان العمل والتاريخ بنجاح.', '');
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تحديث عنوان العمل والتاريخ بنجاح.');
     } catch (error) {
       if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
         toast(errorMessage('VERSION_CONFLICT'), 'error');
@@ -787,8 +806,7 @@ async function submitStatus(event) {
           reason: values.reason
         }
       });
-      await openWork(state.selectedWork.id);
-      toast('تم تحديث حالة التنفيذ بنجاح.', '');
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تحديث حالة التنفيذ بنجاح.');
     } catch (error) {
       if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
         toast(errorMessage('VERSION_CONFLICT'), 'error');
@@ -816,8 +834,7 @@ async function submitCancel(event) {
           target_execution_status: values.target_execution_status
         }
       });
-      await openWork(state.selectedWork.id);
-      toast('تم تقديم طلب الإلغاء، بانتظار موافقة الحساب الآخر.', '');
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تقديم طلب الإلغاء، بانتظار موافقة الحساب الآخر.');
     } catch (error) {
       if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
         toast(errorMessage('VERSION_CONFLICT'), 'error');
@@ -844,8 +861,7 @@ async function submitArchive(event) {
           reason: values.reason
         }
       });
-      await openWork(state.selectedWork.id);
-      toast('تم تقديم طلب الأرشفة، بانتظار موافقة الحساب الآخر.', '');
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم تقديم طلب الأرشفة، بانتظار موافقة الحساب الآخر.');
     } catch (error) {
       if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
         toast(errorMessage('VERSION_CONFLICT'), 'error');
@@ -864,8 +880,7 @@ async function handleApproveRequest(reqId) {
         method: 'POST',
         body: {}
       });
-      await openWork(state.selectedWork.id);
-      toast('تم اعتماد الطلب وتطبيقه بنجاح بموجب الموافقة الثنائية.', '');
+      await refreshWorkAfterMutation(state.selectedWork.id, 'تم اعتماد الطلب وتطبيقه بنجاح بموجب الموافقة الثنائية.');
     } catch (error) {
       if (error.code === 'VERSION_CONFLICT' || error.code === 'STALE_VERSION') {
         toast(errorMessage('VERSION_CONFLICT'), 'error');
@@ -877,5 +892,5 @@ async function handleApproveRequest(reqId) {
   });
 }
 
-if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, workPage, softWarningsMarkup, softWarningLabel, openWork, openNewWork, refreshWorkCustomerContext, preAgreementCanSubmitNewWork, preAgreementContextMarkup, submitWork, errorMessage, submitEvent, submitTitle, submitStatus, submitCancel, submitArchive, handleApproveRequest });
+if (window.__PRIVATE_WORK_APP_TEST__) Object.assign(window.__PRIVATE_WORK_APP_TEST__, { getState: () => state, customerForm, workForm, workPage, softWarningsMarkup, softWarningLabel, openWork, authenticateExistingSession, openNewWork, refreshWorkCustomerContext, preAgreementCanSubmitNewWork, preAgreementContextMarkup, submitWork, errorMessage, submitEvent, submitTitle, submitStatus, submitCancel, submitArchive, handleApproveRequest });
 authenticateExistingSession();
