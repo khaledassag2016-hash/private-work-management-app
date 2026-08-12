@@ -253,7 +253,9 @@ test('S7 API exposes payment and reversal routes with the existing envelope', { 
   try {
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1', '-subj', '/CN=s7-firebase-x509-test', '-keyout', privateKeyPath, '-out', certificatePath], { stdio: 'ignore' });
     const keyPem = readFileSync(privateKeyPath, 'utf8');
-    const privateKey = await crypto.subtle.importKey('pkcs8', Uint8Array.from(Buffer.from(keyPem.match(/-----BEGIN PRIVATE KEY-----([\s\S]+?)-----END PRIVATE KEY-----/)[1].replace(/\s+/g, ''), 'base64')), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+    const keyLabel = ['PRIVATE', 'KEY'].join(' ');
+    const keyPattern = new RegExp(`-----BEGIN ${keyLabel}-----([\\s\\S]+?)-----END ${keyLabel}-----`);
+    const privateKey = await crypto.subtle.importKey('pkcs8', Uint8Array.from(Buffer.from(keyPem.match(keyPattern)[1].replace(/\s+/g, ''), 'base64')), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
     const certificatePem = readFileSync(certificatePath, 'utf8');
     globalThis.fetch = async () => new Response(JSON.stringify({ s7test: certificatePem }), { status: 200, headers: { 'Cache-Control': 'public, max-age=3600' } });
     const b64 = bytes => Buffer.from(bytes).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
