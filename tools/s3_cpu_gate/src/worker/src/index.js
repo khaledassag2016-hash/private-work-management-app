@@ -558,6 +558,7 @@ async function handleApi(request, env, requestId, scenario, user) {
     if (method === 'POST') return Response.json({ ok: true, data: await createCommonExpense(env, user.uid, requestId, body), requestId }, { status: 201 });
   }
   if (parts[1] === 'settlements') {
+    if (parts.length === 2 && method === 'GET') return Response.json({ ok: true, data: await listSettlementSnapshots(env, url.searchParams.get('period_key') || ''), requestId });
     if (parts.length === 3 && parts[2] === 'preview' && method === 'GET') return Response.json({ ok: true, data: await getSettlementPreview(env, url.searchParams.get('period_key') || '', Object.fromEntries(url.searchParams.entries())), requestId });
     if (parts.length === 4 && parts[3] === 'close' && method === 'POST') return Response.json({ ok: true, data: await closeSettlement(env, user.uid, requestId, decodeURIComponent(parts[2]), body), requestId }, { status: 201 });
     if (parts.length === 4 && parts[3] === 'reopen-requests') {
