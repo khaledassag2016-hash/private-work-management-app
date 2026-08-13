@@ -45,5 +45,5 @@ The final evidence stamp must record the exact final PR head and matching final-
 | Paid service | NO |
 | Secrets added | NO |
 | Stable refs moved | NO |
-| Final PR head | TO_BE_STAMPED_AFTER_REPAIR |
-| Final-head CI run IDs | TO_BE_STAMPED_AFTER_REPAIR |
+| Final PR head | `af6c9ff2a5bc20699a38db2b984fe90b8b7a0d69` (pre-evidence final candidate) |
+| Final-head CI run IDs | `31731866240`, `31731866244`, `31731866295`, `31731866296`, `31731866245` (all successful on this candidate head) |
