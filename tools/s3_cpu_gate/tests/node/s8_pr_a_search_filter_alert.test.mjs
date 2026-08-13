@@ -154,17 +154,24 @@ test('S8 search filters a supported dynamic catalog value without source change'
   } finally { database.close(); }
 });
 
-test('S8 alert settings are auditable and unresolved clocks fail closed', async () => {
+test('D-017 configures FR-029 clocks with authoritative NO_PRICE, NO_REPLY, and NO_PAYMENT anchors', async () => {
   const { database, env } = fixture();
   try {
-    seedSearchFixture(database);
+    const { unpaid } = seedSearchFixture(database); const noPrice = 'WORK-S8-004';
+    database.prepare('UPDATE works SET created_at=?,confirmed_at=? WHERE id=?').run('2026-08-01T00:00:00.000Z', null, noPrice);
+    database.prepare('INSERT INTO work_status_history(id,work_id,old_status,new_status,reason,changed_at,changed_by,request_id) VALUES (?,?,?,?,?,?,?,?)').run('status-s8-d017-1', unpaid, 'IN_PROGRESS', 'WAITING_CLIENT_RESPONSE', 'Synthetic D-017 reply transition', '2026-08-16T00:00:00.000Z', 's8-uid-one', 'status-s8-d017-1');
     assert.deepEqual((await listS8AlertSettings(env)).map(item => item.state), ['NOT_CONFIGURED', 'NOT_CONFIGURED', 'NOT_CONFIGURED']);
-    assert.deepEqual((await getS8Alerts(env)).alerts.map(item => item.state), ['NOT_CONFIGURED', 'NOT_CONFIGURED', 'NOT_CONFIGURED']);
+    assert.deepEqual((await getS8Alerts(env, {}, { testNow: '2026-08-20T00:00:00.000Z' })).alerts.map(item => item.state), ['NOT_CONFIGURED', 'NOT_CONFIGURED', 'NOT_CONFIGURED']);
     const configured = await upsertS8AlertSetting(env, 's8-uid-one', 's8-alert-no-price', { alert_type: 'NO_PRICE', threshold_days: 7 }); assert.equal(configured.threshold_days, 7);
     const replay = await upsertS8AlertSetting(env, 's8-uid-two', 's8-alert-no-price', { alert_type: 'NO_PRICE', threshold_days: 7 }); assert.equal(replay.idempotent_replay, true);
+    await upsertS8AlertSetting(env, 's8-uid-one', 's8-alert-no-reply', { alert_type: 'NO_REPLY', threshold_days: 4 });
+    await upsertS8AlertSetting(env, 's8-uid-one', 's8-alert-no-payment', { alert_type: 'NO_PAYMENT', threshold_days: 7 });
     await assert.rejects(upsertS8AlertSetting(env, 's8-uid-two', 's8-alert-no-price', { alert_type: 'NO_PAYMENT', threshold_days: 7 }), /S8_ALERT_REQUEST_ID_REUSE/);
-    const alerts = await getS8Alerts(env, { alert_type: 'NO_PRICE' }, { testNow: '2026-08-20T00:00:00.000Z' }); assert.equal(alerts.now, '2026-08-20T00:00:00.000Z'); assert.deepEqual(alerts.alerts, [{ alert_type: 'NO_PRICE', state: 'CLOCK_ANCHOR_UNRESOLVED', threshold_days: 7, items: [] }]);
-    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE entity_type='s8_alert_setting'").get().count, 1);
+    const alerts = await getS8Alerts(env, {}, { testNow: '2026-08-20T00:00:00.000Z' }); assert.equal(alerts.now, '2026-08-20T00:00:00.000Z'); assert.deepEqual(alerts.alerts.map(item => item.state), ['CONFIGURED', 'CONFIGURED', 'CONFIGURED']);
+    const byType = new Map(alerts.alerts.map(item => [item.alert_type, item])); const noPriceItem = byType.get('NO_PRICE').items.find(item => item.work_id === noPrice); assert.equal(noPriceItem.anchor_at, '2026-08-01T00:00:00.000Z'); assert.equal(noPriceItem.current_price_halalas, null); assert.equal(noPriceItem.age_days, 19);
+    const noReplyItem = byType.get('NO_REPLY').items.find(item => item.work_id === unpaid); assert.equal(noReplyItem.anchor_at, '2026-08-16T00:00:00.000Z'); assert.equal(noReplyItem.age_days, 4);
+    const noPaymentItem = byType.get('NO_PAYMENT').items.find(item => item.work_id === unpaid); assert.equal(noPaymentItem.anchor_at, '2026-08-12T10:00:00.000Z'); assert.equal(noPaymentItem.current_price_halalas, 200000); assert.equal(noPaymentItem.approved_paid_halalas, 0); assert.equal(noPaymentItem.age_days, 7);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE entity_type='s8_alert_setting'").get().count, 3);
     assert.throws(() => database.exec('UPDATE audit_log SET actor_uid=\'tamper\''), /audit log is append only/);
     await assert.rejects(upsertS8AlertSetting(env, 's8-uid-one', 's8-alert-invalid', { alert_type: 'NO_REPLY', threshold_days: 0 }), /S8_ALERT_THRESHOLD_INVALID/);
   } finally { database.close(); }
@@ -176,8 +183,8 @@ test('S8 search and alert query budgets remain bounded on large synthetic fixtur
     seedSearchFixture(database); database.readQueries = 0; database.bindingWidths = [];
     const search = await searchWorksS8(env, { q: 'Synthetic Search Work', page_size: 100, include_archived: true });
     assert.equal(search.items.length, 100); assert.equal(database.readQueries, 1); assert.ok(Math.max(...database.bindingWidths, 0) <= 100);
-    database.readQueries = 0; database.bindingWidths = []; await getS8Alerts(env); assert.equal(database.readQueries, 1); assert.ok(Math.max(...database.bindingWidths, 0) <= 100);
-    console.log(`S8_D1_MEASUREMENT search_queries=1 search_max_bind=5 alert_queries=1 alert_max_bind=0 works=205`);
+    await upsertS8AlertSetting(env, 's8-uid-one', 's8-budget-alert', { alert_type: 'NO_PRICE', threshold_days: 7 }); database.readQueries = 0; database.bindingWidths = []; await getS8Alerts(env, {}, { testNow: '2026-08-20T00:00:00.000Z' }); assert.equal(database.readQueries, 2); assert.ok(Math.max(...database.bindingWidths, 0) <= 100);
+    console.log(`S8_D1_MEASUREMENT search_queries=1 search_max_bind=5 alert_queries=2 alert_max_bind=2 works=205`);
   } finally { database.close(); }
 });
 
@@ -218,7 +225,7 @@ test('S8 search and alert API routes preserve authenticated envelopes', { skip: 
     const now = Math.floor(Date.now() / 1000); const signed = `${json({ alg: 'RS256', kid: 's8test', typ: 'JWT' })}.${json({ aud: 'demo-project', iss: 'https://securetoken.google.com/demo-project', sub: 's8-uid-one', iat: now - 10, auth_time: now - 10, exp: now + 3600 })}`; const token = `${signed}.${b64(new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, new TextEncoder().encode(signed))))}`;
     const searchResponse = await worker.fetch(new Request('https://example.test/api/search/works?q=%D8%B9%D9%86%D9%88%D8%A7%D9%86&page_size=10', { headers: { authorization: `Bearer ${token}`, 'x-s3-run-id': 's8-pr-a', 'x-s3-request-id': 's8-api-search' } }), env); assert.equal(searchResponse.status, 200); const searchPayload = await searchResponse.json(); assert.equal(searchPayload.ok, true); assert.equal(searchPayload.requestId, 's8-api-search'); assert.ok(Array.isArray(searchPayload.data.items));
     const settingResponse = await worker.fetch(new Request('https://example.test/api/alerts/settings', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-s3-run-id': 's8-pr-a', 'x-s3-request-id': 's8-api-setting' }, body: JSON.stringify({ alert_type: 'NO_PAYMENT', threshold_days: 9 }) }), env); assert.equal(settingResponse.status, 201); assert.equal((await settingResponse.json()).data.threshold_days, 9);
-    const clientClockAttempt = await worker.fetch(new Request('https://example.test/api/alerts?alert_type=NO_PAYMENT&now=2026-08-20T00:00:00.000Z', { headers: { authorization: `Bearer ${token}`, 'x-s3-run-id': 's8-pr-a', 'x-s3-request-id': 's8-api-alert-clock' } }), env); assert.equal(clientClockAttempt.status, 200); const clientClockPayload = await clientClockAttempt.json(); assert.equal(clientClockPayload.data.now, null); assert.equal(clientClockPayload.data.alerts[0].state, 'CLOCK_ANCHOR_UNRESOLVED');
+    const clientClockAttempt = await worker.fetch(new Request('https://example.test/api/alerts?alert_type=NO_PAYMENT&now=2026-08-20T00:00:00.000Z', { headers: { authorization: `Bearer ${token}`, 'x-s3-run-id': 's8-pr-a', 'x-s3-request-id': 's8-api-alert-clock' } }), env); assert.equal(clientClockAttempt.status, 200); const clientClockPayload = await clientClockAttempt.json(); assert.notEqual(clientClockPayload.data.now, '2026-08-20T00:00:00.000Z'); assert.equal(clientClockPayload.data.alerts[0].state, 'CONFIGURED');
     const denied = await worker.fetch(new Request('https://example.test/api/search/works'), env); assert.equal(denied.status, 401); const deniedPayload = await denied.json(); assert.equal(deniedPayload.ok, false); assert.equal(deniedPayload.code, 'TOKEN_MISSING'); assert.equal(typeof deniedPayload.requestId, 'string');
   } finally { globalThis.fetch = originalFetch; database.close(); }
 });

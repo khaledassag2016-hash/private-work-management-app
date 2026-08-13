@@ -88,6 +88,7 @@
     "tests/node/s7_pr_c_ui_acceptance.test.mjs",
     "tests/node/s8_pr_a_search_filter_alert.test.mjs",
     "tests/node/s8_pr_b_analytics_export.test.mjs",
+    "tests/node/s8_pr_c_ui_e2e.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",

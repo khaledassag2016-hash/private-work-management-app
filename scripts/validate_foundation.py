@@ -66,7 +66,7 @@ EXPECTED_DECISION_MAPPING = {
     "Q-003": "D-011",
     "Q-004": "D-012",
 }
-EXPECTED_RECORDED_DECISIONS = {f"D-{number:03d}" for number in range(1, 17)}
+EXPECTED_RECORDED_DECISIONS = {f"D-{number:03d}" for number in range(1, 18)}
 
 
 def expected_stage_map() -> dict[str, str]:
