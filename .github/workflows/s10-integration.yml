@@ -1,0 +1,149 @@
+name: S10 Integration Backup Restore
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/s10_integration.test.mjs'
+      - 'docs/s10/**'
+      - 'tools/s3_cpu_gate/**'
+      - 'tools/s9_ux/**'
+      - 'scripts/**'
+      - '.github/workflows/s10-integration.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/s10_integration.test.mjs'
+      - 'docs/s10/**'
+      - 'tools/s3_cpu_gate/**'
+      - 'tools/s9_ux/**'
+      - 'scripts/**'
+      - '.github/workflows/s10-integration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  s10-final-head-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: 'true'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout final PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Read authoritative tool versions
+        id: versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          d=json.load(open('tools/s3_cpu_gate/src/version-manifest.json',encoding='utf-8'))['tools']
+          values={
+            'python':d['python']['version'],
+            'node':d['node']['version'],
+            'npm':d['npm']['version'],
+            'powershell':d['powershell']['version'],
+            'pester':d['pester']['version'],
+            'psscriptanalyzer':d['psscriptanalyzer']['version'],
+            'pwsh_asset':d['powershell']['assets']['linux_x64']['file'],
+            'pwsh_sha':d['powershell']['assets']['linux_x64']['sha256'],
+            'pwsh_base':d['powershell']['releaseBaseUrl'],
+          }
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as f:
+            for k,v in values.items(): f.write(f'{k}={v}\n')
+          PY
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '${{ steps.versions.outputs.python }}'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '${{ steps.versions.outputs.node }}'
+
+      - name: Install exact npm
+        run: npm install --global npm@${{ steps.versions.outputs.npm }} --no-audit --no-fund
+
+      - name: Install exact PowerShell
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/pwsh"
+          mkdir -p "$dest"
+          curl -fsSL "${{ steps.versions.outputs.pwsh_base }}/${{ steps.versions.outputs.pwsh_asset }}" -o "$RUNNER_TEMP/pwsh.tar.gz"
+          echo "${{ steps.versions.outputs.pwsh_sha }}  $RUNNER_TEMP/pwsh.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/pwsh.tar.gz" -C "$dest"
+          chmod +x "$dest/pwsh"
+          echo "$dest" >> "$GITHUB_PATH"
+
+      - name: Install exact PowerShell test modules
+        shell: pwsh
+        run: |
+          $moduleRoot=Join-Path $env:RUNNER_TEMP 'psmodules'
+          New-Item -ItemType Directory -Path $moduleRoot -Force|Out-Null
+          Save-Module Pester -RequiredVersion '${{ steps.versions.outputs.pester }}' -Path $moduleRoot -Repository PSGallery -Force
+          Save-Module PSScriptAnalyzer -RequiredVersion '${{ steps.versions.outputs.psscriptanalyzer }}' -Path $moduleRoot -Repository PSGallery -Force
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "PSModulePath=$moduleRoot$([IO.Path]::PathSeparator)$env:PSModulePath"
+
+      - name: Verify exact active versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(python -c 'import platform;print(platform.python_version())')" = '${{ steps.versions.outputs.python }}'
+          test "$(node --version)" = 'v${{ steps.versions.outputs.node }}'
+          test "$(npm --version)" = '${{ steps.versions.outputs.npm }}'
+          test "$(pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()')" = '${{ steps.versions.outputs.powershell }}'
+
+      - name: Verify exact PowerShell module versions
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath 'tools/s3_cpu_gate/src/version-manifest.json' -Raw | ConvertFrom-Json
+          Import-Module Pester -RequiredVersion ([string]$manifest.tools.pester.version) -Force
+          Import-Module PSScriptAnalyzer -RequiredVersion ([string]$manifest.tools.psscriptanalyzer.version) -Force
+          if ((Get-Module Pester).Version.ToString() -ne [string]$manifest.tools.pester.version) { throw 'PESTER_VERSION_MISMATCH' }
+          if ((Get-Module PSScriptAnalyzer).Version.ToString() -ne [string]$manifest.tools.psscriptanalyzer.version) { throw 'PSSCRIPTANALYZER_VERSION_MISMATCH' }
+
+      - name: Reconstruct authoritative requirements
+        run: python scripts/reconstruct_requirements.py --output docs/APPROVED_REQUIREMENTS.docx
+      - name: Foundation validation
+        run: python scripts/validate_foundation.py
+      - name: S2 architecture validation
+        run: python scripts/validate_s2.py
+
+      - name: S10 focused integration security concurrency restore performance
+        run: node --test tests/s10_integration.test.mjs
+
+      - name: Full Node regression including all prior stages
+        run: |
+          node --check tools/s3_cpu_gate/src/worker/src/index.js
+          node --test tools/s3_cpu_gate/tests/node/audit_worker.test.mjs tools/s3_cpu_gate/tests/node/s4_gate1.test.mjs tools/s3_cpu_gate/tests/node/s4_gate2_acceptance.test.mjs tools/s3_cpu_gate/tests/node/s4_gate2_supervisory_repair.test.mjs tools/s3_cpu_gate/tests/node/s4_gate2_ui.test.mjs tools/s3_cpu_gate/tests/node/s4_gate3_final_verification.test.mjs tools/s3_cpu_gate/tests/node/s4_final_supervisory_repair.test.mjs tools/s3_cpu_gate/tests/node/s5_pr_a_domain_data_api.test.mjs tools/s3_cpu_gate/tests/node/s5_pr_b_ui_flows.test.mjs tools/s3_cpu_gate/tests/node/s6_pr_a_financial_core.test.mjs tools/s3_cpu_gate/tests/node/s6_pr_b_ui_acceptance.test.mjs tools/s3_cpu_gate/tests/node/s6_pr_b_query_budget.test.mjs tools/s3_cpu_gate/tests/node/s7_pr_a_payments.test.mjs tools/s3_cpu_gate/tests/node/s7_pr_b_settlement_core.test.mjs tools/s3_cpu_gate/tests/node/s7_pr_c_ui_acceptance.test.mjs tools/s3_cpu_gate/tests/node/s8_pr_a_search_filter_alert.test.mjs tools/s3_cpu_gate/tests/node/s8_pr_b_analytics_export.test.mjs tools/s3_cpu_gate/tests/node/s8_pr_c_ui_e2e.test.mjs
+
+      - name: Final S9 Playwright and accessibility regression
+        working-directory: tools/s9_ux
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node -p \"require('./node_modules/@playwright/test/package.json').version\")" = '1.62.0'
+          test "$(node -p \"require('./node_modules/@axe-core/playwright/package.json').version\")" = '4.12.1'
+          npx playwright install --with-deps chromium firefox webkit
+          npm run test:level-a
+          npm run test:level-b
+
+      - name: PowerShell parser, Pester, and PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          tools/s3_cpu_gate/build/Invoke-Phase1PowerShellValidation.ps1 `
+            -Root tools/s3_cpu_gate `
+            -ScopeName payload `
+            -SettingsPath tools/s3_cpu_gate/settings/PSScriptAnalyzerSettings.psd1 `
+            -ReportDirectory phase1-reports/powershell-payload
+
+      - name: Python tests
+        run: python tools/s3_cpu_gate/validation/run_python_tests.py --source-root tools/s3_cpu_gate --output phase1-reports/python-tests.json
+
+      - name: Secret scan
+        run: python tools/s3_cpu_gate/src/python/secret_scan.py tools/s3_cpu_gate
+
+      - name: Payload integrity and ZIP safety
+        run: python tools/s3_cpu_gate/build/phase1_integrity.py --root tools/s3_cpu_gate --report phase1-reports/payload-integrity.json --zip-out phase1-reports/payload.zip

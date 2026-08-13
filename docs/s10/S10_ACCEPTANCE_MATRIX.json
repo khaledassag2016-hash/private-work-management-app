@@ -1,0 +1,153 @@
+{
+  "stage": "S10",
+  "issue": 9,
+  "base_sha": "83f66a03d481a54ea479963eceea9df614ef5e12",
+  "rows": [
+    {
+      "id": "AC-01",
+      "governing_stage": "S4",
+      "automated_tests": "getWorkFinancials/no-price fixture",
+      "input_fixture": "PRICE_UNSET work",
+      "expected_invariant": "Work remains stored and followable",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-02",
+      "governing_stage": "S6/D-012",
+      "automated_tests": "s10-priced financial assertion",
+      "input_fixture": "1500 + 200 - 100 SAR integer-halalah movements",
+      "expected_invariant": "current=160000 halalas; shares=64000/96000",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-03",
+      "governing_stage": "S5",
+      "automated_tests": "archived old/current title search and title history",
+      "input_fixture": "old title -> current title -> archive",
+      "expected_invariant": "same Work ID returned for both retained titles",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-04",
+      "governing_stage": "S4",
+      "automated_tests": "customer export and multi-Work fixture",
+      "input_fixture": "one customer with multiple independent Works",
+      "expected_invariant": "independent Works remain separately addressable",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-05",
+      "governing_stage": "S7/D-010",
+      "automated_tests": "paid financial assertion",
+      "input_fixture": "700.00 + 1000.00 SAR irregular payments",
+      "expected_invariant": "remaining reaches exactly zero halalas",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-06",
+      "governing_stage": "S7",
+      "automated_tests": "execution/collection distinction assertion",
+      "input_fixture": "COMPLETED Work with no payment",
+      "expected_invariant": "execution state remains distinct from UNPAID collection state",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-07",
+      "governing_stage": "S4",
+      "automated_tests": "getCustomerWarnings",
+      "input_fixture": "documented NON_PAYMENT fact before new Work",
+      "expected_invariant": "payment-risk warning projection is visible",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-08",
+      "governing_stage": "S8",
+      "automated_tests": "old-title and current-title search",
+      "input_fixture": "archived Work with retained title history",
+      "expected_invariant": "old/new title search resolves the same retained Work",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-09",
+      "governing_stage": "S8/D-017",
+      "automated_tests": "generateS8Workbook(monthDto)",
+      "input_fixture": "Arabic RTL month export DTO",
+      "expected_invariant": "RTL organized workbook with sheets and autofilters",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-10",
+      "governing_stage": "S8",
+      "automated_tests": "getS8Analytics",
+      "input_fixture": "period-scoped synthetic classification data",
+      "expected_invariant": "WORK_TYPE/SPECIALTY/COUNTRY/UNIVERSITY/PERIOD dimensions returned",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-11",
+      "governing_stage": "S3/D-020",
+      "automated_tests": "applyAuditMutation actor/time evidence",
+      "input_fixture": "implemented audit evidence only",
+      "expected_invariant": "S10 does not implement deferred S3 scope",
+      "actual_result": "DEFERRED_S3_NOT_FULL_PASS; implemented actor/time evidence tested",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "DEFERRED_S3_NOT_FULL_PASS"
+    },
+    {
+      "id": "AC-12",
+      "governing_stage": "S5/S8",
+      "automated_tests": "historical/current search and analytics",
+      "input_fixture": "archived Work with retained history",
+      "expected_invariant": "historical inclusion and active-only exclusion are preserved",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-13",
+      "governing_stage": "S4",
+      "automated_tests": "dynamic catalog plus dynamic Work",
+      "input_fixture": "runtime DYNAMIC-EXTENSION catalog value",
+      "expected_invariant": "catalog extension works without source-code taxonomy edit",
+      "actual_result": "PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "PASS"
+    },
+    {
+      "id": "AC-14",
+      "governing_stage": "S11/D-020",
+      "automated_tests": "protected-route no-bypass test",
+      "input_fixture": "historical import route probe",
+      "expected_invariant": "no silent historical-number injection into current balance",
+      "actual_result": "DEFERRED_S11_NOT_FULL_PASS; no-bypass boundary evidence PASS",
+      "evidence_path": "tests/s10_integration.test.mjs",
+      "status": "DEFERRED_S11_NOT_FULL_PASS"
+    }
+  ],
+  "summary": {
+    "pass": 12,
+    "deferred_not_full_pass": 2,
+    "critical_failures": 0,
+    "policy": "D-020_APPROVED"
+  }
+}
