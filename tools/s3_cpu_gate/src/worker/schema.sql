@@ -15,7 +15,7 @@ BEGIN SELECT RAISE(ABORT, 'maximum two active users'); END;
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('s3_audit_probe','customer','work','catalog_value','documented_fact','work_event','work_title_history','work_status_history','cancel_archive_request','price_change_request','price_movement','ratio_change_request','ratio_history','client_payment','payment_reversal_request','payment_reversal','inter_party_transfer','subscription_history','common_expense','settlement_snapshot','settlement_reopen_request','settlement_reopen_history')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('s3_audit_probe','customer','work','catalog_value','documented_fact','work_event','work_title_history','work_status_history','cancel_archive_request','price_change_request','price_movement','ratio_change_request','ratio_history','client_payment','payment_reversal_request','payment_reversal','inter_party_transfer','subscription_history','common_expense','settlement_snapshot','settlement_reopen_request','settlement_reopen_history','s8_alert_setting')),
   entity_id TEXT NOT NULL,
   action TEXT NOT NULL CHECK (action IN ('CREATE','UPDATE')),
   actor_uid TEXT NOT NULL,
@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS ix_audit_log_run_entity ON audit_log(run_marker, entity_type, entity_id, id);
 CREATE INDEX IF NOT EXISTS ix_audit_log_entity ON audit_log(entity_type, entity_id, id);
+
+CREATE TABLE IF NOT EXISTS s8_alert_settings (
+  alert_type TEXT PRIMARY KEY CHECK (alert_type IN ('NO_PRICE','NO_REPLY','NO_PAYMENT')),
+  threshold_days INTEGER NOT NULL CHECK (threshold_days > 0 AND threshold_days <= 36500),
+  updated_by TEXT NOT NULL REFERENCES app_users(uid),
+  updated_at TEXT NOT NULL,
+  request_id TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS ix_s8_alert_settings_updated_at ON s8_alert_settings(updated_at,alert_type);
 CREATE TRIGGER IF NOT EXISTS trg_audit_log_no_update
 BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append only'); END;

@@ -55,6 +55,7 @@
     "src/worker/migrations/0007_s7_payments_collections_reversals.sql",
     "src/worker/migrations/0008_s7_pr_b_settlement_core.sql",
     "src/worker/migrations/0009_s7_d014_d016_authoritative_settlement.sql",
+    "src/worker/migrations/0010_s8_search_filter_alert_core.sql",
     "tests/pester/Common.Tests.ps1",
     "tests/pester/CpuGate.Tests.ps1",
     "tests/pester/FirebaseProtoJsonRecordsCount.Tests.ps1",
@@ -81,6 +82,7 @@
     "tests/node/s7_pr_a_payments.test.mjs",
     "tests/node/s7_pr_b_settlement_core.test.mjs",
     "tests/node/s7_pr_c_ui_acceptance.test.mjs",
+    "tests/node/s8_pr_a_search_filter_alert.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
@@ -102,6 +104,8 @@
     "worker/migrations/0006_s6_financial_core.sql",
     "worker/migrations/0007_s7_payments_collections_reversals.sql",
     "worker/migrations/0008_s7_pr_b_settlement_core.sql",
-    "worker/migrations/0009_s7_d014_d016_authoritative_settlement.sql"
+    "worker/migrations/0009_s7_d014_d016_authoritative_settlement.sql",
+    "worker/migrations/0010_s8_search_filter_alert_core.sql",
+    "tests/fixtures/s7_final_schema_ad482ec0dc78ba5796797d40223beb6d6fed0f5b.sql"
   ]
 }

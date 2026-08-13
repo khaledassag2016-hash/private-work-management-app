@@ -393,6 +393,127 @@ export async function listWorks(env, query = {}) {
   return bulkAuthoritativeWorkReadModels(env, rows);
 }
 
+const S8_ALERT_TYPES = Object.freeze(['NO_PRICE', 'NO_REPLY', 'NO_PAYMENT']);
+const S8_PERIOD_BASES = Object.freeze(['CREATED_AT', 'CONFIRMED_AT']);
+const S8_SEARCH_DEFAULT_PAGE_SIZE = 50;
+const S8_SEARCH_MAX_PAGE_SIZE = 100;
+
+function s8RequiredAlertType(value) {
+  const type = requiredString(value, 'S8_ALERT_TYPE_REQUIRED').toUpperCase();
+  if (!S8_ALERT_TYPES.includes(type)) throw new DomainError('S8_ALERT_TYPE_INVALID', 400);
+  return type;
+}
+function s8PositiveThresholdDays(value) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 36500) throw new DomainError('S8_ALERT_THRESHOLD_INVALID', 400);
+  return parsed;
+}
+function s8PageValue(value, code, fallback, maximum) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) throw new DomainError(code, 400);
+  return parsed;
+}
+function s8LikePattern(value) { return `%${String(value).replace(/[\\%_]/g, character => `\\${character}`)}%`; }
+function s8PeriodFilter(input) {
+  const month = input.month === undefined || input.month === null || input.month === '' ? null : String(input.month).padStart(2, '0');
+  const year = input.year === undefined || input.year === null || input.year === '' ? null : String(input.year);
+  const requestedBasis = input.period_basis === undefined || input.period_basis === null || input.period_basis === '' ? null : String(input.period_basis).toUpperCase();
+  if ((month || year) && !requestedBasis) throw new DomainError('S8_PERIOD_BASIS_REQUIRED', 400);
+  if (requestedBasis && !S8_PERIOD_BASES.includes(requestedBasis)) throw new DomainError('S8_PERIOD_BASIS_INVALID', 400);
+  if (month && !/^(0[1-9]|1[0-2])$/.test(month)) throw new DomainError('S8_MONTH_INVALID', 400);
+  if (year && !/^\d{4}$/.test(year)) throw new DomainError('S8_YEAR_INVALID', 400);
+  return { month, year, basis: requestedBasis, column: requestedBasis === 'CONFIRMED_AT' ? 'w.confirmed_at' : 'w.created_at' };
+}
+function s8IncludeArchived(value) {
+  if (value === undefined || value === null || value === '') return true;
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  throw new DomainError('S8_INCLUDE_ARCHIVED_INVALID', 400);
+}
+function s8CollectionSql() {
+  return `CASE
+    WHEN COALESCE(p.price_movement_count,0)=0 THEN 'PRICE_UNSET'
+    WHEN COALESCE(pay.approved_paid_halalas,0)>p.current_price_halalas THEN 'OVERPAYMENT_UNRESOLVED'
+    WHEN p.current_price_halalas=0 OR COALESCE(pay.approved_paid_halalas,0)=p.current_price_halalas THEN 'FINANCIALLY_CLOSED'
+    WHEN COALESCE(pay.approved_paid_halalas,0)=0 THEN 'UNPAID'
+    ELSE 'PARTIALLY_COLLECTED'
+  END`;
+}
+export async function searchWorksS8(env, input = {}) {
+  const page = s8PageValue(input.page, 'S8_PAGE_INVALID', 1, 1000000);
+  const pageSize = s8PageValue(input.page_size, 'S8_PAGE_SIZE_INVALID', S8_SEARCH_DEFAULT_PAGE_SIZE, S8_SEARCH_MAX_PAGE_SIZE);
+  const includeArchived = s8IncludeArchived(input.include_archived);
+  const period = s8PeriodFilter(input);
+  const values = [];
+  const add = value => { values.push(value); return `?${values.length}`; };
+  const clauses = [];
+  if (!includeArchived) clauses.push('w.archived_at IS NULL');
+  for (const [column, value] of [['w.customer_id', input.customer_id], ['w.status', input.status], ['w.country', input.country], ['w.university', input.university], ['w.specialty_key', input.specialty_key], ['w.work_type_key', input.work_type_key]]) {
+    if (value !== undefined && value !== null && value !== '') clauses.push(`${column}=${add(String(value))}`);
+  }
+  if (period.month) clauses.push(`strftime('%m',${period.column})=${add(period.month)}`);
+  if (period.year) clauses.push(`strftime('%Y',${period.column})=${add(period.year)}`);
+  if (input.q !== undefined && input.q !== null && String(input.q) !== '') {
+    const pattern = s8LikePattern(input.q);
+    const current = add(pattern); const historicalOld = add(pattern); const historicalNew = add(pattern);
+    clauses.push(`(w.title LIKE ${current} ESCAPE '\\' OR EXISTS (SELECT 1 FROM work_title_history th WHERE th.work_id=w.id AND (th.old_title LIKE ${historicalOld} ESCAPE '\\' OR th.new_title LIKE ${historicalNew} ESCAPE '\\')))`);
+  }
+  const collection = input.collection_status === undefined || input.collection_status === null || input.collection_status === '' ? null : String(input.collection_status).toUpperCase();
+  if (collection && !['PRICE_UNSET', 'UNPAID', 'PARTIALLY_COLLECTED', 'FINANCIALLY_CLOSED', 'OVERPAYMENT_UNRESOLVED'].includes(collection)) throw new DomainError('S8_COLLECTION_INVALID', 400);
+  const baseWhere = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const collectionWhere = collection ? `WHERE collection_status=${add(collection)}` : '';
+  const limit = add(pageSize); const offset = add((page - 1) * pageSize);
+  const sql = `WITH price_totals AS (
+      SELECT work_id,COUNT(*) AS price_movement_count,SUM(amount_halalas) AS current_price_halalas FROM price_movements GROUP BY work_id
+    ), payment_totals AS (
+      SELECT p.work_id,COALESCE(SUM(p.amount_halalas),0)-COALESCE(SUM(r.amount_halalas),0) AS approved_paid_halalas
+      FROM client_payments p LEFT JOIN payment_reversals r ON r.payment_id=p.id GROUP BY p.work_id
+    ), projected AS (
+      SELECT w.id,w.customer_id,w.title,w.status,w.country,w.university,w.specialty_key,w.work_type_key,w.created_at,w.confirmed_at,w.archived_at,
+        c.name AS customer_name,COALESCE(p.current_price_halalas,NULL) AS current_price_halalas,COALESCE(pay.approved_paid_halalas,0) AS approved_paid_halalas,
+        ${s8CollectionSql()} AS collection_status
+      FROM works w JOIN customers c ON c.id=w.customer_id
+      LEFT JOIN price_totals p ON p.work_id=w.id LEFT JOIN payment_totals pay ON pay.work_id=w.id
+      ${baseWhere}
+    ), filtered AS (SELECT * FROM projected ${collectionWhere})
+    SELECT *,COUNT(*) OVER() AS total_count FROM filtered ORDER BY created_at ASC,id ASC LIMIT ${limit} OFFSET ${offset}`;
+  const rows = (await env.DB.prepare(sql).bind(...values).all()).results || [];
+  const total = rows.length ? Number(rows[0].total_count) : 0;
+  const items = rows.map(row => ({ ...row, is_archived: Boolean(row.archived_at), current_price_halalas: row.current_price_halalas === null ? null : Number(row.current_price_halalas), approved_paid_halalas: Number(row.approved_paid_halalas) }));
+  return { items, page, page_size: pageSize, has_more: page * pageSize < total };
+}
+export async function listS8AlertSettings(env) {
+  const rows = (await env.DB.prepare('SELECT alert_type,threshold_days,updated_by,updated_at,request_id FROM s8_alert_settings ORDER BY alert_type ASC').all()).results || [];
+  const byType = new Map(rows.map(row => [row.alert_type, { ...row, threshold_days: Number(row.threshold_days) }]));
+  return S8_ALERT_TYPES.map(alertType => byType.get(alertType) || { alert_type: alertType, state: 'NOT_CONFIGURED', threshold_days: null, updated_by: null, updated_at: null, request_id: null });
+}
+export async function upsertS8AlertSetting(env, actorUid, requestId, input) {
+  await ensureActor(env, actorUid);
+  const alertType = s8RequiredAlertType(input.alert_type); const thresholdDays = s8PositiveThresholdDays(input.threshold_days);
+  const replay = await env.DB.prepare('SELECT alert_type,threshold_days,updated_by,updated_at,request_id FROM s8_alert_settings WHERE request_id=?1').bind(requestId).first();
+  if (replay) {
+    if (replay.alert_type !== alertType || Number(replay.threshold_days) !== thresholdDays) throw new DomainError('S8_ALERT_REQUEST_ID_REUSE', 409);
+    return { ...replay, threshold_days: Number(replay.threshold_days), idempotent_replay: true };
+  }
+  const before = await env.DB.prepare('SELECT alert_type,threshold_days,updated_by,updated_at,request_id FROM s8_alert_settings WHERE alert_type=?1').bind(alertType).first();
+  const updatedAt = nowIso(); const after = { alert_type: alertType, threshold_days: thresholdDays, updated_by: actorUid, updated_at: updatedAt, request_id: requestId };
+  const mutation = env.DB.prepare(`INSERT INTO s8_alert_settings(alert_type,threshold_days,updated_by,updated_at,request_id)
+      VALUES (?1,?2,?3,?4,?5) ON CONFLICT(alert_type) DO UPDATE SET threshold_days=excluded.threshold_days,updated_by=excluded.updated_by,updated_at=excluded.updated_at,request_id=excluded.request_id`).bind(alertType, thresholdDays, actorUid, updatedAt, requestId);
+  await executeBatch(env, [mutation, auditStatement(env, 's8_alert_setting', alertType, before ? 'UPDATE' : 'CREATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt)]);
+  return { ...after, idempotent_replay: false };
+}
+export async function getS8Alerts(env, input = {}, internal = {}) {
+  const requested = input.alert_type === undefined || input.alert_type === null || input.alert_type === '' ? [...S8_ALERT_TYPES] : [s8RequiredAlertType(input.alert_type)];
+  const settings = await listS8AlertSettings(env); const map = new Map(settings.map(setting => [setting.alert_type, setting]));
+  const injectedNow = internal && Object.prototype.hasOwnProperty.call(internal, 'testNow') ? internal.testNow : null;
+  return { now: injectedNow === undefined || injectedNow === null || injectedNow === '' ? null : canonicalEventTimestamp(injectedNow), alerts: requested.map(alertType => {
+    const setting = map.get(alertType);
+    if (!setting || setting.state === 'NOT_CONFIGURED') return { alert_type: alertType, state: 'NOT_CONFIGURED', threshold_days: null, items: [] };
+    return { alert_type: alertType, state: 'CLOCK_ANCHOR_UNRESOLVED', threshold_days: setting.threshold_days, items: [] };
+  }) };
+}
+
 export async function updateWork(env, actorUid, requestId, id, input) {
   await ensureActor(env, actorUid);
   const before = await getWorkRaw(env, id);
@@ -536,6 +657,14 @@ async function handleApi(request, env, requestId, scenario, user) {
   const url = new URL(request.url); const parts = url.pathname.split('/').filter(Boolean);
   const method = request.method.toUpperCase(); const body = method === 'POST' || method === 'PATCH' ? await parseRequestJson(request) : {};
   if (parts[1] === 'participants' && parts.length === 2 && method === 'GET') return Response.json({ ok: true, data: await listActiveParticipants(env), requestId });
+  if (parts[1] === 'search' && parts[2] === 'works' && parts.length === 3 && method === 'GET') return Response.json({ ok: true, data: await searchWorksS8(env, Object.fromEntries(url.searchParams.entries())), requestId });
+  if (parts[1] === 'alerts' && parts.length === 2) {
+    if (method === 'GET') return Response.json({ ok: true, data: await getS8Alerts(env, Object.fromEntries(url.searchParams.entries())), requestId });
+  }
+  if (parts[1] === 'alerts' && parts[2] === 'settings' && parts.length === 3) {
+    if (method === 'GET') return Response.json({ ok: true, data: await listS8AlertSettings(env), requestId });
+    if (method === 'POST') return Response.json({ ok: true, data: await upsertS8AlertSetting(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
   if (parts[1] === 'customers' && parts.length === 2) {
     if (method === 'GET') return Response.json({ ok: true, data: await listCustomers(env, url.searchParams.get('q') || '') , requestId });
     if (method === 'POST') return Response.json({ ok: true, data: await createCustomer(env, user.uid, requestId, body), requestId }, { status: 201 });
