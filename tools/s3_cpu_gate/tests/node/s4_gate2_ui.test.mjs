@@ -44,7 +44,7 @@ test('S4 Gate 2 UI includes clear PRICE_UNSET, fact-derived warning, and non-blo
   assert.doesNotMatch(source, /risk percentage|AI classification|scoring|error\.message/i);
 });
 
-test('S4/S6 UI preserves approved catalog/history flows while S7 financial flows remain Worker-backed and S8-free', () => {
+test('S4/S6 UI preserves approved catalog/history flows while later Worker-backed S7/S8 reads do not introduce Billing', () => {
   const source = readFileSync(appPath, 'utf8');
   assert.match(source, /\/api\/customers\/\$\{encodeURIComponent\(customerId\)\}\/history/);
   assert.match(source, /\/api\/customers\/\$\{encodeURIComponent\(customerId\)\}\/warnings/);
@@ -57,7 +57,7 @@ test('S4/S6 UI preserves approved catalog/history flows while S7 financial flows
   assert.match(source, /\/api\/works\/\$\{encodeURIComponent\(state\.selectedWork\.id\)\}\/payments/);
   assert.match(source, /\/api\/settlements\/preview/);
   assert.match(source, /\/api\/transfers/);
-  assert.doesNotMatch(source, /billing|export|analytics/i);
+  assert.doesNotMatch(source, /billing/i);
 });
 
 test('S4 Gate 2 Worker serves only requested static assets before auth while private API remains fail-closed', async () => {
