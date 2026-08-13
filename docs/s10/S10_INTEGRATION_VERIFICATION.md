@@ -9,7 +9,7 @@ This document records the S10 / Issue #9 implementation and verification cycle f
 | Repository | `khaledassag2016-hash/private-work-management-app` |
 | Issue | `#9 — [S10] اختبار التكامل والنسخ والاستعادة` |
 | Base SHA | `83f66a03d481a54ea479963eceea9df614ef5e12` |
-| Final head SHA | `384d551a065216c33b29a64e56c61b461c01e0f5` (runtime implementation head verified by final-head CI; evidence stamp is documentation-only) |
+| Final head SHA | `938f7c09e9fc7fa264166bd9a8c63227e6d8f06d` |
 | Branch | `s10/pr-a-integration-backup-restore` |
 | Executor | Manus only |
 | Cloud writes | `NO` |
@@ -24,7 +24,7 @@ The final PR-A changed-file list at the verified implementation head is:
 
 `4 files: .github/workflows/s10-integration.yml, docs/s10/S10_ACCEPTANCE_MATRIX.json, docs/s10/S10_INTEGRATION_VERIFICATION.md, tests/s10_integration.test.mjs`.
 
-The final PR metadata remains authoritative for the post-evidence-stamp branch head.
+The final PR metadata and the final-head CI run on `938f7c09e9fc7fa264166bd9a8c63227e6d8f06d` are authoritative for supervisory review.
 
 The intended S10-only files are:
 
@@ -102,20 +102,20 @@ Result: **PASS — bounded query counts, maximum bind width below 100, no observ
 
 ## Prior-stage regression and CI
 
-The successful final-head CI runs on implementation head `384d551a065216c33b29a64e56c61b461c01e0f5` completed before this documentation-only evidence stamp. The final PR metadata and latest CI run on the post-stamp head are authoritative for the supervisory handoff.
+The successful final-head CI runs below completed on definitive head `938f7c09e9fc7fa264166bd9a8c63227e6d8f06d`. Any later CI rerun caused only by this exact evidence update must also be green before final handoff.
 
 | Gate | Result / run |
 |---|---|
 | Focused S10 | `PASS — 6/6` |
 | Full Node regression | `PASS — 140 passed, 0 failed` |
 | S9 Playwright/accessibility | `PASS — Level A 10 passed; Level B 34 passed, 6 intentional skips` |
-| Foundation | `PASS — CI run 31719488860` |
-| S2 | `PASS — CI run 31719488765` |
+| Foundation | `PASS — CI run 31719956136` |
+| S2 | `PASS — CI run 31719956084` |
 | S3 | `PASS — applicable S3 static checks in S10 run; S3 remains CLOSED_BLOCKED_DEFERRED` |
 | Python/Pester/PSScriptAnalyzer | `PASS — Python 80/80; Pester/PSScriptAnalyzer 291 passed, 0 failed` |
 | Secret scan | `PASS` |
 | Payload parity/integrity | `PASS` |
-| Final-head CI run IDs | `S10 31719489152; Foundation 31719488860; S2 31719488765` |
+| Final-head CI run IDs | `S10 31719956114; Foundation 31719956136; S2 31719956084` |
 
 ## Unresolved governed boundaries
 
