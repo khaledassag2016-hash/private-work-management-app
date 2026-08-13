@@ -21,8 +21,9 @@ Never substitute conversation memory, an agent report or `docs/REQUIREMENTS.md` 
 - `S5 = CLOSED_COMPLETE`.
 - `S6 = CLOSED_COMPLETE`.
 - `S7 = CLOSED_COMPLETE` after PR #77 final-head CI, Squash merge, post-merge verification and Issue #6 closure.
-- `S8 = AUTHORIZED_NOT_STARTED` after the same S7 closure condition.
-- `S9..S11 = NOT_STARTED`.
+- `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 plus the administrative closure PR complete final-head CI, Squash merge, post-merge verification and Issue #7 closure.
+- `S9 = AUTHORIZED_NOT_STARTED` only after the S8 closure condition is effective and a `FINAL_ACTIVATED` S9 package is tied to the exact final main SHA.
+- `S10..S11 = NOT_STARTED`.
 
 ## 3. S5/S6 evidence retained
 
@@ -32,7 +33,7 @@ S6: PR #71/#72 implementation and PR #73 final verification. Authoritative prici
 
 The unresolved S6 negative-final-price policy remains fail-closed.
 
-## 4. S7 final evidence chain
+## 4. S7 final evidence retained
 
 ### PR-A #74 — Payments / Collections / Reversals
 
@@ -47,27 +48,21 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Squash/main `0eb382f7146cb1730e64a37bec1bb46876f500b8`.
 - Final-head CI: Foundation `31638405137`, S2 `31638405056`, S3 `31638405045` SUCCESS.
 - Node `116/116`; PR-B focused `15/15`.
-- D1 measurement: settlement `8` reads, max bind `71`; transfer/subscription/common-expense lists `1` each.
-- D-011, D-014, D-015 and D-016 implemented with closed-period guards and immutable history.
+- D1 settlement `8` reads/max bind `71`; transfer/subscription/common-expense lists `1` each.
 
 ### PR-C #76 — Financial UI / Business Flows / Integrated Acceptance
 
-- Base `0eb382f7146cb1730e64a37bec1bb46876f500b8`.
 - Final head `1f15df2c6605b007d32d7698f604d948b42e4a91`.
 - Squash/main `7539b8289b75e3702d19d84fb29c04f20a98d0e6`.
 - Final-head CI: Foundation `31641996434`, S2 `31641996429`, S3 `31641996442` SUCCESS.
-- Focused acceptance `9/9`; full Node `125/125`.
-- Final repair proved `confirmed_at`, distinct `received_by` / `recorded_by`, real Worker/DB flows, both reopen approval directions, history reload and no client per-Work N+1.
-- Post-merge Foundation `31642292225` SUCCESS.
-- Post-merge S3 `31642292237` SUCCESS with all validation steps successful.
+- Focused `9/9`; full Node `125/125`.
+- Post-merge Foundation `31642292225`, S3 `31642292237` SUCCESS.
 
-### PR-D #77 — Final Verification / Administrative Closure
+### PR-D #77 — S7 Final Closure
 
-- Branch `s7/pr-d-final-verification-closure`.
-- Base `7539b8289b75e3702d19d84fb29c04f20a98d0e6`.
-- Docs/admin only. No runtime, no cloud write, no S8 implementation.
 - Evidence `docs/s7/S7_FINAL_VERIFICATION.md`.
-- After final-head CI, Squash merge and post-merge verification, close Issue #6 as completed and activate S8 from the exact resulting `main` SHA.
+- Final S7 main `ad482ec0dc78ba5796797d40223beb6d6fed0f5b`.
+- Issue #6 closed completed.
 
 ## 5. S7 authoritative behavior inherited by later stages
 
@@ -86,7 +81,58 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Generic shared-expense allocation without an approved rule stays fail-closed for settlement closing.
 - Overpayment beyond remaining stays `S7_OVERPAYMENT_POLICY_UNRESOLVED` fail-closed.
 
-## 6. Architecture and zero-cost constraints
+## 6. S8 final evidence chain
+
+### PR-A #78 — Search / Filters / Alert Core
+
+- Final head `5613ef052eb430ccfb469afaceee58181f864f7c`.
+- Squash/main `7128b65a23c11589e068680980dd52bb1c004d3a`.
+- Final-head CI: Foundation `31687193878`, S2 `31687193877`, S3 `31687193869` SUCCESS.
+- Full Node `133/133`.
+- Post-merge Foundation `31687592908`, S3 `31687592858` SUCCESS.
+- Search is deterministic/bounded, explicit period basis is required for period-scoped reads, archive/current are separated, classifications remain dynamic and missing classification is output-only `UNSPECIFIED`.
+
+### PR-B #79 — Analytics / Export Core
+
+- Final head `f6819c46a76506443514a063d59c861486361850`.
+- Squash/main `2b5170b3e7f5161f6ebe9118dc89672791895167`.
+- Final-head CI: Foundation `31692056002`, S2 `31692055997`, S3 `31692055987` SUCCESS.
+- Full Node after repair `139/139`; real XLSX all five report types PASS.
+- Local vendored SheetJS `0.20.3`; no CDN, paid SaaS, telemetry, key or Billing dependency.
+- Post-merge Foundation `31692600422`, S3 `31692600458` SUCCESS.
+
+### PR-C #80 — SPA / Authenticated E2E / D-017
+
+- Base `2b5170b3e7f5161f6ebe9118dc89672791895167`.
+- Final head `a73531ed3fafb5c1cc89a598389ca9f98ef05260`.
+- Squash/main `19856a4b8a31b9e756406ccda0f16ac169af236d`.
+- Final-head CI: Foundation `31695541782`, S2 `31695541807`, S3 `31695541798` SUCCESS.
+- Focused D-017 search/alert `8/8`; analytics/export `6/6`; authenticated E2E `1/1`; full Node `140/140`.
+- E2E path: UI → signed JWT → actual Worker auth/API envelope → authoritative DTO → local real XLSX.
+- D-017 implements FR-029 with authoritative anchors, configurable thresholds, no defaults and no client-controlled clock.
+- Archive/title history, active-only exclusion, historical inclusion, analytics reconciliation and all five exports are covered.
+- Customer export complete totals are repaired and verified beyond a single page.
+- Post-merge Foundation `31695925778` SUCCESS; S3 `31695925794` SUCCESS.
+
+### PR-D — S8 Final Verification / Administrative Closure
+
+- Branch `s8/pr-d-final-verification-closure`.
+- Base `19856a4b8a31b9e756406ccda0f16ac169af236d`.
+- Evidence `docs/s8/S8_FINAL_VERIFICATION.md`.
+- Contains only documentation/governance/validation-harness registration needed for closure and S9 transition; no S9 runtime code, no Cloud write and no stable movement.
+- After final-head CI, Squash merge and post-merge verification, close Issue #7 as completed and issue the S9 `FINAL_ACTIVATED` package from the exact resulting main SHA.
+
+## 7. S8 authoritative behavior inherited by S9+
+
+- Search current/old title and explicit historical archive scope are authoritative S8 read behaviors.
+- Archived Works are retained and may appear in historical search/analytics but are excluded from active-only counts.
+- Analytics and exports consume S6/S7 authoritative financial fields; the SPA does not calculate an alternative financial truth.
+- Export DTOs are authenticated, bounded and deterministic; XLSX is generated locally from authoritative DTOs.
+- Real XLSX is Arabic RTL, structurally verified, formula-free, macro-free and external-link-free; formula-like source text remains literal.
+- D-017: NO_PRICE from `created_at` while PRICE_UNSET; NO_REPLY from latest transition into WAITING_CLIENT_RESPONSE or initial `created_at`; NO_PAYMENT from authoritative `confirmed_at` for positive-price confirmed Work while approved receipts remain zero.
+- Alert thresholds have no default values and are stored/configured explicitly.
+
+## 8. Architecture and zero-cost constraints
 
 - API: Cloudflare Workers Free.
 - Static UI: Cloudflare Workers Static Assets.
@@ -94,10 +140,10 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Authentication: Firebase Auth Spark, Email/Password, two supervisor-created accounts only.
 - Private APIs fail closed; browser never connects directly to D1.
 - No mandatory Billing, card, PayGo or paid service.
-- Money is integer halalas within the JavaScript safe-integer range; no floating-point financial math.
+- Money is integer halalas within the JavaScript safe-integer range; no floating-point financial truth.
 - No Cloud writes are authorized merely by starting a software stage.
 
-## 7. Permanent delivery rules
+## 9. Permanent delivery rules
 
 - Never edit `main` directly.
 - Independent branch + PR for every stage/change.
@@ -106,28 +152,22 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Never commit real customer data, passwords, tokens or service keys.
 - Do not invent unresolved product policy; fail closed, defer or request a governing decision.
 - Stable refs never move automatically.
-- Manus and any other coding agent must not push concurrently to the same PR.
+- Except where a dated scoped decision explicitly permits sequential handoff, coding agents must not push concurrently to the same PR.
 - Avoid repeated supervisory stop loops: executor self-repairs within one PR; supervision performs one consolidated final review, at most one consolidated repair batch for discovered defects, then targeted recheck + full regression + final-head CI and immediate merge if clean.
 
-## 8. S8 activation boundary
+## 10. S9 activation boundary
 
-Issue #7 is `[S8] البحث والتقارير والتصدير`.
+Issue #8 is `[S9] تجربة الاستخدام للهاتف والكمبيوتر`.
 
-Core S8 scope:
+Core S9 scope remains the Issue #8 UX boundary: Arabic RTL responsive desktop/mobile experience, dashboard/input/follow-up/approval/settlement paths, clear execution/collection/pending/warning states, keyboard accessibility, touch targets, error messages and duplicate-submit prevention. S9 must not redefine S4–S8 business or financial semantics.
 
-- FR-022 — Work search/filter.
-- FR-024 — Excel export for defined scopes.
-- FR-025 — organized Arabic RTL Excel.
-- FR-029 — configurable age-based alerts for no price/no reply/no payment.
-- FR-030 — statistics by type/specialty/country/university/period.
-- AC-08, AC-09, AC-10.
-- Reverify FR-023/AC-12 archive/history visibility when S8 search/analytics consume archived records.
+D-018 supersedes the Issue #8 manual viewport/RTL acceptance wording with ZERO-MANUAL-QA: deterministic automated Playwright multi-browser/device acceptance plus axe-core and explicit custom structural/interaction assertions. Visual snapshots are supplementary only and cannot by themselves produce PASS.
 
-S8 must not start from PR #76 or any S7 branch. It starts only from the exact `main` SHA produced by PR #77 after S7 closure. Execution is authorized only by the S8 `FINAL_ACTIVATED` package tied to that SHA.
+D-019 governs the S9 implementation PR only: Codex Sol High executes first, completes code/tests/self-review and then stops the branch. Only after that handoff may Manus inspect and directly repair the same PR, rerun focused/full tests and final-head CI, then stop. Codex and Manus never work concurrently and neither merges. General supervision performs one final review and Squash merges if clean.
 
-S8 must consume authoritative S6/S7 financial facts; historical/supporting price data may support classification but must not become the sole classifier. Search must include current and old titles and archived history where required. Excel verification must be structural and automated; no manual user QA is required when objective automation is possible.
+S9 starts only from the exact final `main` SHA produced by the S8 administrative closure PR and only under the separately issued S9 `FINAL_ACTIVATED` package tied to that SHA.
 
-## 9. Stable refs
+## 11. Stable refs
 
 - `stable/2026-08-09-be14a389` -> `be14a389d7e11f1df9f935999d888e7e2295c8a3`.
 - `stable/2026-08-09-643de962` -> `643de962dc8631f68a42e3796c4a096a29c4e14c`.
