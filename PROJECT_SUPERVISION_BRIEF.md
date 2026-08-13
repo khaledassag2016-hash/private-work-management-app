@@ -22,9 +22,9 @@ Never substitute conversation memory, an agent report or `docs/REQUIREMENTS.md` 
 - `S6 = CLOSED_COMPLETE`.
 - `S7 = CLOSED_COMPLETE` after PR #77 final-head CI, Squash merge, post-merge verification and Issue #6 closure.
 - `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 plus PR #81 administrative closure, final-head CI, Squash merge, post-merge verification and Issue #7 closure.
-- `S9 = CLOSED_COMPLETE` after PR #82 plus the S9 administrative closure PR complete applicable final-head CI, Squash merge, post-merge verification and Issue #8 closure.
-- `S10 = AUTHORIZED_NOT_STARTED` only after the S9 closure condition is effective and a `FINAL_ACTIVATED` S10 package is tied to the exact final S9 main SHA.
-- `S11 = NOT_STARTED`; private/local historical preparation is not S11 import execution.
+- `S9 = CLOSED_COMPLETE` after PR #82 plus PR #83 administrative closure, applicable final-head CI, Squash merge, post-merge verification and Issue #8 closure.
+- `S10 = CLOSED_COMPLETE` after PR #86 plus this administrative closure PR complete final-head CI, Squash merge, post-merge verification and Issue #9 closure.
+- `S11 = AUTHORIZED_NOT_STARTED` only after the S10 closure condition is effective and a `FINAL_ACTIVATED` S11 package is tied to the exact final S10 main SHA.
 
 ## 3. S5/S6 evidence retained
 
@@ -144,10 +144,15 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Final-head S2 architecture validation `31709356846` SUCCESS.
 - Playwright Level A `10 PASS`; Level B `34 PASS + 6 intentional non-applicable skips`.
 - Full Node regression `140 PASS`, `0 failed`.
-- Foundation validator passed locally on the final head; its GitHub workflow is path-scoped and was not applicable to S9 runtime/test files.
 - Squash/main `7a19bcdd0c85838a6c5e764e86b1a51e76fde0b7`.
 - Post-merge S3 `31710108330` SUCCESS.
 - Evidence: `docs/s9/S9_FINAL_VERIFICATION.md`.
+
+### S9 administrative closure
+
+- PR #83 closed S9 administratively.
+- Final S9 closure main SHA `f603363ed845aeb84c4cb1851b645a1cf154ba8f`.
+- Issue #8 closed completed.
 
 ### S9 inherited UX contract
 
@@ -160,7 +165,7 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Duplicate click/tap/Enter while a mutation is pending must not create a second mutation.
 - 400/401/403/409/fail-closed/500/network errors remain visible, recoverable and preserve user input where covered.
 - D-018 replaced manual viewport QA for S9 only; snapshots alone never establish acceptance.
-- D-019 was S9 PR-A only and does not automatically authorize a Codex↔Manus handoff in S10.
+- D-019 was S9 PR-A only and does not automatically authorize a Codex↔Manus handoff in later stages.
 
 ## 9. Architecture and zero-cost constraints
 
@@ -185,21 +190,54 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Except where a dated scoped decision explicitly permits sequential handoff, coding agents must not push concurrently to the same PR.
 - Avoid repeated supervisory stop loops: executor self-repairs within one PR; supervision performs one consolidated final review, at most one consolidated repair batch for discovered defects, then targeted recheck + full regression + final-head CI and immediate merge if clean.
 
-## 11. S10 activation boundary
+## 11. S10 final evidence and closure chain
 
 Issue #9 is `[S10] اختبار التكامل والنسخ والاستعادة`.
 
-Core S10 scope is full-system integration, security/permissions, concurrency/conflicting edits, authoritative financial/reversal/closed-settlement verification, reproducible backup plus actual restore into a separate isolated target, and deterministic performance evidence for two users with multi-year synthetic data.
+### PR-A #86
 
-S10 re-verifies AC-01..AC-14 as an integration report. It must not silently implement S3-deferred AC-11/FR-026 or S11-assigned AC-14/P-07 merely to force a PASS. If the governing sources still leave a cross-stage acceptance conflict at activation time, the S10 package must report that item explicitly and fail closed for supervisory resolution rather than invent scope.
+- Activation base: `83f66a03d481a54ea479963eceea9df614ef5e12`.
+- Final Manus head: `8ff9611b2b961cedee1e1eecf6027c955b67a002`.
+- Changed exactly four S10-scoped files: S10 workflow, acceptance matrix, integration evidence and S10 integration tests.
+- Final-head CI: S10 `31720341365`, Foundation `31720341442`, S2 `31720341358` SUCCESS.
+- S10 focused `6/6`, full Node `140/140`, final S9 Level A `10`, Level B `34 + 6 intentional skips`, Python `80/80`, Pester/PSScriptAnalyzer `291` all PASS.
+- Security/permissions, concurrency/conflicts, idempotency, integer-halalah reconciliation, separate-target backup/restore and corrupt-backup negative case PASS.
+- Backup SHA-256 `2677125615f2886c6152e1254828cfbca2df64b21d6fd59df20f5f1c7af3ace50`; size `86268` bytes.
+- Synthetic profile: 2 actors, 24 customers, 240 Works across 2021–2026; no invented latency SLA and bounded query behavior.
+- AC matrix: 12 PASS; AC-11 `DEFERRED_S3_NOT_FULL_PASS`; AC-14 `DEFERRED_S11_NOT_FULL_PASS` under D-020.
+- Squash/main `5454e1b44f6b02dda455a7d229ed0640c32c9d98`.
+- Post-merge S10 run `31721708708` SUCCESS and Foundation `31721708742` SUCCESS.
+- Evidence: `docs/s10/S10_INTEGRATION_VERIFICATION.md` and `docs/s10/S10_FINAL_VERIFICATION.md`.
 
-S10 may use only synthetic/local data unless separately authorized. Backup/restore acceptance must prove an actual restore into a distinct empty local D1-compatible/SQLite target and reconcile authoritative rows/history/financial truth and representative API reads; checking a backup file's existence is insufficient.
+### PR-B administrative closure
 
-No numeric latency SLA exists in the governing sources. S10 may measure p50/p95/max/query counts on a deterministic multi-year profile and fail on correctness/security/financial regression, crash/timeout or unbounded/N+1 behavior; it must not invent a millisecond threshold.
+- Branch `s10/pr-b-final-verification-closure`.
+- Base main `5454e1b44f6b02dda455a7d229ed0640c32c9d98`.
+- Documentation/state/traceability only.
+- Final-head CI, Squash merge, post-merge verification and Issue #9 closure are required before S10 closure is effective.
 
-S10 starts only from the exact final `main` SHA produced by the S9 administrative closure PR and only under a separately issued S10 `FINAL_ACTIVATED` package tied to that SHA. Preferred executor may be Manus, but no S9-only D-019 handoff is assumed.
+### S10 governing verdict
 
-## 12. Stable refs
+- `S10_ACCEPTANCE = PASS_WITH_D020_DEFERRED_ROWS`.
+- AC-11 remains S3-owned and deferred; S3 remains `CLOSED_BLOCKED_DEFERRED`.
+- AC-14 remains S11-owned; S10 proved no current bypass and did not import historical data.
+- No Cloud write, real data, paid service, Billing/card, secrets or stable-ref movement occurred.
+
+## 12. S11 activation boundary
+
+Issue #10 is `[S11] تنظيف واستيراد البيانات التاريخية`.
+
+S11 starts only after S10 PR-B is Squash merged, main post-merge verification passes and Issue #9 is closed completed. The exact resulting final S10 main SHA becomes the only allowed S11 activation base.
+
+The private S11 preparation store is already complete and remains private/local outside GitHub. S11 must not restart a row-by-row manual preparation cycle merely because pending/unknown records exist.
+
+S11 scope includes P-07 / AC-14, deterministic read-only ingest, normalization/validation/classification, dry-run, idempotent import, duplicate protection, reversible batch handling, reconciliation, and accepted/rejected/pending reporting. Confirmed prepared records may be processed automatically. `PENDING_REVIEW` / `UNKNOWN` rows remain pending and non-operational unless separately approved; their existence alone does not require guessing or automatic financial activation.
+
+Historical rules remain binding: never guess a missing year/date/classification, preserve original source/provenance/review status, separate Works from totals/settlements/notes, require an explicit reason for zero price, and never allow an unreviewed historical number into current operational balance.
+
+Real customer/historical data must never be committed to GitHub or CI. Only code, synthetic fixtures and sanitized evidence belong in the repository.
+
+## 13. Stable refs
 
 - `stable/2026-08-09-be14a389` -> `be14a389d7e11f1df9f935999d888e7e2295c8a3`.
 - `stable/2026-08-09-643de962` -> `643de962dc8631f68a42e3796c4a096a29c4e14c`.
