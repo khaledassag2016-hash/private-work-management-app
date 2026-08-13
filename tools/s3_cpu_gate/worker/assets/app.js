@@ -790,7 +790,7 @@ function bindShell() {
   document.querySelectorAll('[data-work]').forEach(button => button.addEventListener('click', () => openWork(button.dataset.work)));
   document.querySelectorAll('[data-action="new-customer"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'customer', data: {} }, button)));
   document.querySelectorAll('[data-action="edit-customer"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'customer', data: state.selectedCustomer }, button)));
-  document.querySelectorAll('[data-action="new-work"]').forEach(button => button.addEventListener('click', () => { modalInvoker = button; void openNewWork(button.dataset.customerId || ''); }));
+  document.querySelectorAll('[data-action="new-work"]').forEach(button => button.addEventListener('click', () => { modalInvoker = modalInvokerReference(button); void openNewWork(button.dataset.customerId || ''); }));
   document.querySelectorAll('[data-action="edit-work"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'work', data: state.selectedWork, customerId: state.selectedWork.customer_id }, button)));
   document.querySelectorAll('[data-action="new-catalog"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'catalog', data: { kind: button.dataset.kind } }, button)));
   document.querySelectorAll('[data-action="new-fact"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'fact', data: {} }, button)));

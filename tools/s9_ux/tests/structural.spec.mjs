@@ -70,6 +70,17 @@ test('keyboard dialog focus is contained and restored', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
+
+  await page.locator('[data-nav="works"]').click();
+  const newWorkTrigger = page.locator('[data-action="new-work"]');
+  await newWorkTrigger.focus();
+  await newWorkTrigger.press('Enter');
+  const workDialog = page.getByRole('dialog');
+  await expect(workDialog).toBeVisible();
+  await focusStayedInside();
+  await page.keyboard.press('Escape');
+  await expect(workDialog).toBeHidden();
+  await expect(newWorkTrigger).toBeFocused();
 });
 
 test('automated accessibility gate has no critical or serious violations', async ({ page }) => {
