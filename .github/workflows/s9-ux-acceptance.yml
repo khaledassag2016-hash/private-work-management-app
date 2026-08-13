@@ -1,0 +1,54 @@
+name: S9 UX Acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/s3_cpu_gate/src/worker/assets/**'
+      - 'tools/s3_cpu_gate/worker/assets/**'
+      - 'tools/s9_ux/**'
+      - '.github/workflows/s9-ux-acceptance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-manual-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout synthetic PR merge revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Read authoritative Node version
+        id: versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          version=json.load(open('tools/s3_cpu_gate/src/version-manifest.json',encoding='utf-8'))['tools']['node']['version']
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output:
+              output.write(f'node={version}\n')
+          PY
+      - name: Use exact authoritative Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '${{ steps.versions.outputs.node }}'
+      - name: Verify exact Node and locked UX dependencies
+        working-directory: tools/s9_ux
+        shell: bash
+        run: |
+          test "$(node --version)" = 'v${{ steps.versions.outputs.node }}'
+          npm ci --ignore-scripts --no-audit --no-fund
+          test "$(node -p "require('./node_modules/@playwright/test/package.json').version")" = '1.62.0'
+          test "$(node -p "require('./node_modules/@axe-core/playwright/package.json').version")" = '4.12.1'
+      - name: Install pinned Playwright browser engines
+        working-directory: tools/s9_ux
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Level A full UX flows
+        working-directory: tools/s9_ux
+        run: npm run test:level-a
+      - name: Level B structural and cross-browser gate
+        working-directory: tools/s9_ux
+        run: npm run test:level-b

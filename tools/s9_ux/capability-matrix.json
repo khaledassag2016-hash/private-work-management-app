@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "authoritative_base_sha": "5808415e2f5f8710beaacf3dc0496d3645f70d77",
+  "level_a_viewports": ["chromium:390x844", "chromium:1280x720"],
+  "capabilities": [
+    { "id": "A", "name": "navigation/authenticated shell", "mobile": "required", "desktop": "required" },
+    { "id": "B", "name": "customers", "mobile": "required", "desktop": "required" },
+    { "id": "C", "name": "Work create/edit/open", "mobile": "required", "desktop": "required" },
+    { "id": "D", "name": "follow-up/events/title/status history", "mobile": "required", "desktop": "required" },
+    { "id": "E", "name": "governed cancel/archive", "mobile": "required", "desktop": "required" },
+    { "id": "F", "name": "S6 price/ratio request and approval", "mobile": "required", "desktop": "required" },
+    { "id": "G", "name": "S7 payments/reversal", "mobile": "required", "desktop": "required" },
+    { "id": "H", "name": "transfers/subscriptions/expenses", "mobile": "required", "desktop": "required" },
+    { "id": "I", "name": "settlement preview/close/reopen", "mobile": "required", "desktop": "required" },
+    { "id": "J", "name": "S8 search/filter/archive history", "mobile": "required", "desktop": "required" },
+    { "id": "K", "name": "S8 analytics", "mobile": "required", "desktop": "required" },
+    { "id": "L", "name": "S8 D-017 alert settings/results", "mobile": "required", "desktop": "required" },
+    { "id": "M", "name": "S8 five export triggers/local XLSX path", "mobile": "required", "desktop": "required" }
+  ]
+}
