@@ -19,9 +19,11 @@
 - `S5 = CLOSED_COMPLETE`.
 - `S6 = CLOSED_COMPLETE`.
 - `S7 = CLOSED_COMPLETE` after PR #77 final-head CI, Squash merge and post-merge verification.
-- `S7_COMPLETE = TRUE` after the same closure condition.
-- `S8 = AUTHORIZED_NOT_STARTED` after S7 closure becomes effective.
-- `S9..S11 = NOT_STARTED`.
+- `S7_COMPLETE = TRUE`.
+- `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 implementation, PR-D administrative closure, final-head CI, Squash merge and post-merge verification.
+- `S8_COMPLETE = TRUE` after the same closure condition.
+- `S9 = AUTHORIZED_NOT_STARTED` after S8 closure becomes effective and only under a separately issued `FINAL_ACTIVATED` S9 package tied to the exact final main SHA.
+- `S10..S11 = NOT_STARTED`.
 
 ## Stable refs
 
@@ -65,8 +67,7 @@ Scope: `FR-011..FR-013`, `FR-018..FR-021`, `AC-05`, `AC-06`, `P-01..P-04`, plus 
 
 - Final reviewed head: `c3387b772ee457bfb88d7ec3dc06090947776dd7`.
 - Squash/main SHA: `1e1637451bdd1e63ad82a6782cb1fa2b010cb347`.
-- Final-head CI: Foundation `31631306517` SUCCESS; S2 `31631306390` SUCCESS; S3 `31631306391` SUCCESS on retry after external download interruption.
-- Implements Work-scoped irregular payments, remaining/collection truth, D-010 reversal, dual-account approval, audit/idempotency/concurrency boundaries and bounded reads.
+- Final-head CI: Foundation `31631306517` SUCCESS; S2 `31631306390` SUCCESS; S3 `31631306391` SUCCESS.
 
 ### PR-B #75 — transfers / subscriptions / expenses / settlement core
 
@@ -75,76 +76,113 @@ Scope: `FR-011..FR-013`, `FR-018..FR-021`, `AC-05`, `AC-06`, `P-01..P-04`, plus 
 - Final-head CI: Foundation `31638405137` SUCCESS; S2 `31638405056` SUCCESS; S3 `31638405045` SUCCESS.
 - Targeted PR-B `15/15 PASS`; full Node `116/116 PASS`.
 - D1: settlement preview 8 reads, maximum bind 71; transfer/subscription/common-expense lists 1 read each.
-- Implements D-011, D-014, D-015, D-016, P-02/P-03/P-04, reopened-prior invalidation and closed-period cross-stage guards.
 
 ### PR-C #76 — business flows / Arabic RTL financial UI / integrated acceptance
 
-- Base main: `0eb382f7146cb1730e64a37bec1bb46876f500b8`.
 - Final reviewed head: `1f15df2c6605b007d32d7698f604d948b42e4a91`.
 - Squash/main SHA: `7539b8289b75e3702d19d84fb29c04f20a98d0e6`.
 - Final-head CI: Foundation `31641996434` SUCCESS; S2 `31641996429` SUCCESS; S3 `31641996442` SUCCESS.
 - Focused PR-C `9/9 PASS`; full Node regression `125/125 PASS`.
-- Integrated acceptance covers real UI + Worker/DB flows, `confirmed_at`, distinct `received_by`/`recorded_by`, payment correction, transfers, subscription month+1, close/reopen both directions, reload/history and no client per-Work N+1.
-- Post-merge main verified at `7539b8289b75e3702d19d84fb29c04f20a98d0e6`.
-- Post-merge Foundation `31642292225` SUCCESS.
-- Post-merge S3 `31642292237` SUCCESS with all project validation steps successful.
+- Post-merge Foundation `31642292225` SUCCESS; S3 `31642292237` SUCCESS.
 
 ### PR-D #77 — final verification / administrative closure
 
 - Branch: `s7/pr-d-final-verification-closure`.
-- Base main: `7539b8289b75e3702d19d84fb29c04f20a98d0e6`.
-- Docs/admin only; no runtime changes, no cloud write and no S8 implementation.
 - Evidence: `docs/s7/S7_FINAL_VERIFICATION.md`.
-- Closure becomes effective after final-head CI + independent supervisory review + Squash merge + post-merge verification + Issue #6 close completed.
+- Final S7 main after administrative closure: `ad482ec0dc78ba5796797d40223beb6d6fed0f5b`.
+- Issue #6 closed completed.
 
 ## S7 final verdict
 
-- `FR-011 = PASS`.
-- `FR-012 = PASS`.
-- `FR-013 = PASS`.
+- `FR-011..FR-013 = PASS`.
 - `FR-018 = PASS`.
-- `FR-019 = PASS_WITH_GOVERNED_BOUNDARY` for the unresolved generic common-expense allocation rule; factual expense history is retained and settlement close fails closed when allocation is unresolved.
-- `FR-020 = PASS`.
-- `FR-021 = PASS`.
-- `AC-05 = PASS`.
-- `AC-06 = PASS`.
-- `P-01 = PASS` under D-016.
-- `P-02 = PASS`.
-- `P-03 = PASS`.
-- `P-04 = PASS`.
-- `D-010 = PASS`.
-- `D-011 = PASS`.
-- `D-014 = PASS`.
-- `D-015 = PASS`.
-- `D-016 = PASS`.
+- `FR-019 = PASS_WITH_GOVERNED_BOUNDARY` for unresolved generic shared-expense allocation.
+- `FR-020..FR-021 = PASS`.
+- `AC-05 = PASS`; `AC-06 = PASS`.
+- `P-01..P-04 = PASS` under their governing decisions.
+- `D-010`, `D-011`, `D-014`, `D-015`, `D-016 = PASS`.
 - `S7_OVERPAYMENT_POLICY_UNRESOLVED = FAIL_CLOSED`.
 - `S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED = FAIL_CLOSED`.
 - Multi-Work allocation of one payment remains deferred and unimplemented; ordinary payment is linked to one Work.
 - Exactly two subscriptions; current baseline aggregate is `13,650` halalas; names and individual values were not invented.
+
+## S8 — Issue #7 final chain
+
+Scope: `FR-022`, `FR-024`, `FR-025`, `FR-029`, `FR-030`, `AC-08..AC-10`, plus S8 re-verification of `FR-023` and `AC-12`.
+
+### PR-A #78 — search / filters / alert core
+
+- Final reviewed head: `5613ef052eb430ccfb469afaceee58181f864f7c`.
+- Squash/main SHA: `7128b65a23c11589e068680980dd52bb1c004d3a`.
+- Final-head CI: Foundation `31687193878`, S2 `31687193877`, S3 `31687193869` SUCCESS.
+- Node `133/133 PASS`.
+- Post-merge Foundation `31687592908`, S3 `31687592858` SUCCESS.
+
+### PR-B #79 — analytics / export core
+
+- Final reviewed head: `f6819c46a76506443514a063d59c861486361850`.
+- Squash/main SHA: `2b5170b3e7f5161f6ebe9118dc89672791895167`.
+- Final-head CI: Foundation `31692056002`, S2 `31692055997`, S3 `31692055987` SUCCESS.
+- Full Node after repair `139/139 PASS`; real XLSX 5/5 PASS.
+- Post-merge Foundation `31692600422`, S3 `31692600458` SUCCESS.
+
+### PR-C #80 — SPA / authenticated E2E / D-017
+
+- Base main: `2b5170b3e7f5161f6ebe9118dc89672791895167`.
+- Final reviewed head: `a73531ed3fafb5c1cc89a598389ca9f98ef05260`.
+- Squash/main SHA: `19856a4b8a31b9e756406ccda0f16ac169af236d`.
+- Final-head CI: Foundation `31695541782`, S2 `31695541807`, S3 `31695541798` SUCCESS.
+- Focused alert/search `8/8`, analytics/export `6/6`, authenticated UI E2E `1/1`, full Node `140/140` PASS.
+- Post-merge Foundation `31695925778` SUCCESS; S3 `31695925794` SUCCESS.
+- D-017 closes FR-029 with configurable thresholds and authoritative clock anchors; no defaults are invented and no client clock controls results.
+- Customer export pagination totals cover the complete eligible result set.
+
+### PR-D — final verification / administrative closure
+
+- Branch: `s8/pr-d-final-verification-closure`.
+- Base main: `19856a4b8a31b9e756406ccda0f16ac169af236d`.
+- Evidence: `docs/s8/S8_FINAL_VERIFICATION.md`.
+- Docs/governance/validation only; no S9 runtime implementation, no Cloud write and no stable movement.
+- Closure becomes effective after final-head CI + supervisory review + Squash merge + post-merge verification + Issue #7 close completed.
+
+## S8 final verdict
+
+- `FR-022 = PASS`.
+- `FR-023 S8 REVERIFY = PASS`.
+- `FR-024 = PASS`.
+- `FR-025 = PASS`.
+- `FR-029 = PASS` under D-017.
+- `FR-030 = PASS`.
+- `AC-08 = PASS`.
+- `AC-09 = PASS`.
+- `AC-10 = PASS`.
+- `AC-12 S8 REVERIFY = PASS`.
+- `D-017 = PASS`.
+- Search, analytics and Excel consume S6/S7 authoritative financial truth; S8 does not create an independent client-side financial truth.
+- Archived records remain visible in explicit historical scope but excluded from active-only totals.
 - `CLOUD_WRITE = NO`.
 - `REAL_DATA = NO`.
 - `SECRETS_ADDED = NO`.
 - `STABLE_REFS_MOVED = NO`.
 
-## Governing decisions relevant to S8
+## Governing decisions relevant to S9
 
-- D-006: Workers Free + Workers Static Assets + D1 Free + Firebase Auth Spark Email/Password; only two active users; no mandatory Billing/card; integer halalas and no floating-point money math.
-- D-007: branch + PR, final-head CI, no direct main, no automatic stable movement.
-- D-008: S3 remains administratively deferred, not complete.
-- D-009..D-012 remain governing for dual approval, reversal, settlement close/reopen and rounding.
-- D-014: settlement Work membership uses authoritative nullable `confirmed_at` only.
-- D-015: approved receipts use `received_by`; positive final balance means person_1 owes person_2; prior balance comes from latest valid prior monthly settlement.
-- D-016: subscription change/cancellation takes effect from the next settlement month; no daily prorating.
+- D-006: zero-mandatory-cost architecture and financial integer rules remain binding.
+- D-007: no direct `main`, final-head CI, Squash merge and no automatic stable movement.
+- D-008: S3 remains deferred, not complete.
+- D-009..D-017 remain governing where S9 displays or interacts with inherited behavior.
+- D-018: S9 uses automated deterministic ZERO-MANUAL-QA instead of the Issue #8 manual viewport/RTL acceptance wording.
+- D-019: S9 execution PR uses sequential ownership only: Codex Sol High completes first and stops; only then Manus may review/repair the same PR; no concurrency and neither may merge.
 
 ## Next stage
 
-After PR #77 is merged, its `main` SHA is verified and Issue #6 is closed completed:
+After the S8 administrative closure PR is merged, its final `main` SHA is verified and Issue #7 is closed completed:
 
-- `NEXT_STAGE = S8`.
-- S8 Issue #7: **البحث والتقارير والتصدير**.
-- Core scope: FR-022, FR-024, FR-025, FR-029, FR-030; AC-08, AC-09, AC-10; reverify FR-023/AC-12 archive/history behavior where S8 consumes those records.
-- S8 must start from the exact final `main` SHA produced by PR #77, not from PR #76 or an S7 implementation branch.
-- Only an S8 `FINAL_ACTIVATED` instruction package tied to that SHA authorizes execution.
+- `NEXT_STAGE = S9`.
+- S9 Issue #8: **تجربة الاستخدام للهاتف والكمبيوتر**.
+- Core scope: Arabic RTL responsive UX for mobile/desktop, state clarity, keyboard/touch accessibility, errors, sensitive confirmations and duplicate-submit prevention without changing business semantics.
+- S9 starts only from the exact final `main` SHA produced by this S8 closure PR.
+- Only an S9 `FINAL_ACTIVATED` instruction package tied to that SHA authorizes implementation.
 
 ## Permanent rules
 
@@ -156,3 +194,4 @@ After PR #77 is merged, its `main` SHA is verified and Issue #6 is closed comple
 - Do not invent unresolved product rules; fail closed or record/defer them.
 - Stage conversations stay within their Issue scope.
 - General supervision reviews PRs and authorizes stage transitions.
+- Except for an explicit scoped decision such as D-019, two coding agents must not push concurrently or hand off the same PR without recorded sequential ownership.
