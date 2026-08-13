@@ -22,10 +22,11 @@
 - `S7_COMPLETE = TRUE`.
 - `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 implementation, PR-D administrative closure, final-head CI, Squash merge and post-merge verification.
 - `S8_COMPLETE = TRUE`.
-- `S9 = CLOSED_COMPLETE` after PR #82 implementation/review plus this administrative closure PR, applicable final-head CI, Squash merge, post-merge verification and Issue #8 closure.
-- `S9_COMPLETE = TRUE` after the same closure condition becomes effective.
-- `S10 = AUTHORIZED_NOT_STARTED` only after the S9 closure condition is effective and a separately issued `FINAL_ACTIVATED` S10 package is tied to the exact final S9 main SHA.
-- `S11 = NOT_STARTED`; historical-data preparation may remain private/local but import execution is not authorized before S10 closure.
+- `S9 = CLOSED_COMPLETE` after PR #82 implementation/review plus PR #83 administrative closure, applicable final-head CI, Squash merge, post-merge verification and Issue #8 closure.
+- `S9_COMPLETE = TRUE`.
+- `S10 = CLOSED_COMPLETE` after PR #86 implementation/verification plus this administrative closure PR, final-head CI, Squash merge, post-merge verification and Issue #9 closure become effective.
+- `S10_COMPLETE = TRUE` after the same closure condition becomes effective.
+- `S11 = AUTHORIZED_NOT_STARTED` only after the S10 closure condition is effective and a separately issued `FINAL_ACTIVATED` S11 package is tied to the exact final S10 main SHA. Private/local historical preparation is already complete; real historical data remains outside GitHub.
 
 ## Stable refs
 
@@ -181,12 +182,11 @@ Scope: Arabic RTL responsive UX for mobile/desktop, state clarity, keyboard/focu
 - Squash/main SHA: `7a19bcdd0c85838a6c5e764e86b1a51e76fde0b7`.
 - Post-merge S3 run `31710108330` SUCCESS.
 
-### PR-B — final verification / administrative closure
+### PR-B #83 — final verification / administrative closure
 
-- Branch: `s9/pr-b-final-verification-closure`.
-- Base main: `7a19bcdd0c85838a6c5e764e86b1a51e76fde0b7`.
 - Evidence: `docs/s9/S9_FINAL_VERIFICATION.md`.
-- Documentation/state/traceability only; no S10 runtime implementation, no Cloud write, no real data and no stable movement.
+- Final S9 closure main SHA: `f603363ed845aeb84c4cb1851b645a1cf154ba8f`.
+- Issue #8 closed completed.
 
 ## S9 final verdict
 
@@ -207,25 +207,73 @@ Scope: Arabic RTL responsive UX for mobile/desktop, state clarity, keyboard/focu
 - `SECRETS_ADDED = NO`.
 - `STABLE_REFS_MOVED = NO`.
 
-## Governing decisions relevant to S10
+## S10 — Issue #9 final chain
+
+Scope: integrated AC-01..AC-14 status verification under D-020, security/permissions, concurrency/conflicts/idempotency, financial regression, deterministic backup and actual separate-target restore, multi-year synthetic performance, and full prior-stage regression.
+
+### PR-A #86 — integration / backup / restore / performance verification
+
+- Activation base: `83f66a03d481a54ea479963eceea9df614ef5e12`.
+- Final reviewed head: `8ff9611b2b961cedee1e1eecf6027c955b67a002`.
+- Final-head CI: S10 `31720341365`, Foundation `31720341442`, S2 `31720341358` SUCCESS.
+- S10 focused `6/6 PASS`; full Node `140/140 PASS`; S9 Level A `10 PASS`; Level B `34 PASS + 6 intentional skips`; Python `80/80`; Pester/PSScriptAnalyzer `291 PASS`.
+- AC matrix: 12 PASS; AC-11 `DEFERRED_S3_NOT_FULL_PASS`; AC-14 `DEFERRED_S11_NOT_FULL_PASS` under D-020.
+- Security, concurrency, idempotency, integer-halalah reconciliation, backup/restore and negative restore = PASS.
+- Synthetic backup SHA-256 `2677125615f2886c6152e1254828cfbca2df64b21d6fd59df20f5f1c7af3ace50`; size `86268` bytes.
+- Multi-year profile: 2 actors, 24 customers, 240 Works, 2021–2026, 205 active / 35 archived; bounded query behavior and no invented latency SLA.
+- Squash/main SHA: `5454e1b44f6b02dda455a7d229ed0640c32c9d98`.
+- Post-merge S10 run `31721708708` SUCCESS; Foundation `31721708742` SUCCESS.
+- Evidence: `docs/s10/S10_INTEGRATION_VERIFICATION.md` and `docs/s10/S10_FINAL_VERIFICATION.md`.
+
+### PR-B — final verification / administrative closure
+
+- Branch: `s10/pr-b-final-verification-closure`.
+- Base main: `5454e1b44f6b02dda455a7d229ed0640c32c9d98`.
+- Documentation/state/traceability only; no S11 runtime implementation, Cloud write, real data or stable movement.
+- S10 closure becomes effective only after this PR passes final-head CI, is Squash merged, main is post-merge verified, and Issue #9 is closed completed.
+
+## S10 final verdict
+
+- `S10_ACCEPTANCE = PASS_WITH_D020_DEFERRED_ROWS`.
+- `AC-01..AC-10 = PASS`.
+- `AC-11 = DEFERRED_S3_NOT_FULL_PASS` and S3 remains `CLOSED_BLOCKED_DEFERRED`.
+- `AC-12..AC-13 = PASS`.
+- `AC-14 = DEFERRED_S11_NOT_FULL_PASS`; historical import remains S11-owned.
+- `SECURITY_PERMISSIONS = PASS`.
+- `CONCURRENCY_CONFLICTS = PASS`.
+- `IDEMPOTENCY_DUPLICATES = PASS`.
+- `FINANCIAL_RECONCILIATION = PASS`.
+- `BACKUP_RESTORE_SEPARATE_TARGET = PASS`.
+- `RESTORE_NEGATIVE_CASE = PASS`.
+- `MULTI_YEAR_PERFORMANCE = PASS` with objective measurements and no invented SLA.
+- `CLOUD_WRITE = NO`.
+- `REAL_DATA = NO`.
+- `PAID_SERVICE = NO`.
+- `SECRETS_ADDED = NO`.
+- `STABLE_REFS_MOVED = NO`.
+
+## Governing decisions relevant to S11
 
 - D-006: zero-mandatory-cost architecture and integer-halalah financial truth remain binding.
 - D-007: no direct `main`, final-head CI, Squash merge and no automatic stable movement.
 - D-008: S3 remains deferred, not complete.
-- D-009..D-017 remain governing inherited business/financial behavior.
-- D-018/D-019 are S9-scoped evidence/governance and do not automatically redefine S10 execution ownership.
-- S10 must not silently implement S3-deferred or S11-assigned scope when re-verifying AC-01..AC-14; any unresolved cross-stage acceptance interpretation must be reported fail-closed for supervisory resolution.
+- D-009..D-017 remain inherited business/financial behavior and must not be redefined by historical import.
+- D-018/D-019 remain S9-scoped; D-019 does not authorize multi-agent S11 ownership.
+- D-020 assigns AC-14 implementation to S11 and forbids S10 from fabricating PASS or stealing S11 scope.
+- Historical rules require no guessed year/date/classification, preservation of source/provenance/review status, separation of Works from totals/settlements/notes, explicit zero-price reason, reversible import, and no unreviewed historical number in current balance.
 
 ## Next stage
 
-After this S9 administrative closure PR is merged, its final `main` SHA is verified and Issue #8 is closed completed:
+After this S10 administrative closure PR is merged, its final `main` SHA is verified and Issue #9 is closed completed:
 
-- `NEXT_STAGE = S10`.
-- S10 Issue #9: **اختبار التكامل والنسخ والاستعادة**.
-- Core scope: full-system integration/security/concurrency/accounting verification, reproducible backup and actual restore into an isolated target, and deterministic multi-year/two-user performance evidence.
-- S10 starts only from the exact final `main` SHA produced by this S9 closure PR.
-- Only an S10 `FINAL_ACTIVATED` instruction package tied to that SHA authorizes implementation.
-- S11 historical import remains not started.
+- `NEXT_STAGE = S11`.
+- S11 Issue #10: **تنظيف واستيراد البيانات التاريخية**.
+- The private S11 preparation store is already complete and remains outside GitHub.
+- S11 implements P-07 / AC-14 using the prepared private store, deterministic dry-run/validation/import/reconciliation, idempotency and rollback protections.
+- Confirmed prepared records may be processed automatically; unresolved `PENDING_REVIEW` / `UNKNOWN` rows remain pending and non-operational without blocking the stage merely by existing.
+- No real customer data may be committed to GitHub or CI.
+- S11 starts only from the exact final `main` SHA produced by this S10 closure PR.
+- Only an S11 `FINAL_ACTIVATED` instruction package tied to that exact SHA authorizes execution.
 
 ## Permanent rules
 
