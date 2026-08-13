@@ -124,8 +124,8 @@ jobs:
         working-directory: tools/s9_ux
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          test "$(node -p \"require('./node_modules/@playwright/test/package.json').version\")" = '1.62.0'
-          test "$(node -p \"require('./node_modules/@axe-core/playwright/package.json').version\")" = '4.12.1'
+          test "$(node -p "require('./node_modules/@playwright/test/package.json').version")" = '1.62.0'
+          test "$(node -p "require('./node_modules/@axe-core/playwright/package.json').version")" = '4.12.1'
           npx playwright install --with-deps chromium firefox webkit
           npm run test:level-a
           npm run test:level-b
