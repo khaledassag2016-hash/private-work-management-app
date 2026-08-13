@@ -26,7 +26,8 @@
 - `S9_COMPLETE = TRUE`.
 - `S10 = CLOSED_COMPLETE` after PR #86 implementation/verification plus this administrative closure PR, final-head CI, Squash merge, post-merge verification and Issue #9 closure become effective.
 - `S10_COMPLETE = TRUE` after the same closure condition becomes effective.
-- `S11 = AUTHORIZED_NOT_STARTED` only after the S10 closure condition is effective and a separately issued `FINAL_ACTIVATED` S11 package is tied to the exact final S10 main SHA. Private/local historical preparation is already complete; real historical data remains outside GitHub.
+- `S11 = CLOSED_COMPLETE` after PR #88 implementation/review plus this S11 administrative closure PR, applicable final-head CI, Squash merge, post-merge verification and Issue #10 closure become effective.
+- `S11_COMPLETE = TRUE` after the same closure condition becomes effective.
 
 ## Stable refs
 
@@ -252,6 +253,56 @@ Scope: integrated AC-01..AC-14 status verification under D-020, security/permiss
 - `SECRETS_ADDED = NO`.
 - `STABLE_REFS_MOVED = NO`.
 
+## S11 — Issue #10 final chain
+
+Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed uncertainty handling, immutable provenance, explicit financial activation, deterministic reporting, idempotency and rollback.
+
+### PR-A #88 — governed historical import pipeline
+
+- Activation base: `9b09d3af7491ae0fc119b52e3ecf4ef1aff45ef5`.
+- Final reviewed head: `64570fadc1458fab89ad80fbe0de9d27ae0d5a28`.
+- Final-head CI: S11 `31732665633`, S10 `31732665684`, S3 static `31732665611`, S2 `31732665688`, Foundation `31732665806` SUCCESS.
+- Full Node regression: `150 PASS`, `0 failed`; S9 Level A `10 PASS`; Level B `34 PASS + 6 intentional skips`.
+- Private local dry-run: 9 records; `ACCEPTED=1`, `REJECTED=0`, `PENDING_REVIEW=8`, `UNKNOWN=0`; operational effect `0` halalas.
+- Historical opening balance `3741 SAR` remains a separate `PENDING_REVIEW` historical record with operational effect `0`; it is not injected into current `prior_balance` or current operational balance.
+- D-015 governed accounting-effect checks: Work share on `500 SAR = +35000` halalas, half subscription on `136.50 SAR = +6825` halalas, half transfer fee on `20 SAR = -1000` halalas; raw Work prices and unreviewed historical values remain non-operational.
+- Customer mappings remain pending where identity is unresolved; no identity, year, date or classification is guessed.
+- Original source text, source location/container, normalized data, review status, decision reason, uncertainty flags and source digest remain preserved; batches are idempotent, duplicate/conflict protected and reversibly deactivatable without deleting provenance.
+- Private workbook and raw real source content remain outside GitHub and CI.
+- Squash/main SHA: `37365989ed72ddf9baf11a40531807fc1bb9c281`.
+- Post-merge main CI on that exact SHA: Foundation `31733436915`, S3 static `31733436887`, S10 integration `31733436939`, S11 historical import `31733436992` SUCCESS.
+- Latest-main compatibility was verified against D-021 commit `9d8b27a6c3230221a7b562361ad5569a19176468`; PR #88 did not modify D-021 files, and the Squash merge has that D-021 commit as its parent.
+
+### PR-B — final verification / administrative closure
+
+- Branch: `s11/pr-b-final-verification-closure`.
+- Base main: `37365989ed72ddf9baf11a40531807fc1bb9c281`.
+- State-only administrative closure; no runtime implementation, Cloud write, real data, secret, paid-service activation or stable-ref movement.
+- S11 closure becomes effective only after this PR passes applicable final-head CI, is Squash merged, main is post-merge verified, and Issue #10 is closed completed.
+
+## S11 final verdict
+
+- `S11_ACCEPTANCE = PASS`.
+- `P-07 = PASS`.
+- `AC-14 = PASS`.
+- `DATE_UNCERTAINTY = PASS`.
+- `ZERO_PRICE_REASONING = PASS`.
+- `PROVENANCE_PRESERVED = PASS`.
+- `FINANCIAL_EFFECT_MODEL = PASS` under D-015.
+- `DOUBLE_COUNT_PROTECTION = PASS`.
+- `CUSTOMER_MAPPING = PASS_WITH_PENDING_UNRESOLVED` without guessed identity.
+- `IDEMPOTENCY = PASS`.
+- `DUPLICATE_PROTECTION = PASS`.
+- `ROLLBACK = PASS`.
+- `ACCEPTED_REJECTED_PENDING_REPORT = PASS`.
+- `PRIVATE_DATA_EXECUTION = PASS_LOCAL_ONLY`.
+- `REAL_DATA_IN_GITHUB = NO`.
+- `CLOUD_WRITE = NO`.
+- `PAID_SERVICE = NO`.
+- `SECRETS_ADDED = NO`.
+- `STABLE_REFS_MOVED = NO`.
+- S3 remains `CLOSED_BLOCKED_DEFERRED`; S11 does not convert S3 to complete.
+
 ## Governing decisions relevant to S11
 
 - D-006: zero-mandatory-cost architecture and integer-halalah financial truth remain binding.
@@ -260,20 +311,15 @@ Scope: integrated AC-01..AC-14 status verification under D-020, security/permiss
 - D-009..D-017 remain inherited business/financial behavior and must not be redefined by historical import.
 - D-018/D-019 remain S9-scoped; D-019 does not authorize multi-agent S11 ownership.
 - D-020 assigns AC-14 implementation to S11 and forbids S10 from fabricating PASS or stealing S11 scope.
+- D-021 remains preserved and governs any later Live/Deployment execution; it does not alter S11 historical/financial meaning or authorize Cloud write.
 - Historical rules require no guessed year/date/classification, preservation of source/provenance/review status, separation of Works from totals/settlements/notes, explicit zero-price reason, reversible import, and no unreviewed historical number in current balance.
 
 ## Next stage
 
-After this S10 administrative closure PR is merged, its final `main` SHA is verified and Issue #9 is closed completed:
-
-- `NEXT_STAGE = S11`.
-- S11 Issue #10: **تنظيف واستيراد البيانات التاريخية**.
-- The private S11 preparation store is already complete and remains outside GitHub.
-- S11 implements P-07 / AC-14 using the prepared private store, deterministic dry-run/validation/import/reconciliation, idempotency and rollback protections.
-- Confirmed prepared records may be processed automatically; unresolved `PENDING_REVIEW` / `UNKNOWN` rows remain pending and non-operational without blocking the stage merely by existing.
-- No real customer data may be committed to GitHub or CI.
-- S11 starts only from the exact final `main` SHA produced by this S10 closure PR.
-- Only an S11 `FINAL_ACTIVATED` instruction package tied to that exact SHA authorizes execution.
+- `NEXT_STAGE = NONE_AUTHORIZED`.
+- S11 is the final stage in this closure cycle.
+- No later stage is authorized or started by this closure.
+- Any later Live/Deployment execution or reopening of S3 requires separate explicit supervisory authorization and remains governed by D-021.
 
 ## Permanent rules
 
