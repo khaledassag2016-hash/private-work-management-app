@@ -541,6 +541,7 @@ function s8EligibleWorkSql(input = {}, required = {}) {
   const { period, includeArchived } = s8AnalyticsInput(input); const values = []; const add = value => { values.push(value); return `?${values.length}`; };
   const clauses = [];
   if (!includeArchived) clauses.push('w.archived_at IS NULL');
+  if (period.basis === 'CONFIRMED_AT') clauses.push('w.confirmed_at IS NOT NULL');
   if (required.workId) clauses.push(`w.id=${add(required.workId)}`);
   if (required.customerId) clauses.push(`w.customer_id=${add(required.customerId)}`);
   if (period.month) clauses.push(`strftime('%m',${period.column})=${add(period.month)}`);

@@ -75,22 +75,25 @@ function event(database, workId, id, description = 'Synthetic follow-up') {
 function seedAnalyticsFixture(database) {
   customer(database, 'CUST-S8B-A', 'Synthetic Customer A'); customer(database, 'CUST-S8B-B', 'Synthetic Customer B');
   work(database, 'WORK-S8B-A', { title: 'Synthetic Type A' }); approvedPrice(database, 'WORK-S8B-A', 10000); payment(database, 'WORK-S8B-A', 'PAY-S8B-A', 6000, { note: '=HYPERLINK("https://invalid.example","Synthetic")' }); event(database, 'WORK-S8B-A', 'EVENT-S8B-A', '=SUM(1,1)');
-  work(database, 'WORK-S8B-B', { customerId: 'CUST-S8B-B', title: 'Synthetic Type B archived', workType: 'TYPE_B', specialty: 'SPEC_B', country: 'S8B_COUNTRY_B', university: 'Synthetic University B', archivedAt: '2026-08-20T00:00:00.000Z' }); approvedPrice(database, 'WORK-S8B-B', 20000); payment(database, 'WORK-S8B-B', 'PAY-S8B-B', 10000, { reversed: 2500 }); event(database, 'WORK-S8B-B', 'EVENT-S8B-B');
+  work(database, 'WORK-S8B-B', { customerId: 'CUST-S8B-B', title: 'Synthetic Type B archived', workType: 'TYPE_B', specialty: 'SPEC_B', country: 'S8B_COUNTRY_B', university: 'Synthetic University B', archivedAt: '2026-08-20T00:00:00.000Z' }); approvedPrice(database, 'WORK-S8B-B', 10000); payment(database, 'WORK-S8B-B', 'PAY-S8B-B', 10000, { reversed: 2500 }); event(database, 'WORK-S8B-B', 'EVENT-S8B-B');
+  work(database, 'WORK-S8B-D', { customerId: 'CUST-S8B-B', title: 'Synthetic Type A second price', workType: 'TYPE_A', specialty: 'SPEC_A', country: 'S8B_COUNTRY_A', university: 'Synthetic University A' }); approvedPrice(database, 'WORK-S8B-D', 5000);
   work(database, 'WORK-S8B-C', { customerId: 'CUST-S8B-B', title: 'Synthetic unspecified historical', createdAt: '2025-12-31T23:59:59.000Z', confirmedAt: null, workType: null, specialty: null, country: 'S8B_COUNTRY_A', university: null });
   database.prepare('INSERT INTO work_title_history(id,work_id,old_title,new_title,reason,changed_at,changed_by,request_id) VALUES (?,?,?,?,?,?,?,?)').run('TITLE-S8B-A', 'WORK-S8B-A', 'Synthetic old title', 'Synthetic Type A', 'Synthetic title history', '2026-08-11T00:00:00.000Z', 's8b-one', 'title-s8b-a');
   database.prepare('INSERT INTO work_status_history(id,work_id,old_status,new_status,reason,changed_at,changed_by,request_id) VALUES (?,?,?,?,?,?,?,?)').run('STATUS-S8B-A', 'WORK-S8B-A', 'NEW_REQUEST', 'IN_PROGRESS', 'Synthetic status history', '2026-08-11T00:00:00.000Z', 's8b-one', 'status-s8b-a');
   database.prepare('INSERT INTO documented_facts(id,customer_id,work_id,fact_type,source_ref,details_json,happened_at,created_by,created_at,version) VALUES (?,?,?,?,?,?,?,?,?,1)').run('FACT-S8B-A', 'CUST-S8B-A', 'WORK-S8B-A', 'DELAY', 'Synthetic factual reference', '{"note":"synthetic"}', '2026-08-15T00:00:00.000Z', 's8b-one', '2026-08-15T00:01:00.000Z');
   database.prepare(`INSERT INTO settlement_snapshots(id,period_key,period_start,period_end,period_basis,balance_formula,state,work_count,cumulative_work_count,total_work_value_halalas,person_1_work_share_halalas,person_2_work_share_halalas,approved_receipts_halalas,approved_receipts_person_1_halalas,approved_receipts_person_2_halalas,transfer_amount_halalas,transfer_fee_halalas,subscription_total_halalas,subscription_effect_person_1_halalas,subscription_effect_person_2_halalas,governed_expense_total_halalas,prior_balance_halalas,final_balance_halalas,unresolved_code,version,created_by,created_at,request_id)
-    VALUES (?,?,?,?,?,?,\'CLOSED\',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('SETTLEMENT-S8B-AUG', '2026-08', '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 'CONFIRMED_AT', 'D-015_PERSON_1_OWES_PERSON_2_POSITIVE', 2, 2, 30000, 15000, 15000, 13500, 0, 13500, 0, 0, 0, 0, 0, 0, 0, 1500, null, 1, 's8b-one', '2026-09-01T00:00:00.000Z', 'settlement-s8b-aug');
+    VALUES (?,?,?,?,?,?,\'CLOSED\',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('SETTLEMENT-S8B-AUG', '2026-08', '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 'CONFIRMED_AT', 'D-015_PERSON_1_OWES_PERSON_2_POSITIVE', 3, 3, 25000, 12500, 12500, 13500, 0, 13500, 0, 0, 0, 0, 0, 0, 0, 1500, null, 1, 's8b-one', '2026-09-01T00:00:00.000Z', 'settlement-s8b-aug');
 }
 function group(groups, key, bucket) { return groups[key].find(row => row.bucket === bucket); }
-function rawPart(bytes, path) { const archive = XLSX.CFB.read(bytes, { type: 'buffer' }); const entry = XLSX.CFB.find(archive, `Root Entry/${path}`); assert.ok(entry, `missing OOXML part ${path}`); return new TextDecoder().decode(entry.content); }
+function rawArchive(bytes) { return XLSX.CFB.read(bytes, { type: 'buffer' }); }
+function rawPart(bytes, path) { const archive = rawArchive(bytes); const entry = XLSX.CFB.find(archive, `Root Entry/${path}`); assert.ok(entry, `missing OOXML part ${path}`); return new TextDecoder().decode(entry.content); }
 function assertWorkbook(bytes, expectedNames) {
   assert.ok(bytes instanceof Uint8Array); assert.ok(bytes.length > 2000);
   const reopened = parseS8Workbook(bytes); assert.deepEqual(reopened.SheetNames, expectedNames);
-  const workbookXml = rawPart(bytes, 'xl/workbook.xml'); const firstSheetXml = rawPart(bytes, 'xl/worksheets/sheet1.xml');
-  assert.match(firstSheetXml, /rightToLeft=\"1\"/); assert.match(firstSheetXml, /<autoFilter /);
-  assert.ok(!workbookXml.includes('externalLink')); assert.ok(!workbookXml.includes('vbaProject')); assert.ok(!firstSheetXml.includes('<f'));
+  const archive = rawArchive(bytes); const paths = archive.FullPaths.map(path => path.toLowerCase()); const workbookXml = rawPart(bytes, 'xl/workbook.xml'); const coreXml = rawPart(bytes, 'docProps/core.xml');
+  assert.ok(!paths.some(path => path.includes('externallinks') || path.includes('vbaproject') || path.includes('activex')));
+  assert.ok(!/(token|firebase|cloudflare|\/home\/)/i.test(coreXml)); assert.ok(!workbookXml.includes('externalLink'));
+  for (let index = 0; index < expectedNames.length; index += 1) { const sheetXml = rawPart(bytes, `xl/worksheets/sheet${index + 1}.xml`); assert.match(sheetXml, /rightToLeft=\"1\"/); assert.match(sheetXml, /<autoFilter /); assert.match(sheetXml, /<cols>/); assert.ok(!/<f(?: |>)/.test(sheetXml)); }
   return reopened;
 }
 
@@ -100,12 +103,13 @@ test('S8 PR-B analytics groups classifications, period, archives, and authoritat
     seedAnalyticsFixture(database);
     const analytics = await getS8Analytics(env, { period_basis: 'CREATED_AT', year: '2026', month: '08', include_archived: true });
     assert.equal(analytics.period_basis, 'CREATED_AT'); assert.equal(analytics.financial_authority, 'S6_APPROVED_PRICE_MOVEMENTS_AND_S7_APPROVED_PAYMENTS_MINUS_REVERSALS');
-    assert.deepEqual(group(analytics.groups, 'WORK_TYPE', 'TYPE_A'), { dimension: 'WORK_TYPE', bucket: 'TYPE_A', work_count: 1, active_work_count: 1, archived_work_count: 0, price_unset_work_count: 0, current_price_halalas: 10000, approved_paid_halalas: 6000, remaining_halalas: 4000 });
-    assert.deepEqual(group(analytics.groups, 'WORK_TYPE', 'TYPE_B'), { dimension: 'WORK_TYPE', bucket: 'TYPE_B', work_count: 1, active_work_count: 0, archived_work_count: 1, price_unset_work_count: 0, current_price_halalas: 20000, approved_paid_halalas: 7500, remaining_halalas: 12500 });
+    assert.deepEqual(group(analytics.groups, 'WORK_TYPE', 'TYPE_A'), { dimension: 'WORK_TYPE', bucket: 'TYPE_A', work_count: 2, active_work_count: 2, archived_work_count: 0, price_unset_work_count: 0, current_price_halalas: 15000, approved_paid_halalas: 6000, remaining_halalas: 9000 });
+    assert.deepEqual(group(analytics.groups, 'WORK_TYPE', 'TYPE_B'), { dimension: 'WORK_TYPE', bucket: 'TYPE_B', work_count: 1, active_work_count: 0, archived_work_count: 1, price_unset_work_count: 0, current_price_halalas: 10000, approved_paid_halalas: 7500, remaining_halalas: 2500 });
     assert.deepEqual(analytics.groups.PERIOD.map(row => row.bucket), ['2026-08']);
-    assert.equal(group(analytics.groups, 'SPECIALTY', 'SPEC_A').work_count, 1); assert.equal(group(analytics.groups, 'COUNTRY', 'S8B_COUNTRY_B').archived_work_count, 1); assert.equal(group(analytics.groups, 'UNIVERSITY', 'Synthetic University B').approved_paid_halalas, 7500);
+    assert.equal(group(analytics.groups, 'SPECIALTY', 'SPEC_A').work_count, 2); assert.equal(group(analytics.groups, 'COUNTRY', 'S8B_COUNTRY_B').archived_work_count, 1); assert.equal(group(analytics.groups, 'UNIVERSITY', 'Synthetic University B').approved_paid_halalas, 7500);
     const activeOnly = await getS8Analytics(env, { period_basis: 'CREATED_AT', year: '2026', month: '08', include_archived: false }); assert.equal(group(activeOnly.groups, 'WORK_TYPE', 'TYPE_B'), undefined);
-    const financials = await getWorkFinancials(env, 'WORK-S8B-B'); assert.equal(financials.current_price_halalas, 20000); assert.equal(financials.approved_payments_total_halalas, 7500); assert.equal(financials.remaining_halalas, 12500);
+    const confirmedOnly = await getS8Analytics(env, { period_basis: 'CONFIRMED_AT', include_archived: true }); assert.equal(group(confirmedOnly.groups, 'WORK_TYPE', 'UNSPECIFIED'), undefined); assert.equal(group(confirmedOnly.groups, 'PERIOD', '2026-08').work_count, 3);
+    const financials = await getWorkFinancials(env, 'WORK-S8B-B'); assert.equal(financials.current_price_halalas, 10000); assert.equal(financials.approved_payments_total_halalas, 7500); assert.equal(financials.remaining_halalas, 2500);
     const historical = await getS8Analytics(env, { period_basis: 'CREATED_AT', year: '2025', include_archived: true }); assert.equal(group(historical.groups, 'WORK_TYPE', 'UNSPECIFIED').price_unset_work_count, 1);
     await createCatalogValue(env, 's8b-one', 's8b-dynamic-country', 'country', { value_key: 'S8B_DYNAMIC_COUNTRY', label: 'Synthetic Dynamic Country' });
     work(database, 'WORK-S8B-DYNAMIC', { title: 'Synthetic dynamic catalog analytics', country: 'S8B_DYNAMIC_COUNTRY' });
@@ -118,7 +122,7 @@ test('S8 PR-B export DTOs remain authoritative, archive-aware, bounded, and expo
   try {
     seedAnalyticsFixture(database);
     const workDto = await getS8WorkExportDto(env, 'WORK-S8B-A'); assert.equal(workDto.export_type, 'WORK'); assert.equal(workDto.work.current_price_halalas, 10000); assert.equal(workDto.payments[0].amount_halalas, 6000); assert.equal(workDto.events[0].description, '=SUM(1,1)');
-    const monthDto = await getS8MonthExportDto(env, { period_basis: 'CONFIRMED_AT', year: '2026', month: '08', include_archived: true }); assert.equal(monthDto.export_type, 'MONTH'); assert.deepEqual(monthDto.works.map(row => row.id), ['WORK-S8B-A', 'WORK-S8B-B']); assert.equal(monthDto.settlement_snapshots[0].total_work_value_halalas, 30000);
+    const monthDto = await getS8MonthExportDto(env, { period_basis: 'CONFIRMED_AT', year: '2026', month: '08', include_archived: true }); assert.equal(monthDto.export_type, 'MONTH'); assert.deepEqual(monthDto.works.map(row => row.id), ['WORK-S8B-A', 'WORK-S8B-B', 'WORK-S8B-D']); assert.equal(monthDto.settlement_snapshots[0].total_work_value_halalas, 25000);
     const followUpDto = await getS8FollowUpExportDto(env, { include_archived: true }); assert.equal(followUpDto.export_type, 'FOLLOW_UP'); assert.equal(followUpDto.events.length, 2); assert.equal(followUpDto.events.filter(row => row.is_archived).length, 1);
     const customerDto = await getS8CustomerExportDto(env, 'CUST-S8B-A', { period_basis: 'CREATED_AT', include_archived: true }); assert.equal(customerDto.export_type, 'CUSTOMER'); assert.deepEqual(customerDto.totals, { work_count: 1, active_work_count: 1, archived_work_count: 0, price_unset_work_count: 0, approved_paid_halalas: 6000, remaining_halalas: 4000 }); assert.equal(customerDto.warnings[0].warning_type, 'DELAY');
     const classificationDto = await getS8ClassificationExportDto(env, { period_basis: 'CREATED_AT', include_archived: true }); assert.equal(classificationDto.export_type, 'CLASSIFICATION'); assert.equal(group(classificationDto.groups, 'WORK_TYPE', 'UNSPECIFIED').work_count, 1);
@@ -141,7 +145,7 @@ test('S8 PR-B generates real secure RTL XLSX workbooks with exact sheets, Arabic
     for (const [dto, expectedNames] of cases) {
       const reopened = assertWorkbook(generateS8Workbook(dto), expectedNames); assert.equal(reopened.Sheets[expectedNames[0]].A1.t, 's'); assert.ok(reopened.Sheets[expectedNames[0]]['!ref']);
     }
-    const workBook = assertWorkbook(generateS8Workbook(cases[0][0]), cases[0][1]); const summary = workBook.Sheets['ملخص العمل']; assert.equal(Math.round(summary.L2.v * 100), 10000); assert.equal(summary.L2.t, 'n');
+    const workBook = assertWorkbook(generateS8Workbook(cases[0][0]), cases[0][1]); const summary = workBook.Sheets['ملخص العمل']; assert.equal(Math.round(summary.L2.v * 100), 10000); assert.equal(summary.L2.t, 'n'); assert.equal(summary.A2.t, 's'); assert.equal(XLSX.utils.decode_range(summary['!ref']).e.r, 1);
     const followUpBook = assertWorkbook(generateS8Workbook(cases[2][0]), cases[2][1]); const safeEvent = followUpBook.Sheets['سجل المتابعة'].F2; assert.equal(safeEvent.f, undefined); assert.equal(safeEvent.v, "'=SUM(1,1)");
     assert.equal(safeS8ExportFilename('WORK', '../../unsafe/اسم'), 's8-work-unsafe.xlsx'); assert.throws(() => safeS8ExportFilename('INVALID', 'x'), /S8_EXPORT_TYPE_INVALID/);
   } finally { database.close(); }
