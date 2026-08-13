@@ -21,9 +21,10 @@ Never substitute conversation memory, an agent report or `docs/REQUIREMENTS.md` 
 - `S5 = CLOSED_COMPLETE`.
 - `S6 = CLOSED_COMPLETE`.
 - `S7 = CLOSED_COMPLETE` after PR #77 final-head CI, Squash merge, post-merge verification and Issue #6 closure.
-- `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 plus the administrative closure PR complete final-head CI, Squash merge, post-merge verification and Issue #7 closure.
-- `S9 = AUTHORIZED_NOT_STARTED` only after the S8 closure condition is effective and a `FINAL_ACTIVATED` S9 package is tied to the exact final main SHA.
-- `S10..S11 = NOT_STARTED`.
+- `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 plus PR #81 administrative closure, final-head CI, Squash merge, post-merge verification and Issue #7 closure.
+- `S9 = CLOSED_COMPLETE` after PR #82 plus the S9 administrative closure PR complete applicable final-head CI, Squash merge, post-merge verification and Issue #8 closure.
+- `S10 = AUTHORIZED_NOT_STARTED` only after the S9 closure condition is effective and a `FINAL_ACTIVATED` S10 package is tied to the exact final S9 main SHA.
+- `S11 = NOT_STARTED`; private/local historical preparation is not S11 import execution.
 
 ## 3. S5/S6 evidence retained
 
@@ -114,13 +115,11 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Customer export complete totals are repaired and verified beyond a single page.
 - Post-merge Foundation `31695925778` SUCCESS; S3 `31695925794` SUCCESS.
 
-### PR-D — S8 Final Verification / Administrative Closure
+### PR-D #81 — S8 Final Verification / Administrative Closure
 
-- Branch `s8/pr-d-final-verification-closure`.
-- Base `19856a4b8a31b9e756406ccda0f16ac169af236d`.
 - Evidence `docs/s8/S8_FINAL_VERIFICATION.md`.
-- Contains only documentation/governance/validation-harness registration needed for closure and S9 transition; no S9 runtime code, no Cloud write and no stable movement.
-- After final-head CI, Squash merge and post-merge verification, close Issue #7 as completed and issue the S9 `FINAL_ACTIVATED` package from the exact resulting main SHA.
+- Final S8 main `5808415e2f5f8710beaacf3dc0496d3645f70d77`.
+- Issue #7 closed completed.
 
 ## 7. S8 authoritative behavior inherited by S9+
 
@@ -132,7 +131,38 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - D-017: NO_PRICE from `created_at` while PRICE_UNSET; NO_REPLY from latest transition into WAITING_CLIENT_RESPONSE or initial `created_at`; NO_PAYMENT from authoritative `confirmed_at` for positive-price confirmed Work while approved receipts remain zero.
 - Alert thresholds have no default values and are stored/configured explicitly.
 
-## 8. Architecture and zero-cost constraints
+## 8. S9 final evidence and inherited UX contract
+
+### PR-A #82 — Zero-manual UX automated acceptance
+
+- Base main `5808415e2f5f8710beaacf3dc0496d3645f70d77`.
+- Codex handoff head `ec759af7474336f3b358d0e6a0c263e91e0a498d`; Codex stopped before Manus ownership.
+- Manus final reviewed head `0eeb902068dc6b411ce3780d96998578ed5dac3e`; Manus stopped before supervisory merge.
+- Manus repair was limited to New Work modal focus restoration in both mirrored assets plus deterministic regression.
+- Final-head S9 UX Acceptance `31709356193` SUCCESS.
+- Final-head S3 CPU Gate Static `31709356421` SUCCESS.
+- Final-head S2 architecture validation `31709356846` SUCCESS.
+- Playwright Level A `10 PASS`; Level B `34 PASS + 6 intentional non-applicable skips`.
+- Full Node regression `140 PASS`, `0 failed`.
+- Foundation validator passed locally on the final head; its GitHub workflow is path-scoped and was not applicable to S9 runtime/test files.
+- Squash/main `7a19bcdd0c85838a6c5e764e86b1a51e76fde0b7`.
+- Post-merge S3 `31710108330` SUCCESS.
+- Evidence: `docs/s9/S9_FINAL_VERIFICATION.md`.
+
+### S9 inherited UX contract
+
+- Arabic RTL direction and responsive containment are deterministic acceptance properties.
+- Mobile/desktop function capability parity A–M is regression-protected.
+- Critical interactive controls on mobile meet the automated touch-target gate.
+- Keyboard focus is contained in dialogs and restored to the invoker on close.
+- Automated accessibility gate rejects critical/serious axe violations for covered surfaces.
+- Sensitive governed mutations require effect confirmation before request transmission.
+- Duplicate click/tap/Enter while a mutation is pending must not create a second mutation.
+- 400/401/403/409/fail-closed/500/network errors remain visible, recoverable and preserve user input where covered.
+- D-018 replaced manual viewport QA for S9 only; snapshots alone never establish acceptance.
+- D-019 was S9 PR-A only and does not automatically authorize a Codex↔Manus handoff in S10.
+
+## 9. Architecture and zero-cost constraints
 
 - API: Cloudflare Workers Free.
 - Static UI: Cloudflare Workers Static Assets.
@@ -143,7 +173,7 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Money is integer halalas within the JavaScript safe-integer range; no floating-point financial truth.
 - No Cloud writes are authorized merely by starting a software stage.
 
-## 9. Permanent delivery rules
+## 10. Permanent delivery rules
 
 - Never edit `main` directly.
 - Independent branch + PR for every stage/change.
@@ -155,19 +185,21 @@ The unresolved S6 negative-final-price policy remains fail-closed.
 - Except where a dated scoped decision explicitly permits sequential handoff, coding agents must not push concurrently to the same PR.
 - Avoid repeated supervisory stop loops: executor self-repairs within one PR; supervision performs one consolidated final review, at most one consolidated repair batch for discovered defects, then targeted recheck + full regression + final-head CI and immediate merge if clean.
 
-## 10. S9 activation boundary
+## 11. S10 activation boundary
 
-Issue #8 is `[S9] تجربة الاستخدام للهاتف والكمبيوتر`.
+Issue #9 is `[S10] اختبار التكامل والنسخ والاستعادة`.
 
-Core S9 scope remains the Issue #8 UX boundary: Arabic RTL responsive desktop/mobile experience, dashboard/input/follow-up/approval/settlement paths, clear execution/collection/pending/warning states, keyboard accessibility, touch targets, error messages and duplicate-submit prevention. S9 must not redefine S4–S8 business or financial semantics.
+Core S10 scope is full-system integration, security/permissions, concurrency/conflicting edits, authoritative financial/reversal/closed-settlement verification, reproducible backup plus actual restore into a separate isolated target, and deterministic performance evidence for two users with multi-year synthetic data.
 
-D-018 supersedes the Issue #8 manual viewport/RTL acceptance wording with ZERO-MANUAL-QA: deterministic automated Playwright multi-browser/device acceptance plus axe-core and explicit custom structural/interaction assertions. Visual snapshots are supplementary only and cannot by themselves produce PASS.
+S10 re-verifies AC-01..AC-14 as an integration report. It must not silently implement S3-deferred AC-11/FR-026 or S11-assigned AC-14/P-07 merely to force a PASS. If the governing sources still leave a cross-stage acceptance conflict at activation time, the S10 package must report that item explicitly and fail closed for supervisory resolution rather than invent scope.
 
-D-019 governs the S9 implementation PR only: Codex Sol High executes first, completes code/tests/self-review and then stops the branch. Only after that handoff may Manus inspect and directly repair the same PR, rerun focused/full tests and final-head CI, then stop. Codex and Manus never work concurrently and neither merges. General supervision performs one final review and Squash merges if clean.
+S10 may use only synthetic/local data unless separately authorized. Backup/restore acceptance must prove an actual restore into a distinct empty local D1-compatible/SQLite target and reconcile authoritative rows/history/financial truth and representative API reads; checking a backup file's existence is insufficient.
 
-S9 starts only from the exact final `main` SHA produced by the S8 administrative closure PR and only under the separately issued S9 `FINAL_ACTIVATED` package tied to that SHA.
+No numeric latency SLA exists in the governing sources. S10 may measure p50/p95/max/query counts on a deterministic multi-year profile and fail on correctness/security/financial regression, crash/timeout or unbounded/N+1 behavior; it must not invent a millisecond threshold.
 
-## 11. Stable refs
+S10 starts only from the exact final `main` SHA produced by the S9 administrative closure PR and only under a separately issued S10 `FINAL_ACTIVATED` package tied to that SHA. Preferred executor may be Manus, but no S9-only D-019 handoff is assumed.
+
+## 12. Stable refs
 
 - `stable/2026-08-09-be14a389` -> `be14a389d7e11f1df9f935999d888e7e2295c8a3`.
 - `stable/2026-08-09-643de962` -> `643de962dc8631f68a42e3796c4a096a29c4e14c`.
