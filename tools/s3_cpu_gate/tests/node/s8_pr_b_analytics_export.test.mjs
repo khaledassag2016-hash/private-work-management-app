@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import * as XLSX from '../../src/worker/assets/vendor/xlsx-0.18.5.mjs';
+import * as XLSX from '../../src/worker/assets/vendor/xlsx-0.20.3.mjs';
 import { generateS8Workbook, parseS8Workbook, safeS8ExportFilename } from '../../src/worker/assets/s8-export.mjs';
 import worker, {
   createCatalogValue,
@@ -20,6 +21,8 @@ import worker, {
 } from '../../src/worker/src/index.js';
 
 const schemaPath = fileURLToPath(new URL('../../src/worker/schema.sql', import.meta.url));
+const vendorPath = fileURLToPath(new URL('../../src/worker/assets/vendor/xlsx-0.20.3.mjs', import.meta.url));
+const vendorHashPath = fileURLToPath(new URL('../../src/worker/assets/vendor/XLSX-0.20.3-SHA256.txt', import.meta.url));
 const schema = readFileSync(schemaPath, 'utf8');
 
 class D1Statement {
@@ -124,7 +127,7 @@ test('S8 PR-B export DTOs remain authoritative, archive-aware, bounded, and expo
     const workDto = await getS8WorkExportDto(env, 'WORK-S8B-A'); assert.equal(workDto.export_type, 'WORK'); assert.equal(workDto.work.current_price_halalas, 10000); assert.equal(workDto.payments[0].amount_halalas, 6000); assert.equal(workDto.events[0].description, '=SUM(1,1)');
     const monthDto = await getS8MonthExportDto(env, { period_basis: 'CONFIRMED_AT', year: '2026', month: '08', include_archived: true }); assert.equal(monthDto.export_type, 'MONTH'); assert.deepEqual(monthDto.works.map(row => row.id), ['WORK-S8B-A', 'WORK-S8B-B', 'WORK-S8B-D']); assert.equal(monthDto.settlement_snapshots[0].total_work_value_halalas, 25000);
     const followUpDto = await getS8FollowUpExportDto(env, { include_archived: true }); assert.equal(followUpDto.export_type, 'FOLLOW_UP'); assert.equal(followUpDto.events.length, 2); assert.equal(followUpDto.events.filter(row => row.is_archived).length, 1);
-    const customerDto = await getS8CustomerExportDto(env, 'CUST-S8B-A', { period_basis: 'CREATED_AT', include_archived: true }); assert.equal(customerDto.export_type, 'CUSTOMER'); assert.deepEqual(customerDto.totals, { work_count: 1, active_work_count: 1, archived_work_count: 0, price_unset_work_count: 0, approved_paid_halalas: 6000, remaining_halalas: 4000 }); assert.equal(customerDto.warnings[0].warning_type, 'DELAY');
+    const customerDto = await getS8CustomerExportDto(env, 'CUST-S8B-A', { period_basis: 'CREATED_AT', include_archived: true }); assert.equal(customerDto.export_type, 'CUSTOMER'); assert.deepEqual(customerDto.page_totals, { work_count: 1, active_work_count: 1, archived_work_count: 0, price_unset_work_count: 0, approved_paid_halalas: 6000, remaining_halalas: 4000 }); assert.equal(customerDto.warnings[0].warning_type, 'DELAY');
     const classificationDto = await getS8ClassificationExportDto(env, { period_basis: 'CREATED_AT', include_archived: true }); assert.equal(classificationDto.export_type, 'CLASSIFICATION'); assert.equal(group(classificationDto.groups, 'WORK_TYPE', 'UNSPECIFIED').work_count, 1);
     await assert.rejects(getS8MonthExportDto(env, { period_basis: 'CREATED_AT', year: '2026' }), /S8_EXPORT_PERIOD_REQUIRED/);
     await assert.rejects(getS8Analytics(env, { year: '2026' }), /S8_PERIOD_BASIS_REQUIRED/);
@@ -146,7 +149,9 @@ test('S8 PR-B generates real secure RTL XLSX workbooks with exact sheets, Arabic
       const reopened = assertWorkbook(generateS8Workbook(dto), expectedNames); assert.equal(reopened.Sheets[expectedNames[0]].A1.t, 's'); assert.ok(reopened.Sheets[expectedNames[0]]['!ref']);
     }
     const workBook = assertWorkbook(generateS8Workbook(cases[0][0]), cases[0][1]); const summary = workBook.Sheets['ملخص العمل']; assert.equal(Math.round(summary.L2.v * 100), 10000); assert.equal(summary.L2.t, 'n'); assert.equal(summary.A2.t, 's'); assert.equal(XLSX.utils.decode_range(summary['!ref']).e.r, 1);
-    const followUpBook = assertWorkbook(generateS8Workbook(cases[2][0]), cases[2][1]); const safeEvent = followUpBook.Sheets['سجل المتابعة'].F2; assert.equal(safeEvent.f, undefined); assert.equal(safeEvent.v, "'=SUM(1,1)");
+    const followUpBook = assertWorkbook(generateS8Workbook(cases[2][0]), cases[2][1]); const safeEvent = followUpBook.Sheets['سجل المتابعة'].F2; assert.equal(safeEvent.f, undefined); assert.equal(safeEvent.v, '=SUM(1,1)');
+    const settlementSheet = parseS8Workbook(generateS8Workbook(cases[1][0])).Sheets['التسوية']; assert.equal(settlementSheet.H1.v, 'حصة الشخص 1 من الأعمال SAR'); assert.equal(settlementSheet.I1.v, 'حصة الشخص 2 من الأعمال SAR'); assert.match(settlementSheet.K1.v, /غير موقّع؛ لا يُستنتج منه الاتجاه/); assert.match(settlementSheet.L1.v, /غير محفوظ في snapshot/); assert.equal(settlementSheet.L2.v, 'غير متاح؛ غير محفوظ في snapshot'); assert.match(settlementSheet.Q1.v, /الموجب: الشخص 1 مدين للشخص 2/);
+    const edgeDto = structuredClone(cases[0][0]); edgeDto.work.current_price_halalas = 9007199254740990; edgeDto.work.approved_paid_halalas = 0; edgeDto.work.remaining_halalas = 9007199254740990; const edgeBook = parseS8Workbook(generateS8Workbook(edgeDto)); const edgePrice = edgeBook.Sheets['ملخص العمل'].L2; assert.equal(edgePrice.t, 's'); assert.equal(edgePrice.v, '90071992547409.90');
     assert.equal(safeS8ExportFilename('WORK', '../../unsafe/اسم'), 's8-work-unsafe.xlsx'); assert.throws(() => safeS8ExportFilename('INVALID', 'x'), /S8_EXPORT_TYPE_INVALID/);
   } finally { database.close(); }
 });
@@ -165,15 +170,27 @@ test('S8 PR-B analytics and export API routes retain authenticated authoritative
   } finally { globalThis.fetch = originalFetch; database.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('S8 PR-B analytics and export DTO D1 query and bind budgets stay fixed on 500+ synthetic Works', async () => {
+test('S8 PR-B money aggregation fails closed above the safe-integer domain and SheetJS vendor bytes are pinned', async () => {
+  const { database, env } = fixture();
+  try {
+    seedAnalyticsFixture(database); work(database, 'WORK-S8B-OVERFLOW-1', { title: 'Synthetic overflow 1', workType: 'OVERFLOW_TYPE' }); work(database, 'WORK-S8B-OVERFLOW-2', { title: 'Synthetic overflow 2', workType: 'OVERFLOW_TYPE' }); approvedPrice(database, 'WORK-S8B-OVERFLOW-1', 9007199254740990); approvedPrice(database, 'WORK-S8B-OVERFLOW-2', 9007199254740990);
+    await assert.rejects(getS8Analytics(env, { period_basis: 'CREATED_AT', include_archived: true }), /MONEY_OVERFLOW/);
+    const recordedHash = readFileSync(vendorHashPath, 'utf8').trim().split(/\s+/)[0]; assert.equal(recordedHash, '1a0fb062ee9781b13f6687371b202aaefc53b6ce55b530c027e01f9c087b77db'); assert.equal(createHash('sha256').update(readFileSync(vendorPath)).digest('hex'), recordedHash);
+  } finally { database.close(); }
+});
+
+test('S8 PR-B analytics and export DTO D1 query and bind budgets stay fixed on continuation pages above 1000 synthetic Works', async () => {
   const { database, env } = fixture();
   try {
     seedAnalyticsFixture(database);
-    for (let index = 0; index < 501; index += 1) work(database, `WORK-S8B-LARGE-${String(index).padStart(3, '0')}`, { title: `Synthetic large ${index}`, createdAt: '2026-08-11T00:00:00.000Z', confirmedAt: '2026-08-12T00:00:00.000Z', workType: index % 2 ? 'TYPE_A' : 'TYPE_B', specialty: index % 2 ? 'SPEC_A' : 'SPEC_B' });
+    for (let index = 0; index < 1001; index += 1) { work(database, `WORK-S8B-LARGE-${String(index).padStart(4, '0')}`, { title: `Synthetic large ${index}`, createdAt: '2026-08-11T00:00:00.000Z', confirmedAt: '2026-08-12T00:00:00.000Z', workType: index % 2 ? 'TYPE_A' : 'TYPE_B', specialty: index % 2 ? 'SPEC_A' : 'SPEC_B' }); event(database, 'WORK-S8B-A', `EVENT-S8B-LARGE-${String(index).padStart(4, '0')}`); }
     database.readQueries = 0; database.bindingWidths = []; await getS8Analytics(env, { period_basis: 'CREATED_AT', year: '2026', month: '08', include_archived: true }); const analyticsQueries = database.readQueries; const analyticsMaxBind = Math.max(...database.bindingWidths, 0);
-    database.readQueries = 0; database.bindingWidths = []; await getS8MonthExportDto(env, { period_basis: 'CONFIRMED_AT', year: '2026', month: '08', include_archived: true }); const monthQueries = database.readQueries; const monthMaxBind = Math.max(...database.bindingWidths, 0);
-    database.readQueries = 0; database.bindingWidths = []; await getS8CustomerExportDto(env, 'CUST-S8B-A', { period_basis: 'CREATED_AT', include_archived: true }); const customerQueries = database.readQueries; const customerMaxBind = Math.max(...database.bindingWidths, 0);
-    assert.equal(analyticsQueries, 1); assert.ok(monthQueries <= 2); assert.ok(customerQueries <= 3); assert.ok(Math.max(analyticsMaxBind, monthMaxBind, customerMaxBind) <= 100);
-    console.log(`S8_PR_B_D1_MEASUREMENT analytics_queries=${analyticsQueries} analytics_max_bind=${analyticsMaxBind} month_export_queries=${monthQueries} month_export_max_bind=${monthMaxBind} customer_export_queries=${customerQueries} customer_export_max_bind=${customerMaxBind} works=504`);
+    database.readQueries = 0; database.bindingWidths = []; const firstMonthPage = await getS8MonthExportDto(env, { period_basis: 'CONFIRMED_AT', year: '2026', month: '08', include_archived: true, page_size: 200 }); const monthQueries = database.readQueries; const monthMaxBind = Math.max(...database.bindingWidths, 0);
+    const walked = []; let cursor = null; do { const page = await getS8MonthExportDto(env, { period_basis: 'CONFIRMED_AT', year: '2026', month: '08', include_archived: true, page_size: 200, cursor }); walked.push(...page.works.map(row => row.id)); cursor = page.next_cursor; } while (cursor);
+    database.readQueries = 0; database.bindingWidths = []; await getS8CustomerExportDto(env, 'CUST-S8B-A', { period_basis: 'CREATED_AT', include_archived: true, page_size: 200 }); const customerQueries = database.readQueries; const customerMaxBind = Math.max(...database.bindingWidths, 0);
+    const walkedCustomer = []; let customerCursor = null; do { const page = await getS8CustomerExportDto(env, 'CUST-S8B-A', { period_basis: 'CREATED_AT', include_archived: true, page_size: 200, cursor: customerCursor }); walkedCustomer.push(...page.works.map(row => row.id)); customerCursor = page.next_cursor; } while (customerCursor);
+    const walkedFollowUp = []; let followUpCursor = null; do { const page = await getS8FollowUpExportDto(env, { include_archived: true, page_size: 200, cursor: followUpCursor }); walkedFollowUp.push(...page.events.map(row => row.id)); followUpCursor = page.next_cursor; } while (followUpCursor);
+    assert.equal(firstMonthPage.page_size, 200); assert.ok(firstMonthPage.next_cursor); assert.equal(walked.length, 1004); assert.equal(new Set(walked).size, 1004); assert.deepEqual(walked, [...walked].sort()); assert.equal(walkedCustomer.length, 1002); assert.equal(new Set(walkedCustomer).size, 1002); assert.deepEqual(walkedCustomer, [...walkedCustomer].sort()); assert.equal(walkedFollowUp.length, 1003); assert.equal(new Set(walkedFollowUp).size, 1003); assert.deepEqual(walkedFollowUp, [...walkedFollowUp].sort()); assert.equal(analyticsQueries, 1); assert.ok(monthQueries <= 2); assert.ok(customerQueries <= 3); assert.ok(Math.max(analyticsMaxBind, monthMaxBind, customerMaxBind) <= 100);
+    console.log(`S8_PR_B_D1_MEASUREMENT analytics_queries=${analyticsQueries} analytics_max_bind=${analyticsMaxBind} month_export_queries=${monthQueries} month_export_max_bind=${monthMaxBind} customer_export_queries=${customerQueries} customer_export_max_bind=${customerMaxBind} works=1004`);
   } finally { database.close(); }
 });

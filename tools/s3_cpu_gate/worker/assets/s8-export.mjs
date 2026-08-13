@@ -1,17 +1,18 @@
-import * as XLSX from './vendor/xlsx-0.18.5.mjs';
+import * as XLSX from './vendor/xlsx-0.20.3.mjs';
 
-const FORMULA_PREFIX = /^[=+\-@]/;
 const MONEY_FORMAT = '0.00';
 
-function safeText(value) {
-  if (value === null || value === undefined) return '';
-  const text = String(value);
-  return FORMULA_PREFIX.test(text) ? `'${text}` : text;
-}
+function safeText(value) { return value === null || value === undefined ? '' : String(value); }
 function textCell(value) { return { t: 's', v: safeText(value) }; }
+function exactSarText(halalas) {
+  const amount = BigInt(halalas); const negative = amount < 0n; const absolute = negative ? -amount : amount;
+  return `${negative ? '-' : ''}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
+}
 function moneyCell(halalas) {
   if (halalas === null || halalas === undefined) return textCell('');
-  return { t: 'n', v: Number(halalas) / 100, z: MONEY_FORMAT };
+  const amount = Number(halalas); if (!Number.isSafeInteger(amount)) throw new Error('MONEY_OVERFLOW');
+  const sar = amount / 100;
+  return Number.isSafeInteger(Math.round(sar * 100)) && Math.round(sar * 100) === amount ? { t: 'n', v: sar, z: MONEY_FORMAT } : textCell(exactSarText(amount));
 }
 function countCell(value) { return { t: 'n', v: Number(value || 0), z: '0' }; }
 function rowRange(columnCount, rowCount) {
@@ -56,7 +57,7 @@ function buildMonthWorkbook(dto) {
   const workbook = createWorkbook();
   appendSheet(workbook, 'أعمال الشهر', WORK_HEADERS, dto.works.map(workRow), [22, 24, 36, 20, 20, 20, 16, 24, 25, 25, 14, 14, 14, 14, 22]);
   appendSheet(workbook, 'التحصيل', ['معرف العمل', 'العنوان', 'حالة التحصيل', 'المدفوع SAR', 'المتبقي SAR'], dto.works.map(row => [textCell(row.id), textCell(row.title), textCell(row.collection_status), moneyCell(row.approved_paid_halalas), moneyCell(row.remaining_halalas)]), [22, 36, 22, 16, 16]);
-  appendSheet(workbook, 'التسوية', ['المعرف', 'الفترة', 'الإصدار', 'الحالة', 'أساس الفترة', 'عدد الأعمال', 'قيمة الأعمال SAR', 'التحصيل المعتمد SAR', 'التحويلات SAR', 'رسوم التحويل SAR', 'الاشتراكات SAR', 'المصروفات المحكومة SAR', 'الرصيد السابق SAR', 'الرصيد النهائي SAR', 'حالة عدم الحسم'], dto.settlement_snapshots.map(row => [textCell(row.id), textCell(row.period_key), countCell(row.version), textCell(row.state), textCell(row.period_basis), countCell(row.work_count), moneyCell(row.total_work_value_halalas), moneyCell(row.approved_receipts_halalas), moneyCell(row.transfer_amount_halalas), moneyCell(row.transfer_fee_halalas), moneyCell(row.subscription_total_halalas), moneyCell(row.governed_expense_total_halalas), moneyCell(row.prior_balance_halalas), moneyCell(row.final_balance_halalas), textCell(row.unresolved_code || '')]), [22, 15, 12, 16, 20, 14, 18, 18, 18, 18, 18, 22, 18, 18, 36]);
+  appendSheet(workbook, 'التسوية', ['المعرف', 'الفترة', 'الإصدار', 'الحالة', 'أساس الفترة', 'عدد الأعمال', 'قيمة الأعمال SAR', 'حصة الشخص 1 من الأعمال SAR', 'حصة الشخص 2 من الأعمال SAR', 'التحصيل المعتمد SAR', 'إجمالي التحويلات SAR (غير موقّع؛ لا يُستنتج منه الاتجاه)', 'صافي التحويل للشخص 2 SAR (غير محفوظ في snapshot)', 'رسوم التحويل SAR', 'الاشتراكات SAR', 'المصروفات المحكومة SAR', 'الرصيد السابق SAR', 'الرصيد النهائي SAR (الموجب: الشخص 1 مدين للشخص 2)', 'حالة عدم الحسم'], dto.settlement_snapshots.map(row => [textCell(row.id), textCell(row.period_key), countCell(row.version), textCell(row.state), textCell(row.period_basis), countCell(row.work_count), moneyCell(row.total_work_value_halalas), moneyCell(row.person_1_work_share_halalas), moneyCell(row.person_2_work_share_halalas), moneyCell(row.approved_receipts_halalas), moneyCell(row.transfer_amount_halalas), row.transfer_net_person_2_halalas === null ? textCell('غير متاح؛ غير محفوظ في snapshot') : moneyCell(row.transfer_net_person_2_halalas), moneyCell(row.transfer_fee_halalas), moneyCell(row.subscription_total_halalas), moneyCell(row.governed_expense_total_halalas), moneyCell(row.prior_balance_halalas), moneyCell(row.final_balance_halalas), textCell(row.unresolved_code || '')]), [22, 15, 12, 16, 20, 14, 18, 22, 22, 18, 40, 40, 18, 18, 22, 18, 40, 36]);
   return workbook;
 }
 function buildFollowUpWorkbook(dto) {
@@ -66,7 +67,8 @@ function buildFollowUpWorkbook(dto) {
 }
 function buildCustomerWorkbook(dto) {
   const workbook = createWorkbook();
-  appendSheet(workbook, 'تقرير العميل', ['معرف العميل', 'الاسم', 'عدد الأعمال', 'أعمال نشطة', 'أعمال مؤرشفة', 'سعر غير محدد', 'إجمالي المدفوع SAR', 'إجمالي المتبقي SAR'], [[textCell(dto.customer.id), textCell(dto.customer.name), countCell(dto.totals.work_count), countCell(dto.totals.active_work_count), countCell(dto.totals.archived_work_count), countCell(dto.totals.price_unset_work_count), moneyCell(dto.totals.approved_paid_halalas), moneyCell(dto.totals.remaining_halalas)]], [22, 32, 14, 14, 16, 16, 20, 20]);
+  const totals = dto.page_totals || dto.totals;
+  appendSheet(workbook, 'تقرير العميل', ['معرف العميل', 'الاسم', 'عدد أعمال الصفحة', 'أعمال نشطة', 'أعمال مؤرشفة', 'سعر غير محدد', 'إجمالي المدفوع للصفحة SAR', 'إجمالي المتبقي للصفحة SAR'], [[textCell(dto.customer.id), textCell(dto.customer.name), countCell(totals.work_count), countCell(totals.active_work_count), countCell(totals.archived_work_count), countCell(totals.price_unset_work_count), moneyCell(totals.approved_paid_halalas), moneyCell(totals.remaining_halalas)]], [22, 32, 18, 14, 16, 16, 24, 24]);
   appendSheet(workbook, 'أعمال العميل', WORK_HEADERS, dto.works.map(workRow), [22, 24, 36, 20, 20, 20, 16, 24, 25, 25, 14, 14, 14, 14, 22]);
   appendSheet(workbook, 'التحصيل', ['معرف العمل', 'العنوان', 'حالة التحصيل', 'المدفوع SAR', 'المتبقي SAR'], dto.works.map(row => [textCell(row.id), textCell(row.title), textCell(row.collection_status), moneyCell(row.approved_paid_halalas), moneyCell(row.remaining_halalas)]), [22, 36, 22, 16, 16]);
   appendSheet(workbook, 'التحذيرات', ['معرف الحقيقة', 'معرف العمل', 'نوع التحذير', 'المرجع', 'التاريخ UTC', 'التفاصيل'], dto.warnings.map(row => [textCell(row.fact_id), textCell(row.work_id || ''), textCell(row.warning_type), textCell(row.source_ref), textCell(row.happened_at), textCell(row.details_json)]), [22, 22, 20, 28, 25, 42]);
