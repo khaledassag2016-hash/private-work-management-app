@@ -503,10 +503,11 @@ export async function upsertS8AlertSetting(env, actorUid, requestId, input) {
   await executeBatch(env, [mutation, auditStatement(env, 's8_alert_setting', alertType, before ? 'UPDATE' : 'CREATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt)]);
   return { ...after, idempotent_replay: false };
 }
-export async function getS8Alerts(env, input = {}) {
+export async function getS8Alerts(env, input = {}, internal = {}) {
   const requested = input.alert_type === undefined || input.alert_type === null || input.alert_type === '' ? [...S8_ALERT_TYPES] : [s8RequiredAlertType(input.alert_type)];
   const settings = await listS8AlertSettings(env); const map = new Map(settings.map(setting => [setting.alert_type, setting]));
-  return { now: input.now === undefined || input.now === null || input.now === '' ? null : canonicalEventTimestamp(input.now), alerts: requested.map(alertType => {
+  const injectedNow = internal && Object.prototype.hasOwnProperty.call(internal, 'testNow') ? internal.testNow : null;
+  return { now: injectedNow === undefined || injectedNow === null || injectedNow === '' ? null : canonicalEventTimestamp(injectedNow), alerts: requested.map(alertType => {
     const setting = map.get(alertType);
     if (!setting || setting.state === 'NOT_CONFIGURED') return { alert_type: alertType, state: 'NOT_CONFIGURED', threshold_days: null, items: [] };
     return { alert_type: alertType, state: 'CLOCK_ANCHOR_UNRESOLVED', threshold_days: setting.threshold_days, items: [] };

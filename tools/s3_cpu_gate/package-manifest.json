@@ -105,6 +105,7 @@
     "worker/migrations/0007_s7_payments_collections_reversals.sql",
     "worker/migrations/0008_s7_pr_b_settlement_core.sql",
     "worker/migrations/0009_s7_d014_d016_authoritative_settlement.sql",
-    "worker/migrations/0010_s8_search_filter_alert_core.sql"
+    "worker/migrations/0010_s8_search_filter_alert_core.sql",
+    "tests/fixtures/s7_final_schema_ad482ec0dc78ba5796797d40223beb6d6fed0f5b.sql"
   ]
 }

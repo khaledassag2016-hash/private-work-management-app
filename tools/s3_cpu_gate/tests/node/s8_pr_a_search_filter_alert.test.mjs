@@ -16,7 +16,9 @@ import worker, {
 
 const schemaPath = fileURLToPath(new URL('../../src/worker/schema.sql', import.meta.url));
 const migrationPath = fileURLToPath(new URL('../../src/worker/migrations/0010_s8_search_filter_alert_core.sql', import.meta.url));
+const s7FinalSchemaPath = fileURLToPath(new URL('../fixtures/s7_final_schema_ad482ec0dc78ba5796797d40223beb6d6fed0f5b.sql', import.meta.url));
 const fullSchema = readFileSync(schemaPath, 'utf8');
+const s7FinalSchema = readFileSync(s7FinalSchemaPath, 'utf8');
 const migration = readFileSync(migrationPath, 'utf8');
 
 class D1Statement {
@@ -120,9 +122,23 @@ test('S8 search filters each authoritative dimension and preserves archived hist
 test('S8 search pagination is complete, deterministic, parameterized, and bounded', async () => {
   const { database, env } = fixture();
   try {
-    seedSearchFixture(database); const walked = []; let page = 1; let hasMore = true;
-    while (hasMore) { const result = await searchWorksS8(env, { page, page_size: 50, include_archived: true }); walked.push(...ids(result)); hasMore = result.has_more; page += 1; }
-    assert.equal(walked.length, 205); assert.equal(new Set(walked).size, 205); assert.deepEqual([...walked].sort(), [...walked].sort());
+    seedSearchFixture(database);
+    const collectPages = async () => {
+      const rows = []; let page = 1; let hasMore = true;
+      while (hasMore) {
+        const result = await searchWorksS8(env, { page, page_size: 50, include_archived: true });
+        rows.push(...result.items); hasMore = result.has_more; page += 1;
+      }
+      return rows;
+    };
+    const expected = database.prepare('SELECT id,created_at FROM works ORDER BY created_at ASC,id ASC').all();
+    assert.ok(expected.some((row, index) => index > 0 && row.created_at === expected[index - 1].created_at));
+    const firstRun = await collectPages(); const secondRun = await collectPages();
+    const sequence = rows => rows.map(row => `${row.created_at}|${row.id}`);
+    assert.equal(firstRun.length, 205); assert.equal(new Set(firstRun.map(row => row.id)).size, 205);
+    assert.deepEqual(sequence(firstRun), expected.map(row => `${row.created_at}|${row.id}`));
+    assert.deepEqual(sequence(secondRun), sequence(firstRun));
+    assert.deepEqual(firstRun.map(row => row.id), expected.map(row => row.id));
     assert.deepEqual(ids(await searchWorksS8(env, { q: "' OR 1=1 --", page_size: 100 })), []);
     await assert.rejects(searchWorksS8(env, { page_size: 101 }), /S8_PAGE_SIZE_INVALID/);
   } finally { database.close(); }
@@ -147,7 +163,7 @@ test('S8 alert settings are auditable and unresolved clocks fail closed', async 
     const configured = await upsertS8AlertSetting(env, 's8-uid-one', 's8-alert-no-price', { alert_type: 'NO_PRICE', threshold_days: 7 }); assert.equal(configured.threshold_days, 7);
     const replay = await upsertS8AlertSetting(env, 's8-uid-two', 's8-alert-no-price', { alert_type: 'NO_PRICE', threshold_days: 7 }); assert.equal(replay.idempotent_replay, true);
     await assert.rejects(upsertS8AlertSetting(env, 's8-uid-two', 's8-alert-no-price', { alert_type: 'NO_PAYMENT', threshold_days: 7 }), /S8_ALERT_REQUEST_ID_REUSE/);
-    const alerts = await getS8Alerts(env, { alert_type: 'NO_PRICE', now: '2026-08-20T00:00:00.000Z' }); assert.deepEqual(alerts.alerts, [{ alert_type: 'NO_PRICE', state: 'CLOCK_ANCHOR_UNRESOLVED', threshold_days: 7, items: [] }]);
+    const alerts = await getS8Alerts(env, { alert_type: 'NO_PRICE' }, { testNow: '2026-08-20T00:00:00.000Z' }); assert.equal(alerts.now, '2026-08-20T00:00:00.000Z'); assert.deepEqual(alerts.alerts, [{ alert_type: 'NO_PRICE', state: 'CLOCK_ANCHOR_UNRESOLVED', threshold_days: 7, items: [] }]);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE entity_type='s8_alert_setting'").get().count, 1);
     assert.throws(() => database.exec('UPDATE audit_log SET actor_uid=\'tamper\''), /audit log is append only/);
     await assert.rejects(upsertS8AlertSetting(env, 's8-uid-one', 's8-alert-invalid', { alert_type: 'NO_REPLY', threshold_days: 0 }), /S8_ALERT_THRESHOLD_INVALID/);
@@ -166,17 +182,26 @@ test('S8 search and alert query budgets remain bounded on large synthetic fixtur
 });
 
 test('S8 migration preserves final S7 rows and installs alert settings with append-only audit guards', async () => {
-  const s7Schema = fullSchema
-    .replace("'settlement_snapshot','settlement_reopen_request','settlement_reopen_history','s8_alert_setting'", "'settlement_snapshot','settlement_reopen_request','settlement_reopen_history'")
-    .replace(/\nCREATE TABLE IF NOT EXISTS s8_alert_settings \([\s\S]*?\nCREATE INDEX IF NOT EXISTS ix_s8_alert_settings_updated_at ON s8_alert_settings\(updated_at,alert_type\);\n/, '\n');
   const database = new DatabaseSync(':memory:');
   try {
-    database.exec(s7Schema); database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('migration-one', 'person_1', 's8-migration');
+    database.exec(s7FinalSchema); database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('migration-one', 'person_1', 's8-migration');
     database.prepare('INSERT INTO customers(id,name,status,created_by,created_at,updated_by,updated_at,version) VALUES (?,?,\'normal\',?,?,?,?,1)').run('CUST-S8-MIGRATION', 'Synthetic migration customer', 'migration-one', '2026-01-01T00:00:00.000Z', 'migration-one', '2026-01-01T00:00:00.000Z');
     database.prepare('INSERT INTO works(id,customer_id,relationship_kind,title,country,status,price_state,created_by,created_at,updated_by,updated_at,version) VALUES (?,?,\'INDEPENDENT\',?,?,\'NEW_REQUEST\',\'PRICE_UNSET\',?,?,?,?,1)').run('WORK-S8-MIGRATION', 'CUST-S8-MIGRATION', 'Synthetic migration work', 'SA', 'migration-one', '2026-01-01T00:00:00.000Z', 'migration-one', '2026-01-01T00:00:00.000Z');
     database.prepare("INSERT INTO audit_log(entity_type,entity_id,action,actor_uid,created_at,before_json,after_json,run_marker,request_id) VALUES ('work','WORK-S8-MIGRATION','CREATE','migration-one','2026-01-01T00:00:00.000Z',NULL,'{}','s8-migration','s8-migration-existing-audit')").run();
     database.exec(migration);
     assert.equal(database.prepare('SELECT title FROM works WHERE id=?').get('WORK-S8-MIGRATION').title, 'Synthetic migration work');
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE request_id='s8-migration-existing-audit'").get().count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='audit_log_s7_final'").get().count, 0);
+    const probeTriggers = database.prepare("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ('trg_audit_probe_insert_log','trg_audit_probe_update_log') ORDER BY name").all();
+    assert.deepEqual(probeTriggers.map(row => row.name), ['trg_audit_probe_insert_log', 'trg_audit_probe_update_log']);
+    assert.ok(probeTriggers.every(row => !row.sql.includes('audit_log_s7_final')));
+    database.prepare('INSERT INTO s3_audit_probe(entity_id,value_json,version,updated_by,changed_at,run_marker,request_id) VALUES (?,?,?,?,?,?,?)').run('probe-s8-migration', '{"value":"before"}', 1, 'migration-one', '2026-01-02T00:00:00.000Z', 's8-migration', 's8-probe-insert');
+    database.prepare('UPDATE s3_audit_probe SET value_json=?,version=?,updated_by=?,changed_at=?,request_id=? WHERE entity_id=?').run('{"value":"after"}', 2, 'migration-one', '2026-01-02T00:01:00.000Z', 's8-probe-update', 'probe-s8-migration');
+    const probeAudit = database.prepare("SELECT action,before_json,after_json,request_id FROM audit_log WHERE entity_type='s3_audit_probe' ORDER BY id").all().map(row => ({ ...row }));
+    assert.deepEqual(probeAudit, [
+      { action: 'CREATE', before_json: null, after_json: '{"value":"before"}', request_id: 's8-probe-insert' },
+      { action: 'UPDATE', before_json: '{"value":"before"}', after_json: '{"value":"after"}', request_id: 's8-probe-update' },
+    ]);
     database.prepare('INSERT INTO s8_alert_settings(alert_type,threshold_days,updated_by,updated_at,request_id) VALUES (\'NO_PRICE\',7,\'migration-one\',\'2026-01-02T00:00:00.000Z\',\'s8-migration-setting\')').run();
     assert.throws(() => database.exec('UPDATE audit_log SET actor_uid=\'tamper\''), /audit log is append only/);
   } finally { database.close(); }
@@ -193,6 +218,7 @@ test('S8 search and alert API routes preserve authenticated envelopes', { skip: 
     const now = Math.floor(Date.now() / 1000); const signed = `${json({ alg: 'RS256', kid: 's8test', typ: 'JWT' })}.${json({ aud: 'demo-project', iss: 'https://securetoken.google.com/demo-project', sub: 's8-uid-one', iat: now - 10, auth_time: now - 10, exp: now + 3600 })}`; const token = `${signed}.${b64(new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, new TextEncoder().encode(signed))))}`;
     const searchResponse = await worker.fetch(new Request('https://example.test/api/search/works?q=%D8%B9%D9%86%D9%88%D8%A7%D9%86&page_size=10', { headers: { authorization: `Bearer ${token}`, 'x-s3-run-id': 's8-pr-a', 'x-s3-request-id': 's8-api-search' } }), env); assert.equal(searchResponse.status, 200); const searchPayload = await searchResponse.json(); assert.equal(searchPayload.ok, true); assert.equal(searchPayload.requestId, 's8-api-search'); assert.ok(Array.isArray(searchPayload.data.items));
     const settingResponse = await worker.fetch(new Request('https://example.test/api/alerts/settings', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-s3-run-id': 's8-pr-a', 'x-s3-request-id': 's8-api-setting' }, body: JSON.stringify({ alert_type: 'NO_PAYMENT', threshold_days: 9 }) }), env); assert.equal(settingResponse.status, 201); assert.equal((await settingResponse.json()).data.threshold_days, 9);
+    const clientClockAttempt = await worker.fetch(new Request('https://example.test/api/alerts?alert_type=NO_PAYMENT&now=2026-08-20T00:00:00.000Z', { headers: { authorization: `Bearer ${token}`, 'x-s3-run-id': 's8-pr-a', 'x-s3-request-id': 's8-api-alert-clock' } }), env); assert.equal(clientClockAttempt.status, 200); const clientClockPayload = await clientClockAttempt.json(); assert.equal(clientClockPayload.data.now, null); assert.equal(clientClockPayload.data.alerts[0].state, 'CLOCK_ANCHOR_UNRESOLVED');
     const denied = await worker.fetch(new Request('https://example.test/api/search/works'), env); assert.equal(denied.status, 401); const deniedPayload = await denied.json(); assert.equal(deniedPayload.ok, false); assert.equal(deniedPayload.code, 'TOKEN_MISSING'); assert.equal(typeof deniedPayload.requestId, 'string');
   } finally { globalThis.fetch = originalFetch; database.close(); }
 });

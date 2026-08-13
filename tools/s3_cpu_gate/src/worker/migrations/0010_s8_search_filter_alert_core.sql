@@ -1,5 +1,6 @@
 -- S8 PR-A: bounded search/filter read support and auditable alert-threshold configuration.
 -- Rebuild audit_log only to extend its constrained entity types; preserve all final S7 rows and guards.
+DROP TRIGGER IF EXISTS trg_audit_probe_insert_log;
 DROP TRIGGER IF EXISTS trg_audit_probe_update_log;
 DROP TRIGGER IF EXISTS trg_audit_log_no_update;
 DROP TRIGGER IF EXISTS trg_audit_log_no_delete;
