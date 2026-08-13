@@ -1,0 +1,50 @@
+name: Register D-020
+
+on:
+  push:
+    branches: [governance/d020-s10-ac-boundary]
+    paths:
+      - '.github/workflows/d020-register.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: governance/d020-s10-ac-boundary
+          fetch-depth: 0
+      - name: Register decision and validator expectation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          decision = Path('docs/DECISION_LOG.md')
+          text = decision.read_text(encoding='utf-8')
+          marker = '| D-019 |'
+          if '| D-020 |' not in text:
+              lines = text.splitlines()
+              idx = next(i for i, line in enumerate(lines) if line.startswith(marker))
+              row = '| D-020 | 2026-08-13 | في S10، تعني «إعادة اختبار AC-01..AC-14» إعداد تقرير حالة واختبار لما هو منفذ، ولا تسمح بسحب تنفيذ مرحلة أخرى إلى S10. يبقى `AC-11` تابعًا لـS3 المؤجلة، ويبقى `AC-14` تابعًا لـS11. يتحقق S10 فقط من عدم وجود مسار حالي يتجاوز هذه الحدود، ولا يُعتبر تأجيلهما وحده فشلًا في S10، ولا يجوز تسجيل PASS زائف لهما. | حسم تعارض نطاق Issue #9 مع مصفوفة التتبع دون سحب تنفيذ S3 أو S11 إلى S10، مع إبقاء تقرير القبول صادقًا وقابلًا للتدقيق. | APPROVED |'
+              lines.insert(idx + 1, row)
+              decision.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+          validator = Path('scripts/validate_foundation.py')
+          value = validator.read_text(encoding='utf-8')
+          value = value.replace('range(1, 20)}', 'range(1, 21)}')
+          value = value.replace('Recorded decisions: D-001 through D-019', 'Recorded decisions: D-001 through D-020')
+          validator.write_text(value, encoding='utf-8')
+          PY
+          rm .github/workflows/d020-register.yml
+          python scripts/reconstruct_requirements.py
+          python scripts/validate_foundation.py
+          python scripts/validate_s2.py
+          git config user.name 'khaledassag2016-hash'
+          git config user.email 'khaledassag2016@gmail.com'
+          git add docs/DECISION_LOG.md scripts/validate_foundation.py .github/workflows/d020-register.yml
+          git commit -m 'docs(governance): record D-020 S10 AC reporting boundary'
+          git push origin HEAD:governance/d020-s10-ac-boundary
