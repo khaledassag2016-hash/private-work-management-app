@@ -21,9 +21,11 @@
 - `S7 = CLOSED_COMPLETE` after PR #77 final-head CI, Squash merge and post-merge verification.
 - `S7_COMPLETE = TRUE`.
 - `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 implementation, PR-D administrative closure, final-head CI, Squash merge and post-merge verification.
-- `S8_COMPLETE = TRUE` after the same closure condition.
-- `S9 = AUTHORIZED_NOT_STARTED` after S8 closure becomes effective and only under a separately issued `FINAL_ACTIVATED` S9 package tied to the exact final main SHA.
-- `S10..S11 = NOT_STARTED`.
+- `S8_COMPLETE = TRUE`.
+- `S9 = CLOSED_COMPLETE` after PR #82 implementation/review plus this administrative closure PR, applicable final-head CI, Squash merge, post-merge verification and Issue #8 closure.
+- `S9_COMPLETE = TRUE` after the same closure condition becomes effective.
+- `S10 = AUTHORIZED_NOT_STARTED` only after the S9 closure condition is effective and a separately issued `FINAL_ACTIVATED` S10 package is tied to the exact final S9 main SHA.
+- `S11 = NOT_STARTED`; historical-data preparation may remain private/local but import execution is not authorized before S10 closure.
 
 ## Stable refs
 
@@ -137,13 +139,11 @@ Scope: `FR-022`, `FR-024`, `FR-025`, `FR-029`, `FR-030`, `AC-08..AC-10`, plus S8
 - D-017 closes FR-029 with configurable thresholds and authoritative clock anchors; no defaults are invented and no client clock controls results.
 - Customer export pagination totals cover the complete eligible result set.
 
-### PR-D — final verification / administrative closure
+### PR-D #81 — final verification / administrative closure
 
-- Branch: `s8/pr-d-final-verification-closure`.
-- Base main: `19856a4b8a31b9e756406ccda0f16ac169af236d`.
 - Evidence: `docs/s8/S8_FINAL_VERIFICATION.md`.
-- Docs/governance/validation only; no S9 runtime implementation, no Cloud write and no stable movement.
-- Closure becomes effective after final-head CI + supervisory review + Squash merge + post-merge verification + Issue #7 close completed.
+- Final S8 main: `5808415e2f5f8710beaacf3dc0496d3645f70d77`.
+- Issue #7 closed completed.
 
 ## S8 final verdict
 
@@ -165,24 +165,67 @@ Scope: `FR-022`, `FR-024`, `FR-025`, `FR-029`, `FR-030`, `AC-08..AC-10`, plus S8
 - `SECRETS_ADDED = NO`.
 - `STABLE_REFS_MOVED = NO`.
 
-## Governing decisions relevant to S9
+## S9 — Issue #8 final chain
 
-- D-006: zero-mandatory-cost architecture and financial integer rules remain binding.
+Scope: Arabic RTL responsive UX for mobile/desktop, state clarity, keyboard/focus accessibility, touch targets, sensitive confirmations, duplicate-submit prevention, error handling and function parity under D-018/D-019 without business-rule changes.
+
+### PR-A #82 — implementation / automated acceptance / sequential review
+
+- Base main: `5808415e2f5f8710beaacf3dc0496d3645f70d77`.
+- Codex handoff head: `ec759af7474336f3b358d0e6a0c263e91e0a498d`.
+- Manus final reviewed head: `0eeb902068dc6b411ce3780d96998578ed5dac3e`.
+- Manus repair was limited to restoring New Work modal focus to its invoker in both mirrored assets plus deterministic regression coverage.
+- Final-head CI: S9 UX Acceptance `31709356193` SUCCESS; S3 `31709356421` SUCCESS; S2 `31709356846` SUCCESS.
+- Playwright: Level A 10 PASS; Level B 34 PASS + 6 intentional non-applicable skips.
+- Full Node regression: `140 PASS`, `0 failed`.
+- Squash/main SHA: `7a19bcdd0c85838a6c5e764e86b1a51e76fde0b7`.
+- Post-merge S3 run `31710108330` SUCCESS.
+
+### PR-B — final verification / administrative closure
+
+- Branch: `s9/pr-b-final-verification-closure`.
+- Base main: `7a19bcdd0c85838a6c5e764e86b1a51e76fde0b7`.
+- Evidence: `docs/s9/S9_FINAL_VERIFICATION.md`.
+- Documentation/state/traceability only; no S10 runtime implementation, no Cloud write, no real data and no stable movement.
+
+## S9 final verdict
+
+- `D-018 ZERO_MANUAL_QA = PASS`.
+- `D-019 SEQUENTIAL_OWNERSHIP = PASS`.
+- `RESPONSIVE_RTL = PASS`.
+- `FUNCTION_PARITY_A_M = PASS`.
+- `KEYBOARD_FOCUS = PASS`.
+- `TOUCH_TARGETS = PASS`.
+- `ACCESSIBILITY = PASS`.
+- `SENSITIVE_CONFIRMATIONS = PASS`.
+- `DOUBLE_SUBMIT = PASS`.
+- `ERROR_HANDLING = PASS`.
+- `STATE_CLARITY = PASS`.
+- `FULL_NODE_REGRESSION = PASS`.
+- `CLOUD_WRITE = NO`.
+- `REAL_DATA = NO`.
+- `SECRETS_ADDED = NO`.
+- `STABLE_REFS_MOVED = NO`.
+
+## Governing decisions relevant to S10
+
+- D-006: zero-mandatory-cost architecture and integer-halalah financial truth remain binding.
 - D-007: no direct `main`, final-head CI, Squash merge and no automatic stable movement.
 - D-008: S3 remains deferred, not complete.
-- D-009..D-017 remain governing where S9 displays or interacts with inherited behavior.
-- D-018: S9 uses automated deterministic ZERO-MANUAL-QA instead of the Issue #8 manual viewport/RTL acceptance wording.
-- D-019: S9 execution PR uses sequential ownership only: Codex Sol High completes first and stops; only then Manus may review/repair the same PR; no concurrency and neither may merge.
+- D-009..D-017 remain governing inherited business/financial behavior.
+- D-018/D-019 are S9-scoped evidence/governance and do not automatically redefine S10 execution ownership.
+- S10 must not silently implement S3-deferred or S11-assigned scope when re-verifying AC-01..AC-14; any unresolved cross-stage acceptance interpretation must be reported fail-closed for supervisory resolution.
 
 ## Next stage
 
-After the S8 administrative closure PR is merged, its final `main` SHA is verified and Issue #7 is closed completed:
+After this S9 administrative closure PR is merged, its final `main` SHA is verified and Issue #8 is closed completed:
 
-- `NEXT_STAGE = S9`.
-- S9 Issue #8: **تجربة الاستخدام للهاتف والكمبيوتر**.
-- Core scope: Arabic RTL responsive UX for mobile/desktop, state clarity, keyboard/touch accessibility, errors, sensitive confirmations and duplicate-submit prevention without changing business semantics.
-- S9 starts only from the exact final `main` SHA produced by this S8 closure PR.
-- Only an S9 `FINAL_ACTIVATED` instruction package tied to that SHA authorizes implementation.
+- `NEXT_STAGE = S10`.
+- S10 Issue #9: **اختبار التكامل والنسخ والاستعادة**.
+- Core scope: full-system integration/security/concurrency/accounting verification, reproducible backup and actual restore into an isolated target, and deterministic multi-year/two-user performance evidence.
+- S10 starts only from the exact final `main` SHA produced by this S9 closure PR.
+- Only an S10 `FINAL_ACTIVATED` instruction package tied to that SHA authorizes implementation.
+- S11 historical import remains not started.
 
 ## Permanent rules
 
@@ -194,4 +237,4 @@ After the S8 administrative closure PR is merged, its final `main` SHA is verifi
 - Do not invent unresolved product rules; fail closed or record/defer them.
 - Stage conversations stay within their Issue scope.
 - General supervision reviews PRs and authorizes stage transitions.
-- Except for an explicit scoped decision such as D-019, two coding agents must not push concurrently or hand off the same PR without recorded sequential ownership.
+- Except for an explicit scoped decision, two coding agents must not push concurrently or hand off the same PR without recorded sequential ownership.
