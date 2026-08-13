@@ -9,7 +9,7 @@ This document records the S10 / Issue #9 implementation and verification cycle f
 | Repository | `khaledassag2016-hash/private-work-management-app` |
 | Issue | `#9 — [S10] اختبار التكامل والنسخ والاستعادة` |
 | Base SHA | `83f66a03d481a54ea479963eceea9df614ef5e12` |
-| Final head SHA | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
+| Final head SHA | `384d551a065216c33b29a64e56c61b461c01e0f5` (runtime implementation head verified by final-head CI; evidence stamp is documentation-only) |
 | Branch | `s10/pr-a-integration-backup-restore` |
 | Executor | Manus only |
 | Cloud writes | `NO` |
@@ -20,7 +20,13 @@ This document records the S10 / Issue #9 implementation and verification cycle f
 
 ## Changed files
 
-The final PR-A changed-file list is recorded after the final commit in this section and in the supervisory PR metadata. The intended S10-only files are:
+The final PR-A changed-file list at the verified implementation head is:
+
+`4 files: .github/workflows/s10-integration.yml, docs/s10/S10_ACCEPTANCE_MATRIX.json, docs/s10/S10_INTEGRATION_VERIFICATION.md, tests/s10_integration.test.mjs`.
+
+The final PR metadata remains authoritative for the post-evidence-stamp branch head.
+
+The intended S10-only files are:
 
 1. `.github/workflows/s10-integration.yml`
 2. `docs/s10/S10_ACCEPTANCE_MATRIX.json`
@@ -96,20 +102,20 @@ Result: **PASS — bounded query counts, maximum bind width below 100, no observ
 
 ## Prior-stage regression and CI
 
-The final values below are filled only after the final head is committed and the corresponding CI runs complete:
+The successful final-head CI runs on implementation head `384d551a065216c33b29a64e56c61b461c01e0f5` completed before this documentation-only evidence stamp. The final PR metadata and latest CI run on the post-stamp head are authoritative for the supervisory handoff.
 
 | Gate | Result / run |
 |---|---|
 | Focused S10 | `PASS — 6/6` |
-| Full Node regression | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| S9 Playwright/accessibility | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| Foundation | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| S2 | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| S3 | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| Python/Pester/PSScriptAnalyzer | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| Secret scan | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| Payload parity/integrity | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
-| Final-head CI run IDs | `TO_BE_FILLED_BEFORE_FINAL_HANDOFF` |
+| Full Node regression | `PASS — 140 passed, 0 failed` |
+| S9 Playwright/accessibility | `PASS — Level A 10 passed; Level B 34 passed, 6 intentional skips` |
+| Foundation | `PASS — CI run 31719488860` |
+| S2 | `PASS — CI run 31719488765` |
+| S3 | `PASS — applicable S3 static checks in S10 run; S3 remains CLOSED_BLOCKED_DEFERRED` |
+| Python/Pester/PSScriptAnalyzer | `PASS — Python 80/80; Pester/PSScriptAnalyzer 291 passed, 0 failed` |
+| Secret scan | `PASS` |
+| Payload parity/integrity | `PASS` |
+| Final-head CI run IDs | `S10 31719489152; Foundation 31719488860; S2 31719488765` |
 
 ## Unresolved governed boundaries
 
