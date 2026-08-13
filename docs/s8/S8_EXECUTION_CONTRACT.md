@@ -28,13 +28,9 @@ Search uses prepared parameters only. It does not provide fuzzy, semantic, AI, s
 
 S8 alert thresholds are persisted as integer positive durations in `s8_alert_settings`, scoped by `alert_type` (`NO_PRICE`, `NO_REPLY`, `NO_PAYMENT`). Reads return `NOT_CONFIGURED` when a type lacks a setting. The two existing active accounts are authorized through the existing Worker boundary; changes are audited and use the existing response envelope. No paid scheduler, notification provider, email, SMS, push, background write, or production default is introduced.
 
-The approved sources do **not** define the clock anchors for no-price, no-reply, or no-payment. Therefore PR-A preserves these explicit states:
+D-017 now defines the FR-029 clock anchors. `NO_PRICE` starts at `created_at` while the S6 authoritative approved-price aggregate remains unset. `NO_REPLY` starts at the latest `work_status_history` transition to `WAITING_CLIENT_RESPONSE`, or at `created_at` when that is the initial status. `NO_PAYMENT` starts at `confirmed_at` only when the Work has a positive authoritative S6 price and S7 approved receipts net of approved reversals equal zero.
 
-```text
-S8_ALERT_CLOCK_ANCHOR_BLOCKED = NO_PRICE | NO_REPLY | NO_PAYMENT | MULTIPLE
-```
-
-`GET /api/alerts` returns each requested type as `NOT_CONFIGURED` when no threshold exists and `CLOCK_ANCHOR_UNRESOLVED` when a configured threshold lacks an approved anchor. It does not calculate ages from `created_at`, `confirmed_at`, status history, events, or payment dates by assumption. The alert engine accepts an injected deterministic `now` only for tests; production reads never claim an overdue alert until supervision approves the relevant anchor. Archived Works are not treated as active overdue Works by this unresolved read model.
+`GET /api/alerts` returns `NOT_CONFIGURED` with no items when a threshold is absent; a configured type returns `CONFIGURED` and only D-017-matching items whose authoritative age meets its configured threshold. The alert engine accepts deterministic `testNow` injection only through its internal test interface; production requests use the Worker clock and ignore any client `now` query parameter. Archived Works are not treated as active overdue Works. D-017 supplies no default duration.
 
 ## Query, bind, auth, and data safety
 
@@ -50,14 +46,14 @@ All data and tests are synthetic. No direct D1 client bypass exists: Worker rout
 | Individual filters and archive state | `S8 search filters each authoritative dimension and preserves archived history` | Positive and negative assertions for month, year, status, customer, country, university, specialty, work type, collection, plus archived result state. |
 | Bounded pagination and parameter safety | `S8 search pagination is complete, deterministic, parameterized, and bounded` | Walking pages yields each expected Work once; quote/wildcard input is safe; page bounds are enforced. |
 | Dynamic catalog | `S8 search filters a supported dynamic catalog value without source change` | Added synthetic catalog value is filterable. |
-| Alert fail-closed boundaries | `S8 alert settings are auditable and unresolved clocks fail closed` | Missing setting is `NOT_CONFIGURED`; configured unresolved clock is blocked; no invented default or alert age. |
+| D-017 FR-029 anchors and configuration | `D-017 configures FR-029 clocks with authoritative NO_PRICE, NO_REPLY, and NO_PAYMENT anchors` | Missing setting is `NOT_CONFIGURED`; each configured type uses only its approved D-017 anchor and has no default duration. |
 | Search / alert performance | `S8 search and alert query budgets remain bounded on large synthetic fixtures` | 200+ Works; measured queries and binds stay within policy without row-wise growth. |
 | Auth and API envelope | `S8 search and alert API routes preserve authenticated envelopes` | Success and error envelopes use the existing shape; unauthenticated/unauthorized access is denied. |
 | S4–S7 regression integration | Full Node regression | Customer/Work classification, title/archive history, S6 price, and S7 collection truth remain intact. |
 
 ## Explicit unresolved and closure boundaries
 
-Alert threshold values are configurable but unseeded by default. Alert clock anchors remain unresolved and block only the corresponding FR-029 overdue-result claim. Missing classifications remain stored as null and are not inferred; PR-B will report them through an output-only `UNSPECIFIED` bucket. Analytics, export architecture, workbook schemas, money/date rendering, RTL workbook validation, and final S8 closure evidence are PR-B/PR-C/PR-D matters and are not implemented by PR-A.
+Alert threshold values are configurable but unseeded by default. D-017 provides the only approved FR-029 anchors and does not introduce a default duration. Missing classifications remain stored as null and are not inferred; PR-B reports them through an output-only `UNSPECIFIED` bucket. Analytics, export architecture, workbook schemas, money/date rendering, RTL workbook validation, and final S8 closure evidence are PR-B/PR-C/PR-D matters.
 
 **PR-A stop condition:** after self-review, focused tests, full regression, Foundation/S2/package/secret validation, and Final-head CI, stop at Draft PR review. Do not merge, close Issue #7, start PR-B/PR-C, or start S9.
 

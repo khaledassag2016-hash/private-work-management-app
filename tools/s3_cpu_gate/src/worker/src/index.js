@@ -503,14 +503,52 @@ export async function upsertS8AlertSetting(env, actorUid, requestId, input) {
   await executeBatch(env, [mutation, auditStatement(env, 's8_alert_setting', alertType, before ? 'UPDATE' : 'CREATE', actorUid, before, after, env.RUN_MARKER, requestId, updatedAt)]);
   return { ...after, idempotent_replay: false };
 }
+function s8AlertNow(internal = {}) {
+  const injected = internal && Object.prototype.hasOwnProperty.call(internal, 'testNow') ? internal.testNow : undefined;
+  return injected === undefined || injected === null || injected === '' ? nowIso() : canonicalEventTimestamp(injected);
+}
+function s8AlertAgeDays(anchorAt, now) {
+  const age = new Date(now).getTime() - new Date(anchorAt).getTime();
+  if (!Number.isFinite(age) || age < 0) return 0;
+  return Math.floor(age / 86400000);
+}
 export async function getS8Alerts(env, input = {}, internal = {}) {
   const requested = input.alert_type === undefined || input.alert_type === null || input.alert_type === '' ? [...S8_ALERT_TYPES] : [s8RequiredAlertType(input.alert_type)];
-  const settings = await listS8AlertSettings(env); const map = new Map(settings.map(setting => [setting.alert_type, setting]));
-  const injectedNow = internal && Object.prototype.hasOwnProperty.call(internal, 'testNow') ? internal.testNow : null;
-  return { now: injectedNow === undefined || injectedNow === null || injectedNow === '' ? null : canonicalEventTimestamp(injectedNow), alerts: requested.map(alertType => {
-    const setting = map.get(alertType);
+  const now = s8AlertNow(internal); const settings = await listS8AlertSettings(env); const byType = new Map(settings.map(setting => [setting.alert_type, setting]));
+  const configured = requested.filter(alertType => byType.get(alertType)?.threshold_days !== null);
+  const itemsByType = new Map(configured.map(alertType => [alertType, []]));
+  if (configured.length) {
+    const candidatesSql = `WITH price_totals AS (
+        SELECT work_id,SUM(amount_halalas) AS current_price_halalas FROM price_movements GROUP BY work_id
+      ), payment_totals AS (
+        SELECT p.work_id,COALESCE(SUM(p.amount_halalas),0)-COALESCE(SUM(r.amount_halalas),0) AS approved_paid_halalas
+        FROM client_payments p LEFT JOIN payment_reversals r ON r.payment_id=p.id GROUP BY p.work_id
+      ), reply_anchors AS (
+        SELECT work_id,MAX(changed_at) AS anchor_at FROM work_status_history WHERE new_status='WAITING_CLIENT_RESPONSE' GROUP BY work_id
+      ), candidates AS (
+        SELECT 'NO_PRICE' AS alert_type,w.id AS work_id,w.customer_id,w.title,w.created_at AS anchor_at,NULL AS current_price_halalas,0 AS approved_paid_halalas
+        FROM works w LEFT JOIN price_totals pt ON pt.work_id=w.id
+        WHERE w.archived_at IS NULL AND pt.current_price_halalas IS NULL
+        UNION ALL
+        SELECT 'NO_REPLY' AS alert_type,w.id AS work_id,w.customer_id,w.title,COALESCE(ra.anchor_at,w.created_at) AS anchor_at,NULL AS current_price_halalas,0 AS approved_paid_halalas
+        FROM works w LEFT JOIN reply_anchors ra ON ra.work_id=w.id
+        WHERE w.archived_at IS NULL AND w.status='WAITING_CLIENT_RESPONSE'
+        UNION ALL
+        SELECT 'NO_PAYMENT' AS alert_type,w.id AS work_id,w.customer_id,w.title,w.confirmed_at AS anchor_at,pt.current_price_halalas,COALESCE(pay.approved_paid_halalas,0) AS approved_paid_halalas
+        FROM works w JOIN price_totals pt ON pt.work_id=w.id LEFT JOIN payment_totals pay ON pay.work_id=w.id
+        WHERE w.archived_at IS NULL AND w.confirmed_at IS NOT NULL AND pt.current_price_halalas>0 AND COALESCE(pay.approved_paid_halalas,0)=0
+      )
+      SELECT c.alert_type,c.work_id,c.customer_id,c.title,c.anchor_at,c.current_price_halalas,c.approved_paid_halalas,s.threshold_days
+      FROM candidates c JOIN s8_alert_settings s ON s.alert_type=c.alert_type
+      WHERE c.alert_type IN (${configured.map(() => '?').join(',')}) AND datetime(c.anchor_at,'+' || s.threshold_days || ' days')<=datetime(?)
+      ORDER BY c.alert_type ASC,c.anchor_at ASC,c.work_id ASC`;
+    const rows = (await env.DB.prepare(candidatesSql).bind(...configured, now).all()).results || [];
+    for (const row of rows) itemsByType.get(row.alert_type)?.push({ work_id: row.work_id, customer_id: row.customer_id, title: row.title, anchor_at: row.anchor_at, age_days: s8AlertAgeDays(row.anchor_at, now), current_price_halalas: row.current_price_halalas === null ? null : Number(row.current_price_halalas), approved_paid_halalas: Number(row.approved_paid_halalas) });
+  }
+  return { now, alerts: requested.map(alertType => {
+    const setting = byType.get(alertType);
     if (!setting || setting.state === 'NOT_CONFIGURED') return { alert_type: alertType, state: 'NOT_CONFIGURED', threshold_days: null, items: [] };
-    return { alert_type: alertType, state: 'CLOCK_ANCHOR_UNRESOLVED', threshold_days: setting.threshold_days, items: [] };
+    return { alert_type: alertType, state: 'CONFIGURED', threshold_days: setting.threshold_days, items: itemsByType.get(alertType) || [] };
   }) };
 }
 
@@ -652,14 +690,18 @@ export async function getS8FollowUpExportDto(env, input = {}) {
   const hasMore = rawRows.length > pageSize; const events = rawRows.slice(0, pageSize).map(row => ({ ...row, is_archived: Boolean(row.archived_at) })); const last = events.at(-1);
   return { export_type: 'FOLLOW_UP', include_archived: includeArchived, page_size: pageSize, next_cursor: hasMore && last ? s8CursorEncode({ effective_at: last.effective_at, id: last.id }) : null, events };
 }
+function s8CustomerTotals(rows) {
+  return rows.reduce((acc, row) => ({ work_count: acc.work_count + 1, active_work_count: acc.active_work_count + (row.is_archived ? 0 : 1), archived_work_count: acc.archived_work_count + (row.is_archived ? 1 : 0), price_unset_work_count: acc.price_unset_work_count + (row.current_price_halalas === null ? 1 : 0), approved_paid_halalas: safeFinancialAdd(acc.approved_paid_halalas, row.approved_paid_halalas), remaining_halalas: row.remaining_halalas === null ? acc.remaining_halalas : safeFinancialAdd(acc.remaining_halalas, row.remaining_halalas) }), { work_count: 0, active_work_count: 0, archived_work_count: 0, price_unset_work_count: 0, approved_paid_halalas: 0, remaining_halalas: 0 });
+}
 export async function getS8CustomerExportDto(env, customerId, input = {}) {
   const customer = await env.DB.prepare('SELECT id,name,contact,country,university,specialty,status FROM customers WHERE id=?1').bind(customerId).first();
   if (!customer) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
-  const result = await s8ExportWorks(env, input, { customerId }); const warningCursor = s8CursorDecode(input.warning_cursor, 'happened_at', 'S8_WARNING_CURSOR_INVALID'); const warningValues = [customerId]; const warningAdd = value => { warningValues.push(value); return `?${warningValues.length}`; }; const warningAfter = warningCursor ? `(happened_at>${warningAdd(warningCursor.happened_at)} OR (happened_at=${warningAdd(warningCursor.happened_at)} AND fact_id>${warningAdd(warningCursor.id)}))` : '1=1'; const warningReadLimit = warningAdd(result.page_size + 1);
+  const result = await s8ExportWorks(env, input, { customerId }); const totalsQuery = s8EligibleWorkSql(input, { customerId });
+  const allRows = ((await env.DB.prepare(`${totalsQuery.sql} SELECT * FROM eligible ORDER BY created_at ASC,id ASC`).bind(...totalsQuery.values).all()).results || []).map(s8FinancialRow);
+  const warningCursor = s8CursorDecode(input.warning_cursor, 'happened_at', 'S8_WARNING_CURSOR_INVALID'); const warningValues = [customerId]; const warningAdd = value => { warningValues.push(value); return `?${warningValues.length}`; }; const warningAfter = warningCursor ? `(happened_at>${warningAdd(warningCursor.happened_at)} OR (happened_at=${warningAdd(warningCursor.happened_at)} AND fact_id>${warningAdd(warningCursor.id)}))` : '1=1'; const warningReadLimit = warningAdd(result.page_size + 1);
   const rawWarnings = (await env.DB.prepare(`SELECT fact_id,work_id,warning_type,source_ref,happened_at,details_json FROM customer_warning_projection WHERE customer_id=?1 AND ${warningAfter} ORDER BY happened_at ASC,fact_id ASC LIMIT ${warningReadLimit}`).bind(...warningValues).all()).results || [];
-  const hasMoreWarnings = rawWarnings.length > result.page_size; const warnings = rawWarnings.slice(0, result.page_size); const lastWarning = warnings.at(-1);
-  const pageTotals = result.rows.reduce((acc, row) => ({ work_count: acc.work_count + 1, active_work_count: acc.active_work_count + (row.is_archived ? 0 : 1), archived_work_count: acc.archived_work_count + (row.is_archived ? 1 : 0), price_unset_work_count: acc.price_unset_work_count + (row.current_price_halalas === null ? 1 : 0), approved_paid_halalas: safeFinancialAdd(acc.approved_paid_halalas, row.approved_paid_halalas), remaining_halalas: row.remaining_halalas === null ? acc.remaining_halalas : safeFinancialAdd(acc.remaining_halalas, row.remaining_halalas) }), { work_count: 0, active_work_count: 0, archived_work_count: 0, price_unset_work_count: 0, approved_paid_halalas: 0, remaining_halalas: 0 });
-  return { export_type: 'CUSTOMER', customer, period_basis: result.period.basis, month: result.period.month, year: result.period.year, include_archived: result.includeArchived, page_size: result.page_size, next_cursor: result.next_cursor, warning_next_cursor: hasMoreWarnings && lastWarning ? s8CursorEncode({ happened_at: lastWarning.happened_at, id: lastWarning.fact_id }) : null, financial_authority: 'S6_APPROVED_PRICE_MOVEMENTS_AND_S7_APPROVED_PAYMENTS_MINUS_REVERSALS', page_totals: pageTotals, works: result.rows, warnings };
+  const hasMoreWarnings = rawWarnings.length > result.page_size; const warnings = rawWarnings.slice(0, result.page_size); const lastWarning = warnings.at(-1); const totals = s8CustomerTotals(allRows);
+  return { export_type: 'CUSTOMER', customer, period_basis: result.period.basis, month: result.period.month, year: result.period.year, include_archived: result.includeArchived, page_size: result.page_size, next_cursor: result.next_cursor, warning_next_cursor: hasMoreWarnings && lastWarning ? s8CursorEncode({ happened_at: lastWarning.happened_at, id: lastWarning.fact_id }) : null, financial_authority: 'S6_APPROVED_PRICE_MOVEMENTS_AND_S7_APPROVED_PAYMENTS_MINUS_REVERSALS', totals, page_totals: totals, works: result.rows, warnings };
 }
 export async function getS8ClassificationExportDto(env, input = {}) {
   return { export_type: 'CLASSIFICATION', ...(await getS8Analytics(env, input)) };

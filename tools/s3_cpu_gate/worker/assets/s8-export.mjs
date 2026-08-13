@@ -67,8 +67,8 @@ function buildFollowUpWorkbook(dto) {
 }
 function buildCustomerWorkbook(dto) {
   const workbook = createWorkbook();
-  const totals = dto.page_totals || dto.totals;
-  appendSheet(workbook, 'تقرير العميل', ['معرف العميل', 'الاسم', 'عدد أعمال الصفحة', 'أعمال نشطة', 'أعمال مؤرشفة', 'سعر غير محدد', 'إجمالي المدفوع للصفحة SAR', 'إجمالي المتبقي للصفحة SAR'], [[textCell(dto.customer.id), textCell(dto.customer.name), countCell(totals.work_count), countCell(totals.active_work_count), countCell(totals.archived_work_count), countCell(totals.price_unset_work_count), moneyCell(totals.approved_paid_halalas), moneyCell(totals.remaining_halalas)]], [22, 32, 18, 14, 16, 16, 24, 24]);
+  const totals = dto.totals || dto.page_totals;
+  appendSheet(workbook, 'تقرير العميل', ['معرف العميل', 'الاسم', 'عدد الأعمال', 'أعمال نشطة', 'أعمال مؤرشفة', 'سعر غير محدد', 'إجمالي المدفوع SAR', 'إجمالي المتبقي SAR'], [[textCell(dto.customer.id), textCell(dto.customer.name), countCell(totals.work_count), countCell(totals.active_work_count), countCell(totals.archived_work_count), countCell(totals.price_unset_work_count), moneyCell(totals.approved_paid_halalas), moneyCell(totals.remaining_halalas)]], [22, 32, 18, 14, 16, 16, 24, 24]);
   appendSheet(workbook, 'أعمال العميل', WORK_HEADERS, dto.works.map(workRow), [22, 24, 36, 20, 20, 20, 16, 24, 25, 25, 14, 14, 14, 14, 22]);
   appendSheet(workbook, 'التحصيل', ['معرف العمل', 'العنوان', 'حالة التحصيل', 'المدفوع SAR', 'المتبقي SAR'], dto.works.map(row => [textCell(row.id), textCell(row.title), textCell(row.collection_status), moneyCell(row.approved_paid_halalas), moneyCell(row.remaining_halalas)]), [22, 36, 22, 16, 16]);
   appendSheet(workbook, 'التحذيرات', ['معرف الحقيقة', 'معرف العمل', 'نوع التحذير', 'المرجع', 'التاريخ UTC', 'التفاصيل'], dto.warnings.map(row => [textCell(row.fact_id), textCell(row.work_id || ''), textCell(row.warning_type), textCell(row.source_ref), textCell(row.happened_at), textCell(row.details_json)]), [22, 22, 20, 28, 25, 42]);
