@@ -514,6 +514,145 @@ export async function getS8Alerts(env, input = {}, internal = {}) {
   }) };
 }
 
+function s8AnalyticsInput(input = {}) {
+  const period = s8PeriodFilter(input);
+  if (!period.basis) throw new DomainError('S8_ANALYTICS_PERIOD_BASIS_REQUIRED', 400);
+  return { period, includeArchived: s8IncludeArchived(input.include_archived) };
+}
+function s8ExportLimit(input = {}) { return s8PageValue(input.limit, 'S8_EXPORT_LIMIT_INVALID', 1000, 1000); }
+function s8FinancialCtes() {
+  return `WITH price_totals AS (
+    SELECT work_id,COUNT(*) AS price_movement_count,SUM(amount_halalas) AS current_price_halalas FROM price_movements GROUP BY work_id
+  ), payment_totals AS (
+    SELECT p.work_id,COALESCE(SUM(p.amount_halalas),0)-COALESCE(SUM(r.amount_halalas),0) AS approved_paid_halalas
+    FROM client_payments p LEFT JOIN payment_reversals r ON r.payment_id=p.id GROUP BY p.work_id
+  )`;
+}
+function s8FinancialRow(row) {
+  return {
+    ...row,
+    is_archived: Boolean(row.archived_at),
+    current_price_halalas: row.current_price_halalas === null ? null : Number(row.current_price_halalas),
+    approved_paid_halalas: Number(row.approved_paid_halalas),
+    remaining_halalas: row.remaining_halalas === null ? null : Number(row.remaining_halalas),
+  };
+}
+function s8EligibleWorkSql(input = {}, required = {}) {
+  const { period, includeArchived } = s8AnalyticsInput(input); const values = []; const add = value => { values.push(value); return `?${values.length}`; };
+  const clauses = [];
+  if (!includeArchived) clauses.push('w.archived_at IS NULL');
+  if (required.workId) clauses.push(`w.id=${add(required.workId)}`);
+  if (required.customerId) clauses.push(`w.customer_id=${add(required.customerId)}`);
+  if (period.month) clauses.push(`strftime('%m',${period.column})=${add(period.month)}`);
+  if (period.year) clauses.push(`strftime('%Y',${period.column})=${add(period.year)}`);
+  const sql = `${s8FinancialCtes()}, eligible AS (
+    SELECT w.id,w.customer_id,w.title,w.status,w.country,w.university,w.specialty_key,w.work_type_key,w.created_at,w.confirmed_at,w.archived_at,
+      c.name AS customer_name,p.current_price_halalas AS current_price_halalas,COALESCE(pay.approved_paid_halalas,0) AS approved_paid_halalas,
+      CASE WHEN COALESCE(p.price_movement_count,0)=0 THEN NULL ELSE p.current_price_halalas-COALESCE(pay.approved_paid_halalas,0) END AS remaining_halalas,
+      ${s8CollectionSql()} AS collection_status
+    FROM works w JOIN customers c ON c.id=w.customer_id
+    LEFT JOIN price_totals p ON p.work_id=w.id LEFT JOIN payment_totals pay ON pay.work_id=w.id
+    ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+  )`;
+  return { sql, values, period, includeArchived, add };
+}
+function s8AggregateRow(row) {
+  return {
+    dimension: row.dimension,
+    bucket: row.bucket,
+    work_count: Number(row.work_count),
+    active_work_count: Number(row.active_work_count),
+    archived_work_count: Number(row.archived_work_count),
+    price_unset_work_count: Number(row.price_unset_work_count),
+    current_price_halalas: Number(row.current_price_halalas),
+    approved_paid_halalas: Number(row.approved_paid_halalas),
+    remaining_halalas: Number(row.remaining_halalas),
+  };
+}
+export async function getS8Analytics(env, input = {}) {
+  const query = s8EligibleWorkSql(input); const grouped = dimension => `SELECT '${dimension.name}' AS dimension,COALESCE(NULLIF(${dimension.column},''),'UNSPECIFIED') AS bucket,
+    COUNT(*) AS work_count,SUM(CASE WHEN archived_at IS NULL THEN 1 ELSE 0 END) AS active_work_count,SUM(CASE WHEN archived_at IS NULL THEN 0 ELSE 1 END) AS archived_work_count,
+    SUM(CASE WHEN current_price_halalas IS NULL THEN 1 ELSE 0 END) AS price_unset_work_count,COALESCE(SUM(current_price_halalas),0) AS current_price_halalas,COALESCE(SUM(approved_paid_halalas),0) AS approved_paid_halalas,COALESCE(SUM(remaining_halalas),0) AS remaining_halalas
+    FROM eligible GROUP BY COALESCE(NULLIF(${dimension.column},''),'UNSPECIFIED')`;
+  const dimensions = [
+    { name: 'WORK_TYPE', column: 'work_type_key' }, { name: 'SPECIALTY', column: 'specialty_key' },
+    { name: 'COUNTRY', column: 'country' }, { name: 'UNIVERSITY', column: 'university' },
+    { name: 'PERIOD', column: `substr(${query.period.basis === 'CONFIRMED_AT' ? 'confirmed_at' : 'created_at'},1,7)` },
+  ];
+  const sql = `${query.sql} ${dimensions.map(grouped).join(' UNION ALL ')} ORDER BY dimension ASC,bucket ASC`;
+  const rows = (await env.DB.prepare(sql).bind(...query.values).all()).results || [];
+  const byDimension = Object.fromEntries(dimensions.map(dimension => [dimension.name, []]));
+  for (const row of rows) byDimension[row.dimension].push(s8AggregateRow(row));
+  return {
+    period_basis: query.period.basis, month: query.period.month, year: query.period.year, include_archived: query.includeArchived,
+    financial_authority: 'S6_APPROVED_PRICE_MOVEMENTS_AND_S7_APPROVED_PAYMENTS_MINUS_REVERSALS',
+    groups: byDimension,
+  };
+}
+async function s8ExportWorks(env, input = {}, required = {}) {
+  const query = s8EligibleWorkSql(input, required); const limit = s8ExportLimit(input); const limitParam = query.add(limit);
+  const rows = (await env.DB.prepare(`${query.sql} SELECT *,COUNT(*) OVER() AS total_count FROM eligible ORDER BY created_at ASC,id ASC LIMIT ${limitParam}`).bind(...query.values).all()).results || [];
+  const total = rows.length ? Number(rows[0].total_count) : 0;
+  if (total > limit) throw new DomainError('S8_EXPORT_LIMIT_EXCEEDED', 400);
+  return { rows: rows.map(s8FinancialRow), total, period: query.period, includeArchived: query.includeArchived };
+}
+function s8SnapshotRow(row) {
+  if (!row) return null;
+  const numeric = ['work_count','cumulative_work_count','total_work_value_halalas','person_1_work_share_halalas','person_2_work_share_halalas','approved_receipts_halalas','approved_receipts_person_1_halalas','approved_receipts_person_2_halalas','transfer_amount_halalas','transfer_fee_halalas','subscription_total_halalas','subscription_effect_person_1_halalas','subscription_effect_person_2_halalas','governed_expense_total_halalas','prior_balance_halalas','final_balance_halalas','version'];
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, numeric.includes(key) && value !== null ? Number(value) : value]));
+}
+export async function getS8WorkExportDto(env, workId) {
+  const result = await s8ExportWorks(env, { period_basis: 'CREATED_AT', include_archived: true, limit: 1 }, { workId });
+  if (!result.rows.length) throw new DomainError('WORK_NOT_FOUND', 404);
+  const work = result.rows[0];
+  const [titles, statuses, events, payments] = await Promise.all([
+    env.DB.prepare('SELECT id,old_title,new_title,reason,changed_at,changed_by,request_id FROM work_title_history WHERE work_id=?1 ORDER BY changed_at ASC,id ASC').bind(workId).all(),
+    env.DB.prepare('SELECT id,old_status,new_status,reason,changed_at,changed_by,request_id FROM work_status_history WHERE work_id=?1 ORDER BY changed_at ASC,id ASC').bind(workId).all(),
+    env.DB.prepare('SELECT id,event_type,description,effective_at,created_at,actor_uid,request_id FROM work_events WHERE work_id=?1 ORDER BY effective_at ASC,id ASC').bind(workId).all(),
+    env.DB.prepare(`SELECT p.id,p.amount_halalas,p.effective_at,p.payment_method,p.note,p.received_by,p.recorded_by,p.created_at,p.request_id,r.id AS reversal_id,r.amount_halalas AS reversal_amount_halalas,r.approved_at AS reversal_approved_at
+      FROM client_payments p LEFT JOIN payment_reversals r ON r.payment_id=p.id WHERE p.work_id=?1 ORDER BY p.effective_at ASC,p.id ASC`).bind(workId).all(),
+  ]);
+  return {
+    export_type: 'WORK', financial_authority: 'S6_APPROVED_PRICE_MOVEMENTS_AND_S7_APPROVED_PAYMENTS_MINUS_REVERSALS', work,
+    title_history: titles.results || [], status_history: statuses.results || [], events: events.results || [],
+    payments: (payments.results || []).map(row => ({ ...row, amount_halalas: Number(row.amount_halalas), reversal_amount_halalas: row.reversal_amount_halalas === null ? null : Number(row.reversal_amount_halalas) })),
+  };
+}
+export async function getS8MonthExportDto(env, input = {}) {
+  const result = await s8ExportWorks(env, input);
+  if (!result.period.month || !result.period.year) throw new DomainError('S8_EXPORT_PERIOD_REQUIRED', 400);
+  const periodKey = `${result.period.year}-${result.period.month}`;
+  const snapshots = (await env.DB.prepare('SELECT * FROM settlement_snapshots WHERE period_key=?1 ORDER BY version ASC').bind(periodKey).all()).results || [];
+  return {
+    export_type: 'MONTH', period_key: periodKey, period_basis: result.period.basis, include_archived: result.includeArchived,
+    financial_authority: 'S6_APPROVED_PRICE_MOVEMENTS_AND_S7_APPROVED_PAYMENTS_MINUS_REVERSALS', works: result.rows, settlement_snapshots: snapshots.map(s8SnapshotRow),
+  };
+}
+export async function getS8FollowUpExportDto(env, input = {}) {
+  const includeArchived = s8IncludeArchived(input.include_archived); const limit = s8ExportLimit(input); const values = []; const add = value => { values.push(value); return `?${values.length}`; }; const clauses = [];
+  if (!includeArchived) clauses.push('w.archived_at IS NULL');
+  if (input.work_id) clauses.push(`e.work_id=${add(String(input.work_id))}`);
+  if (input.from) clauses.push(`e.effective_at>=${add(canonicalEventTimestamp(input.from))}`);
+  if (input.to) clauses.push(`e.effective_at<${add(canonicalEventTimestamp(input.to))}`);
+  const limitParam = add(limit);
+  const rows = (await env.DB.prepare(`SELECT e.id,e.work_id,w.title AS work_title,c.name AS customer_name,e.event_type,e.description,e.effective_at,e.created_at,e.actor_uid,e.request_id,w.archived_at,COUNT(*) OVER() AS total_count
+    FROM work_events e JOIN works w ON w.id=e.work_id JOIN customers c ON c.id=w.customer_id ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+    ORDER BY e.effective_at ASC,e.id ASC LIMIT ${limitParam}`).bind(...values).all()).results || [];
+  const total = rows.length ? Number(rows[0].total_count) : 0; if (total > limit) throw new DomainError('S8_EXPORT_LIMIT_EXCEEDED', 400);
+  return { export_type: 'FOLLOW_UP', include_archived: includeArchived, events: rows.map(row => ({ ...row, is_archived: Boolean(row.archived_at) })) };
+}
+export async function getS8CustomerExportDto(env, customerId, input = {}) {
+  const customer = await env.DB.prepare('SELECT id,name,contact,country,university,specialty,status FROM customers WHERE id=?1').bind(customerId).first();
+  if (!customer) throw new DomainError('CUSTOMER_NOT_FOUND', 404);
+  const result = await s8ExportWorks(env, input, { customerId });
+  const warnings = (await env.DB.prepare('SELECT fact_id,work_id,warning_type,source_ref,happened_at,details_json FROM customer_warning_projection WHERE customer_id=?1 ORDER BY happened_at ASC,fact_id ASC').bind(customerId).all()).results || [];
+  const totals = result.rows.reduce((acc, row) => ({ work_count: acc.work_count + 1, active_work_count: acc.active_work_count + (row.is_archived ? 0 : 1), archived_work_count: acc.archived_work_count + (row.is_archived ? 1 : 0), price_unset_work_count: acc.price_unset_work_count + (row.current_price_halalas === null ? 1 : 0), approved_paid_halalas: safeFinancialAdd(acc.approved_paid_halalas, row.approved_paid_halalas), remaining_halalas: row.remaining_halalas === null ? acc.remaining_halalas : safeFinancialAdd(acc.remaining_halalas, row.remaining_halalas) }), { work_count: 0, active_work_count: 0, archived_work_count: 0, price_unset_work_count: 0, approved_paid_halalas: 0, remaining_halalas: 0 });
+  return { export_type: 'CUSTOMER', customer, period_basis: result.period.basis, month: result.period.month, year: result.period.year, include_archived: result.includeArchived, financial_authority: 'S6_APPROVED_PRICE_MOVEMENTS_AND_S7_APPROVED_PAYMENTS_MINUS_REVERSALS', totals, works: result.rows, warnings };
+}
+export async function getS8ClassificationExportDto(env, input = {}) {
+  return { export_type: 'CLASSIFICATION', ...(await getS8Analytics(env, input)) };
+}
+
 export async function updateWork(env, actorUid, requestId, id, input) {
   await ensureActor(env, actorUid);
   const before = await getWorkRaw(env, id);
@@ -664,6 +803,15 @@ async function handleApi(request, env, requestId, scenario, user) {
   if (parts[1] === 'alerts' && parts[2] === 'settings' && parts.length === 3) {
     if (method === 'GET') return Response.json({ ok: true, data: await listS8AlertSettings(env), requestId });
     if (method === 'POST') return Response.json({ ok: true, data: await upsertS8AlertSetting(env, user.uid, requestId, body), requestId }, { status: 201 });
+  }
+  if (parts[1] === 'analytics' && parts.length === 2 && method === 'GET') return Response.json({ ok: true, data: await getS8Analytics(env, Object.fromEntries(url.searchParams.entries())), requestId });
+  if (parts[1] === 'exports' && method === 'GET') {
+    const query = Object.fromEntries(url.searchParams.entries());
+    if (parts.length === 4 && parts[2] === 'work') return Response.json({ ok: true, data: await getS8WorkExportDto(env, decodeURIComponent(parts[3])), requestId });
+    if (parts.length === 3 && parts[2] === 'month') return Response.json({ ok: true, data: await getS8MonthExportDto(env, query), requestId });
+    if (parts.length === 3 && parts[2] === 'follow-up') return Response.json({ ok: true, data: await getS8FollowUpExportDto(env, query), requestId });
+    if (parts.length === 4 && parts[2] === 'customer') return Response.json({ ok: true, data: await getS8CustomerExportDto(env, decodeURIComponent(parts[3]), query), requestId });
+    if (parts.length === 3 && parts[2] === 'classification') return Response.json({ ok: true, data: await getS8ClassificationExportDto(env, query), requestId });
   }
   if (parts[1] === 'customers' && parts.length === 2) {
     if (method === 'GET') return Response.json({ ok: true, data: await listCustomers(env, url.searchParams.get('q') || '') , requestId });
