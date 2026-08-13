@@ -42,5 +42,5 @@ The final evidence stamp must record the exact final PR head and matching final-
 | Paid service | NO |
 | Secrets added | NO |
 | Stable refs moved | NO |
-| Final PR head | TO_BE_STAMPED |
-| Final-head CI run IDs | TO_BE_STAMPED |
+| Final PR head | `15e96f96dca9e6654bb1730ec61acfa70f3f2539` (initial evidence head) |
+| Final-head CI run IDs | `31726116404`, `31726116422`, `31726116414`, `31726116270`, `31726116280` (initial evidence head; definitive stamp follows) |
