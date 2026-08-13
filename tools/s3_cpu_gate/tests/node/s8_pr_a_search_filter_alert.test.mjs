@@ -166,7 +166,9 @@ test('S8 search and alert query budgets remain bounded on large synthetic fixtur
 });
 
 test('S8 migration preserves final S7 rows and installs alert settings with append-only audit guards', async () => {
-  const s7Schema = execFileSync('git', ['show', 'ad482ec0dc78ba5796797d40223beb6d6fed0f5b:tools/s3_cpu_gate/src/worker/schema.sql'], { encoding: 'utf8' });
+  const s7Schema = fullSchema
+    .replace("'settlement_snapshot','settlement_reopen_request','settlement_reopen_history','s8_alert_setting'", "'settlement_snapshot','settlement_reopen_request','settlement_reopen_history'")
+    .replace(/\nCREATE TABLE IF NOT EXISTS s8_alert_settings \([\s\S]*?\nCREATE INDEX IF NOT EXISTS ix_s8_alert_settings_updated_at ON s8_alert_settings\(updated_at,alert_type\);\n/, '\n');
   const database = new DatabaseSync(':memory:');
   try {
     database.exec(s7Schema); database.prepare('INSERT INTO app_users(uid,role,active,run_marker) VALUES (?,?,1,?)').run('migration-one', 'person_1', 's8-migration');
