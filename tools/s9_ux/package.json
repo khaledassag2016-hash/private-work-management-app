@@ -1,0 +1,18 @@
+{
+  "name": "private-work-management-s9-ux-acceptance",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:level-a": "playwright test --project=level-a-chromium-mobile --project=level-a-chromium-desktop",
+    "test:level-b": "playwright test --workers=1 --project=level-b-chromium-360x800 --project=level-b-chromium-390x844 --project=level-b-chromium-768x1024 --project=level-b-chromium-844x390 --project=level-b-chromium-1280x720 --project=level-b-chromium-1440x900 --project=level-b-firefox-390x844 --project=level-b-firefox-1280x720 --project=level-b-webkit-390x844 --project=level-b-webkit-1280x720"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.62.0"
+  },
+  "overrides": {
+    "playwright-core": "1.62.0"
+  }
+}

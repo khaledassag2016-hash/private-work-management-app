@@ -13,6 +13,7 @@ const state = {
   modal: null,
   busy: false,
 };
+let modalInvoker = null;
 
 const labels = {
   TOKEN_MISSING: 'يلزم تسجيل الدخول للوصول إلى البيانات الخاصة.',
@@ -37,9 +38,11 @@ const labels = {
   NETWORK_ERROR: 'تعذر الاتصال بالخدمة. تحقق من الشبكة ثم أعد المحاولة.',
   POST_MUTATION_REFRESH_FAILED: 'تم حفظ التغيير في الخادم، لكن تعذر تحديث العرض الحالي. أعد فتح العمل أو حدّث الصفحة للتحقق من الحالة السلطوية.',
   HTTP_401: 'انتهت الجلسة أو يلزم تسجيل الدخول مجددًا.',
+  HTTP_400: 'الطلب غير صالح. راجع الحقول ثم أعد المحاولة.',
   HTTP_403: 'لا تملك صلاحية تنفيذ هذه العملية.',
   HTTP_404: 'السجل المطلوب غير موجود أو لم يعد متاحًا.',
   HTTP_409: 'توجد حالة تعارض. حدّث البيانات ثم أعد المحاولة.',
+  HTTP_500: 'تعذر إكمال العملية في الخدمة. لم تُعرض تفاصيل داخلية ولم تُسجل حالة نجاح.',
   MALFORMED_RESPONSE: 'تعذر التحقق من استجابة الخدمة بأمان. لم تُحفظ أي بيانات جديدة.',
   FACT_SOURCE_REQUIRED: 'يلزم إدخال مصدر أو دليل للواقعة قبل حفظها.',
   FACT_TIME_REQUIRED: 'يلزم إدخال وقت الواقعة الموثقة.',
@@ -154,14 +157,36 @@ function dateTimeLabel(value) {
 function requestId() { return crypto.randomUUID(); }
 function toast(message, kind = '') {
   const region = document.querySelector('.toast-region') || Object.assign(document.createElement('div'), { className: 'toast-region' });
+  region.setAttribute?.('aria-live', kind === 'error' ? 'assertive' : 'polite');
+  region.setAttribute?.('aria-atomic', 'true');
   if (!region.parentNode) document.body.append(region);
   const item = document.createElement('div');
   item.className = `toast ${kind}`;
+  item.setAttribute?.('role', kind === 'error' ? 'alert' : 'status');
   item.textContent = message;
   region.append(item);
   window.setTimeout(() => item.remove(), 4400);
 }
-function setBusy(value) { state.busy = value; }
+function syncBusyControls() {
+  const controls = document.querySelectorAll?.('form button[type="submit"], [data-action^="approve-"], [data-action="request-payment-reversal"]') || [];
+  controls.forEach(control => {
+    if (state.busy && !control.hasAttribute?.('aria-disabled')) {
+      control.disabled = true;
+      control.dataset.s9Pending = 'true';
+      control.setAttribute?.('aria-busy', 'true');
+    } else if (!state.busy && control.dataset?.s9Pending === 'true') {
+      control.disabled = false;
+      delete control.dataset.s9Pending;
+      control.removeAttribute?.('aria-busy');
+    }
+  });
+}
+function setBusy(value) { state.busy = value; root.setAttribute?.('aria-busy', String(value)); syncBusyControls(); }
+function confirmSensitive(action, effect) {
+  if (state.busy) return false;
+  const confirmer = typeof window.confirm === 'function' ? window.confirm.bind(window) : () => true;
+  return confirmer(`تأكيد إجراء حساس\n${action}\nالأثر: ${effect}\nلن يُرسل أي طلب قبل اختيار التأكيد.`);
+}
 function errorMessage(code) { return labels[code] || 'حدث خطأ تحقق. لم تعرض تفاصيل داخلية.'; }
 function queryString(values) {
   const params = new URLSearchParams();
@@ -246,7 +271,7 @@ function authScreen() {
   return `<section class="auth-screen"><div class="auth-card">
     <div class="brand-lockup"><div class="brand-mark">إ</div><div><h1>إدارة الأعمال الخاصة</h1><p>مساحة مغلقة لشخصين فقط</p></div></div>
     <h2>${state.auth.status === 'forbidden' ? 'الوصول غير مصرح' : 'تسجيل الدخول'}</h2><p>${message}</p>
-    ${configured && state.auth.status !== 'forbidden' ? `<form id="login-form" class="grid"><div class="field"><label for="email">البريد الإلكتروني</label><input id="email" class="input" type="email" required autocomplete="email" /></div><div class="field"><label for="password">كلمة المرور</label><input id="password" class="input" type="password" required autocomplete="current-password" /></div><button class="button" type="submit">تسجيل الدخول</button></form>` : ''}
+    ${configured && state.auth.status !== 'forbidden' ? `<form id="login-form" class="grid"><div class="field"><label for="email">البريد الإلكتروني</label><input id="email" name="email" class="input" type="email" required autocomplete="email" /></div><div class="field"><label for="password">كلمة المرور</label><input id="password" name="password" class="input" type="password" required autocomplete="current-password" /></div><button class="button" type="submit">تسجيل الدخول</button></form>` : ''}
   </div></section>`;
 }
 
@@ -341,7 +366,7 @@ function financialPage() {
   async function loadS8Workspace() { state.s8.loading = true; try { await Promise.all([loadS8Search(), loadS8Analytics(), api('/api/alerts').then(data => { state.s8.alerts = data; }), api('/api/alerts/settings').then(data => { state.s8.alertSettings = data; })]); } finally { state.s8.loading = false; } return state.s8; }
   async function s8ApplySearch(event) { event.preventDefault(); const values = formObject(event.currentTarget); state.s8.filters = { ...state.s8.filters, ...values, include_archived: values.include_archived === 'on' }; state.s8.search = { ...state.s8.search, page: 1 }; await submitFlow(async () => { await loadS8Workspace(); render(); }); }
   async function s8RefreshAnalytics() { await submitFlow(async () => { await loadS8Analytics(); render(); }); }
-  async function submitS8AlertSettings(event) { event.preventDefault(); const values = formObject(event.currentTarget); const settings = ['NO_PRICE', 'NO_REPLY', 'NO_PAYMENT'].map(alert_type => ({ alert_type, threshold_days: values[`threshold_${alert_type}`] })).filter(setting => setting.threshold_days !== ''); if (!settings.length) { toast(errorMessage('S8_ALERT_SETTINGS_REQUIRED'), 'error'); return; } await submitFlow(async () => { for (const setting of settings) await api('/api/alerts/settings', { method: 'POST', body: setting }); await loadS8Workspace(); render(); toast('تم حفظ مدد FR-029 عبر المصدر السلطوي.', ''); }); }
+  async function submitS8AlertSettings(event) { event.preventDefault(); const values = formObject(event.currentTarget); const settings = ['NO_PRICE', 'NO_REPLY', 'NO_PAYMENT'].map(alert_type => ({ alert_type, threshold_days: values[`threshold_${alert_type}`] })).filter(setting => setting.threshold_days !== ''); if (!settings.length) { toast(errorMessage('S8_ALERT_SETTINGS_REQUIRED'), 'error'); return; } if (!confirmSensitive('حفظ إعدادات تنبيهات D-017', settings.map(item => `${item.alert_type}=${item.threshold_days} يوم`).join('، '))) return; await submitFlow(async () => { for (const setting of settings) await api('/api/alerts/settings', { method: 'POST', body: setting }); await loadS8Workspace(); render(); toast('تم حفظ مدد FR-029 عبر المصدر السلطوي.', ''); }); }
   function s8ExportPath(type, values) { const query = { period_basis: state.s8.filters.period_basis, month: state.s8.filters.month, year: state.s8.filters.year, include_archived: state.s8.filters.include_archived ? 'true' : 'false', page_size: 1000 }; if (type === 'WORK') return `/api/exports/work/${encodeURIComponent(values.work_id)}`; if (type === 'CUSTOMER') return `/api/exports/customer/${encodeURIComponent(values.customer_id)}${queryString({ ...query })}`; if (type === 'MONTH') return `/api/exports/month${queryString(query)}`; if (type === 'FOLLOW_UP') return `/api/exports/follow-up${queryString({ include_archived: query.include_archived, page_size: 1000 })}`; return `/api/exports/classification${queryString({ period_basis: query.period_basis, month: query.month, year: query.year, include_archived: query.include_archived })}`; }
   async function fetchS8CompleteExport(type, values) { const first = await api(s8ExportPath(type, values)); if (type === 'WORK' || type === 'CLASSIFICATION') return first; const all = { ...first }; const rowsKey = type === 'FOLLOW_UP' ? 'events' : 'works'; all[rowsKey] = [...(first[rowsKey] || [])]; let cursor = first.next_cursor; while (cursor) { const path = s8ExportPath(type, values) + `&cursor=${encodeURIComponent(cursor)}`; const page = await api(path); all[rowsKey].push(...(page[rowsKey] || [])); cursor = page.next_cursor; } if (type === 'CUSTOMER') { all.warnings = [...(first.warnings || [])]; let warningCursor = first.warning_next_cursor; while (warningCursor) { const page = await api(s8ExportPath(type, values) + `&warning_cursor=${encodeURIComponent(warningCursor)}`); all.warnings.push(...(page.warnings || [])); warningCursor = page.warning_next_cursor; } } all.next_cursor = null; return all; }
   async function submitS8Export(event) { event.preventDefault(); const values = formObject(event.currentTarget); state.s8.export_type = values.export_type; state.s8.export_work_id = values.work_id || ''; state.s8.export_customer_id = values.customer_id || ''; if (values.export_type === 'WORK' && !values.work_id) { toast('أدخل Work ID للتصدير.', 'error'); return; } if (values.export_type === 'CUSTOMER' && !values.customer_id) { toast('أدخل Customer ID للتصدير.', 'error'); return; } await submitFlow(async () => { const dto = await fetchS8CompleteExport(values.export_type, values); const exporter = await import(appConfig.s8ExportModuleUrl || '/assets/s8-export.mjs'); const bytes = exporter.generateS8Workbook(dto); const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = exporter.safeS8ExportFilename(values.export_type, values.work_id || values.customer_id || `${state.s8.filters.year || 'period'}-${state.s8.filters.month || 'all'}`); anchor.click(); URL.revokeObjectURL(url); toast('تم إنشاء XLSX من DTO السلطوي الحقيقي.', ''); }); }
@@ -353,7 +378,7 @@ function financialPage() {
 function worksTable(works) { return `<div class="table-wrap"><table><thead><tr><th>العنوان</th><th>العميل</th><th>النوع</th><th>الحالة</th><th>السعر</th><th></th></tr></thead><tbody>${works.map(work => `<tr><td>${escapeHtml(work.title)}</td><td>${escapeHtml(customerName(work.customer_id))}</td><td>${escapeHtml(work.work_type_key || 'غير محدد')}</td><td>${escapeHtml(work.status)}</td><td>${badgeForWork(work)}</td><td><button class="row-action" data-work="${escapeHtml(work.id)}">عرض</button></td></tr>`).join('')}</tbody></table></div>`; }
 function customersTable(customers) { return `<div class="table-wrap"><table><thead><tr><th>الاسم</th><th>الدولة</th><th>الجامعة</th><th>التخصص</th><th>الأعمال</th><th></th></tr></thead><tbody>${customers.map(customer => `<tr><td>${escapeHtml(customer.name || 'اسم غير متاح')}</td><td>${escapeHtml(customer.country || '—')}</td><td>${escapeHtml(customer.university || '—')}</td><td>${escapeHtml(customer.specialty || '—')}</td><td>${state.works.filter(work => work.customer_id === customer.id).length}</td><td><button class="row-action" data-customer="${escapeHtml(customer.id)}">فتح السجل</button></td></tr>`).join('')}</tbody></table></div>`; }
 function customerName(id) { return state.customers.find(customer => customer.id === id)?.name || idLabel(id); }
-function customersPage() { return `<section class="card"><div class="toolbar"><div><h2>العملاء</h2><p>بيانات العميل الأساسية وسجل الوقائع المتاح.</p></div><div class="toolbar-right"><input class="input" id="customer-search" placeholder="ابحث بالاسم أو الجامعة أو التخصص" style="width:260px" /><button class="button" data-action="new-customer" type="button">إضافة عميل</button></div></div>${customersTable(state.customers)}</section>`; }
+function customersPage() { return `<section class="card"><div class="toolbar"><div><h2>العملاء</h2><p>بيانات العميل الأساسية وسجل الوقائع المتاح.</p></div><div class="toolbar-right"><input class="input" id="customer-search" aria-label="البحث في العملاء" placeholder="ابحث بالاسم أو الجامعة أو التخصص" style="width:260px" /><button class="button" data-action="new-customer" type="button">إضافة عميل</button></div></div>${customersTable(state.customers)}</section>`; }
 function worksPage() { return `<section class="card"><div class="toolbar"><div><h2>الأعمال</h2><p>كل عمل سجل مستقل، حتى عند وجود علاقة تابع/أصل.</p></div><button class="button" data-action="new-work" type="button">إضافة عمل</button></div>${state.works.length ? worksTable(state.works) : empty('لا توجد أعمال بعد. أنشئ أول عمل من هنا أو من سجل العميل.')}</section>`; }
 function catalogsPage() { return `<section class="grid grid-3">${['country', 'specialty', 'work_type'].map(kind => `<article class="card"><div class="toolbar"><h2>${({ country: 'الدول', specialty: 'التخصصات', work_type: 'أنواع الأعمال' }[kind])}</h2><button class="button secondary" data-action="new-catalog" data-kind="${kind}" type="button">إضافة قيمة</button></div>${catalogList(kind)}</article>`).join('')}</section>`; }
 function catalogList(kind) { const values = state.catalogs[kind] || []; return values.length ? `<div class="fact-list">${values.map(value => `<li><strong>${escapeHtml(value.label)}</strong><span>${escapeHtml(value.value_key)} ${value.active ? '' : '— غير نشط'}</span></li>`).join('')}</div>` : empty('لا توجد قيم بعد.'); }
@@ -625,7 +650,7 @@ function workPage() {
                       ${isSelf ? `
                         <span class="badge warn" style="font-size: 0.65rem;">بانتظار اعتماد الحساب الآخر (لا يمكنك اعتماد طلبك بموجب الموافقة الثنائية)</span>
                       ` : `
-                        <button class="button" data-action="approve-request" data-request-id="${req.id}" style="min-height: 28px; padding: 0.2rem 0.6rem; font-size: 0.7rem; background: var(--teal);" ${state.busy ? 'disabled' : ''}>اعتماد الطلب</button>
+                        <button class="button" data-action="approve-request" data-request-id="${req.id}" style="background: var(--teal);" ${state.busy ? 'disabled' : ''}>اعتماد الطلب</button>
                       `}
                     </div>
                   ` : ''}
@@ -664,6 +689,44 @@ function modalMarkup() {
   if (!state.modal) return '';
   const { type, data = {} } = state.modal;
   return `<div class="dialog-backdrop" role="presentation"><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><header class="dialog-head"><h2 id="dialog-title">${({ customer: data.id ? 'تعديل بيانات العميل' : 'إضافة عميل', work: data.id ? 'تعديل العمل' : 'إضافة عمل', catalog: 'إضافة قيمة للقائمة', fact: 'إضافة واقعة موثقة', 'payment-reversal': 'طلب تصحيح أو إلغاء دفعة' }[type])}</h2><button class="close" data-action="close-modal" type="button" aria-label="إغلاق">×</button></header>${type === 'customer' ? customerForm(data) : type === 'work' ? workForm(data) : type === 'catalog' ? catalogForm(data) : type === 'payment-reversal' ? paymentReversalForm(data) : factForm(data)}</section></div>`;
+}
+function modalInvokerReference(invoker) {
+  if (!invoker) return null;
+  let selector = '';
+  if (invoker.id) selector = `#${CSS.escape(invoker.id)}`;
+  else if (invoker.dataset?.action) {
+    selector = `[data-action="${CSS.escape(invoker.dataset.action)}"]`;
+    for (const key of ['customerId', 'paymentId', 'workId']) {
+      if (invoker.dataset[key]) selector += `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${CSS.escape(invoker.dataset[key])}"]`;
+    }
+  }
+  return { element: invoker, selector };
+}
+function openModal(modal, invoker = document.activeElement) { modalInvoker = modalInvokerReference(invoker); state.modal = modal; render(); }
+function closeModal() { const invoker = modalInvoker; state.modal = null; modalInvoker = null; render(); Promise.resolve().then(() => (invoker?.selector && document.querySelector(invoker.selector) || invoker?.element)?.focus?.()); }
+function bindDialogAccessibility() {
+  const dialog = document.querySelector('.dialog');
+  if (!dialog) return;
+  const focusable = () => [...(dialog.querySelectorAll?.('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') || [])].filter(item => !item.hidden);
+  dialog.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); closeModal(); return; }
+    if (event.key !== 'Tab') return;
+    const items = focusable(); if (!items.length) { event.preventDefault(); return; }
+    const first = items[0]; const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
+  Promise.resolve().then(() => (dialog.querySelector?.('input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea:not(:disabled)') || focusable()[0] || dialog).focus?.());
+}
+function associateFieldLabels() {
+  const fields = document.querySelectorAll?.('.field') || [];
+  fields.forEach((field, index) => {
+    const label = field.querySelector?.('label');
+    const control = field.querySelector?.('input:not([type="hidden"]), select, textarea');
+    if (!label || !control || label.contains?.(control) || control.getAttribute?.('aria-label') || control.getAttribute?.('aria-labelledby')) return;
+    if (!control.id) control.id = `s9-${state.view}-${index}`;
+    label.htmlFor = control.id;
+  });
 }
 function options(kind, selected) { return `<option value="">— اختر عند توفر المعلومة —</option>${(state.catalogs[kind] || []).filter(item => item.active).map(item => `<option value="${escapeHtml(item.value_key)}" ${item.value_key === selected ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}`; }
 function customerForm(customer = {}) {
@@ -707,9 +770,9 @@ function catalogForm(data) { return `<form id="catalog-form"><input type="hidden
 function factForm() { const customer = state.selectedCustomer; return `<form id="fact-form"><div class="form-grid"><div class="field"><label>نوع الواقعة <span class="required">*</span></label><select class="select" name="fact_type" required><option value="NON_PAYMENT">عدم دفع</option><option value="DELAY">تأخر</option><option value="BLOCKED">حظر/انقطاع</option><option value="DISPUTE">نزاع</option></select></div><div class="field"><label>العمل المرتبط (اختياري)</label><select class="select" name="work_id"><option value="">— دون عمل محدد —</option>${(customer.works || []).map(work => `<option value="${escapeHtml(work.id)}">${escapeHtml(work.title)}</option>`).join('')}</select></div><div class="field full"><label>المصدر أو الدليل <span class="required">*</span></label><input class="input" name="source_ref" required placeholder="مرجع موثق دون إدخال بيانات حساسة"/></div><div class="field"><label>وقت الواقعة <span class="required">*</span></label><input class="input" name="happened_at" type="datetime-local" required/></div><div class="field full"><label>تفاصيل مختصرة</label><textarea class="textarea" name="details"></textarea></div></div><section class="notice info" style="margin-top:1rem">لن يُنشأ تحذير يدوي؛ سيظهر التحذير فقط لأن هذه الواقعة الموثقة سجلت بنجاح.</section><div class="form-actions"><button class="button" type="submit">حفظ الواقعة</button><button class="button ghost" data-action="close-modal" type="button">إلغاء</button></div></form>`; }
 
 function render() {
-  if (state.auth.status !== 'signed_in') { root.innerHTML = authScreen(); bindAuth(); return; }
+  if (state.auth.status !== 'signed_in') { root.innerHTML = authScreen(); associateFieldLabels(); bindAuth(); return; }
   const content = state.view === 'dashboard' ? dashboard() : state.view === 'customers' ? customersPage() : state.view === 'works' ? worksPage() : state.view === 'financial' ? financialPage() : state.view === 's8' ? s8SearchPage() : state.view === 'catalogs' ? catalogsPage() : state.view === 'customer' ? customerPage() : workPage();
-  root.innerHTML = shell(content); bindShell();
+  root.innerHTML = shell(content); associateFieldLabels(); bindShell(); syncBusyControls(); bindDialogAccessibility();
 }
 function bindAuth() {
   const form = document.querySelector('#login-form');
@@ -725,14 +788,14 @@ function bindShell() {
   document.querySelector('#sign-out')?.addEventListener('click', async () => { await state.auth.tokenProvider?.signOut?.(); state.auth = { status: 'signed_out', tokenProvider: state.auth.tokenProvider, email: '', role: '' }; render(); });
   document.querySelectorAll('[data-customer]').forEach(button => button.addEventListener('click', () => openCustomer(button.dataset.customer)));
   document.querySelectorAll('[data-work]').forEach(button => button.addEventListener('click', () => openWork(button.dataset.work)));
-  document.querySelectorAll('[data-action="new-customer"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'customer', data: {} }; render(); }));
-  document.querySelectorAll('[data-action="edit-customer"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'customer', data: state.selectedCustomer }; render(); }));
-  document.querySelectorAll('[data-action="new-work"]').forEach(button => button.addEventListener('click', () => { void openNewWork(button.dataset.customerId || ''); }));
-  document.querySelectorAll('[data-action="edit-work"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'work', data: state.selectedWork, customerId: state.selectedWork.customer_id }; render(); }));
-  document.querySelectorAll('[data-action="new-catalog"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'catalog', data: { kind: button.dataset.kind } }; render(); }));
-  document.querySelectorAll('[data-action="new-fact"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'fact', data: {} }; render(); }));
+  document.querySelectorAll('[data-action="new-customer"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'customer', data: {} }, button)));
+  document.querySelectorAll('[data-action="edit-customer"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'customer', data: state.selectedCustomer }, button)));
+  document.querySelectorAll('[data-action="new-work"]').forEach(button => button.addEventListener('click', () => { modalInvoker = modalInvokerReference(button); void openNewWork(button.dataset.customerId || ''); }));
+  document.querySelectorAll('[data-action="edit-work"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'work', data: state.selectedWork, customerId: state.selectedWork.customer_id }, button)));
+  document.querySelectorAll('[data-action="new-catalog"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'catalog', data: { kind: button.dataset.kind } }, button)));
+  document.querySelectorAll('[data-action="new-fact"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'fact', data: {} }, button)));
   document.querySelectorAll('[data-action="retry-pre-agreement-context"]').forEach(button => button.addEventListener('click', () => { const customerId = state.modal?.customerId; if (state.modal?.type === 'work' && !state.modal.data?.id && customerId) void refreshWorkCustomerContext(customerId, state.modal.data || {}); }));
-  document.querySelectorAll('[data-action="close-modal"]').forEach(button => button.addEventListener('click', () => { state.modal = null; render(); }));
+  document.querySelectorAll('[data-action="close-modal"]').forEach(button => button.addEventListener('click', closeModal));
   document.querySelector('#customer-search')?.addEventListener('input', async event => { try { state.customers = await api(`/api/customers${queryString({ q: event.target.value })}`); render(); } catch (error) { toast(errorMessage(error.code), 'error'); } });
   document.querySelector('#s8-search-form')?.addEventListener('submit', s8ApplySearch);
   document.querySelector('#s8-alert-settings-form')?.addEventListener('submit', submitS8AlertSettings);
@@ -760,7 +823,7 @@ function bindShell() {
   document.querySelector('#s7-settlement-period-form')?.addEventListener('submit', submitSettlementPeriod);
   document.querySelector('#s7-settlement-close-form')?.addEventListener('submit', submitSettlementClose);
   document.querySelector('#s7-reopen-form')?.addEventListener('submit', submitSettlementReopen);
-  document.querySelectorAll('[data-action="request-payment-reversal"]').forEach(button => button.addEventListener('click', () => { state.modal = { type: 'payment-reversal', data: { paymentId: button.dataset.paymentId } }; render(); }));
+  document.querySelectorAll('[data-action="request-payment-reversal"]').forEach(button => button.addEventListener('click', () => openModal({ type: 'payment-reversal', data: { paymentId: button.dataset.paymentId } }, button)));
   document.querySelectorAll('[data-action="approve-payment-reversal"]').forEach(button => button.addEventListener('click', () => handleApprovePaymentReversal(button.dataset.requestId)));
   document.querySelectorAll('[data-action="approve-settlement-reopen"]').forEach(button => button.addEventListener('click', () => handleApproveSettlementReopen(button.dataset.requestId)));
 }
@@ -918,28 +981,34 @@ function requiredIso(value) { const parsed = new Date(value); return Number.isFi
 async function submitPayment(event) {
   event.preventDefault(); const values = formObject(event.currentTarget); const effectiveAt = requiredIso(values.effective_at);
   if (!effectiveAt) { toast(errorMessage('EVENT_TIME_INVALID'), 'error'); return; }
+  if (!confirmSensitive('تسجيل دفعة فعلية', `المبلغ المطلوب ${values.amount_riyals} ريال؛ المتبقي السلطوي قبل التسجيل ${moneyLabel(state.selectedWork.financials?.remaining_halalas)}`)) return;
   await submitFlow(async () => { await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/payments`, { method: 'POST', body: { version: state.selectedWork.version, amount_riyals: values.amount_riyals, effective_at: effectiveAt, payment_method: values.payment_method, received_by: values.received_by, note: nullable(values.note) } }); await refreshWorkAfterMutation(state.selectedWork.id, 'تم تسجيل الدفعة وإعادة جلب التحصيل السلطوي.'); });
 }
 async function submitPaymentReversalRequest(event) {
   event.preventDefault(); const values = formObject(event.currentTarget);
+  if (!confirmSensitive('طلب تصحيح أو إلغاء دفعة', `الدفعة ${idLabel(values.payment_id)}؛ يبقى التحصيل الحالي كما هو حتى اعتماد الحساب الآخر`)) return;
   await submitFlow(async () => { await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/payment-reversal-requests`, { method: 'POST', body: { version: state.selectedWork.version, payment_id: values.payment_id, reason: values.reason } }); state.modal = null; await refreshWorkAfterMutation(state.selectedWork.id, 'تم تقديم طلب التصحيح؛ لا يتغير التحصيل قبل اعتماد الحساب الآخر.'); });
 }
 async function handleApprovePaymentReversal(requestIdToApprove) {
+  if (!confirmSensitive('اعتماد تصحيح دفعة', `الطلب ${idLabel(requestIdToApprove)}؛ سيُضاف قيد عكسي مستقل وتُعاد قراءة حالة التحصيل السلطوية`)) return;
   await submitFlow(async () => { await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/payment-reversal-requests/${encodeURIComponent(requestIdToApprove)}/approve`, { method: 'POST', body: {} }); await refreshWorkAfterMutation(state.selectedWork.id, 'تم اعتماد التصحيح وإعادة جلب سجل التحصيل.'); });
 }
 async function submitTransfer(event) {
   event.preventDefault(); const values = formObject(event.currentTarget); const effectiveAt = requiredIso(values.effective_at);
   if (!effectiveAt) { toast(errorMessage('EVENT_TIME_INVALID'), 'error'); return; }
+  if (!confirmSensitive('تسجيل تحويل بين الطرفين', `المبلغ ${values.amount_riyals} ريال والرسوم ${values.fee_riyals} ريال؛ ستتغير معاينة التسوية السلطوية`)) return;
   await submitFlow(async () => { await api('/api/transfers', { method: 'POST', body: { amount_riyals: values.amount_riyals, fee_riyals: values.fee_riyals, effective_at: effectiveAt, from_party: values.from_party, to_party: values.to_party, fee_payer: 'person_1' } }); await refreshFinancialAfterMutation('تم تسجيل التحويل وإعادة جلب معاينة التسوية.'); });
 }
 async function submitSubscription(event) {
   event.preventDefault(); const values = formObject(event.currentTarget); const effectiveAt = requiredIso(values.effective_at);
   if (!effectiveAt) { toast(errorMessage('EVENT_TIME_INVALID'), 'error'); return; }
+  if (!confirmSensitive('تغيير حالة الاشتراك', `الحالة الجديدة ${values.state} والقيمة الإجمالية ${values.aggregate_amount_riyals} ريال؛ لا تتغير التسويات السابقة`)) return;
   await submitFlow(async () => { await api('/api/subscriptions', { method: 'POST', body: { state: values.state, aggregate_amount_riyals: values.aggregate_amount_riyals, effective_at: effectiveAt } }); await refreshFinancialAfterMutation('تم تسجيل تاريخ الاشتراك الفعّال وإعادة جلب المعاينة.'); });
 }
 async function submitExpense(event) {
   event.preventDefault(); const values = formObject(event.currentTarget); const effectiveAt = requiredIso(values.effective_at);
   if (!effectiveAt) { toast(errorMessage('EVENT_TIME_INVALID'), 'error'); return; }
+  if (!confirmSensitive('تسجيل مصروف مشترك', `المبلغ ${values.amount_riyals} ريال؛ قد يبقى الإقفال محجوبًا بلا قاعدة توزيع معتمدة`)) return;
   await submitFlow(async () => { await api('/api/expenses', { method: 'POST', body: { amount_riyals: values.amount_riyals, category: values.category, paid_by_uid: values.paid_by_uid, effective_at: effectiveAt } }); await refreshFinancialAfterMutation('تم حفظ المصروف كسجل واقعي؛ قد يبقى الإقفال محجوبًا بلا قاعدة توزيع معتمدة.'); });
 }
 async function submitSettlementPeriod(event) {
@@ -949,14 +1018,17 @@ async function submitSettlementPeriod(event) {
 }
 async function submitSettlementClose(event) {
   event.preventDefault(); const period = state.financial.periodKey;
+  if (!confirmSensitive('إقفال التسوية الشهرية', `الفترة ${period}؛ الرصيد النهائي السلطوي ${moneyLabel(state.financial.preview?.final_balance_halalas)}؛ ستُحفظ نسخة غير قابلة للتعديل العادي`)) return;
   await submitFlow(async () => { await api(`/api/settlements/${encodeURIComponent(period)}/close`, { method: 'POST', body: {} }); await refreshFinancialAfterMutation('تم إقفال نسخة التسوية وإعادة جلب الحالة السلطوية.'); });
 }
 async function submitSettlementReopen(event) {
   event.preventDefault(); const values = formObject(event.currentTarget); const period = state.financial.periodKey;
+  if (!confirmSensitive('طلب إعادة فتح التسوية', `الفترة ${period}؛ تبقى مقفلة حتى اعتماد الحساب الآخر`)) return;
   await submitFlow(async () => { await api(`/api/settlements/${encodeURIComponent(period)}/reopen-requests`, { method: 'POST', body: { reason: values.reason } }); await refreshFinancialAfterMutation('تم تقديم طلب إعادة الفتح؛ ستبقى الفترة مقفلة حتى يعتمد الحساب الآخر الطلب.'); });
 }
 async function handleApproveSettlementReopen(reopenId) {
   const period = state.financial.periodKey;
+  if (!confirmSensitive('اعتماد إعادة فتح التسوية', `الفترة ${period} والطلب ${idLabel(reopenId)}؛ ستعود الفترة إلى حالة مفتوحة`)) return;
   await submitFlow(async () => { await api(`/api/settlements/${encodeURIComponent(period)}/reopen-requests/${encodeURIComponent(reopenId)}/approve`, { method: 'POST', body: {} }); await refreshFinancialAfterMutation('تم اعتماد إعادة الفتح وإعادة جلب الحالة السلطوية.'); });
 }
 
@@ -1041,6 +1113,7 @@ async function submitCancel(event) {
   const form = event.currentTarget;
   const values = formObject(form);
   const version = state.selectedWork.version;
+  if (!confirmSensitive('تقديم طلب إلغاء العمل', `الحالة الحالية ${WORK_STATUS_LABELS[state.selectedWork.status] || state.selectedWork.status} ← الحالة المطلوبة ${WORK_STATUS_LABELS[values.target_execution_status] || values.target_execution_status}؛ يبقى السجل محفوظًا`)) return;
   await submitFlow(async () => {
     try {
       await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/requests`, {
@@ -1069,6 +1142,7 @@ async function submitArchive(event) {
   const form = event.currentTarget;
   const values = formObject(form);
   const version = state.selectedWork.version;
+  if (!confirmSensitive('تقديم طلب أرشفة العمل', `العمل ${state.selectedWork.title}؛ سيبقى محفوظًا وقابلًا للبحث التاريخي بعد الاعتماد`)) return;
   await submitFlow(async () => {
     try {
       await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/requests`, {
@@ -1102,6 +1176,7 @@ async function submitPriceChange(event) {
   const effectiveAt = optionalIsoDate(values.effective_at);
   if (values.effective_at && !effectiveAt) { toast(errorMessage('EVENT_TIME_INVALID'), 'error'); return; }
   const version = state.selectedWork.version;
+  if (!confirmSensitive('تقديم طلب حركة سعر', `السعر الحالي السلطوي ${moneyLabel(state.selectedWork.financials?.current_price_halalas)}؛ الحركة ${values.movement_type} بقيمة ${values.amount_riyals} ريال؛ لا يتغير السعر قبل الاعتماد`)) return;
   await submitFlow(async () => {
     try {
       await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/price-requests`, { method: 'POST', body: { version, movement_type: values.movement_type, amount_riyals: values.amount_riyals, reason: values.reason, ...(effectiveAt ? { effective_at: effectiveAt } : {}) } });
@@ -1115,6 +1190,7 @@ async function submitRatioChange(event) {
   event.preventDefault();
   const values = formObject(event.currentTarget);
   const version = state.selectedWork.version;
+  if (!confirmSensitive('تقديم طلب استثناء نسبة', `النسبة المطلوبة ${values.person_1_bps}/${values.person_2_bps} bps؛ تبقى النسبة الحالية حتى الاعتماد`)) return;
   await submitFlow(async () => {
     try {
       await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/ratio-requests`, { method: 'POST', body: { version, person_1_bps: Number(values.person_1_bps), person_2_bps: Number(values.person_2_bps), reason: values.reason } });
@@ -1125,6 +1201,8 @@ async function submitRatioChange(event) {
   });
 }
 async function handleApprovePriceRequest(reqId) {
+  const request = state.selectedWork.financials?.price_requests?.find(item => item.id === reqId);
+  if (!confirmSensitive('اعتماد حركة السعر', `السعر الحالي ${moneyLabel(state.selectedWork.financials?.current_price_halalas)}؛ الطلب ${request ? `${request.movement_type} ${moneyLabel(request.amount_halalas)}` : idLabel(reqId)}`)) return;
   await submitFlow(async () => {
     try {
       await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/price-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST', body: {} });
@@ -1135,6 +1213,8 @@ async function handleApprovePriceRequest(reqId) {
   });
 }
 async function handleApproveRatioRequest(reqId) {
+  const request = state.selectedWork.financials?.ratio_requests?.find(item => item.id === reqId);
+  if (!confirmSensitive('اعتماد استثناء النسبة', `النسبة المطلوبة ${request ? `${request.person_1_bps}/${request.person_2_bps} bps` : idLabel(reqId)}؛ ستُعاد قراءة الحصص السلطوية`)) return;
   await submitFlow(async () => {
     try {
       await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/ratio-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST', body: {} });
@@ -1146,6 +1226,8 @@ async function handleApproveRatioRequest(reqId) {
 }
 
 async function handleApproveRequest(reqId) {
+  const request = state.selectedWork.requests?.find(item => item.id === reqId);
+  if (!confirmSensitive(`اعتماد طلب ${request?.action === 'ARCHIVE' ? 'الأرشفة' : 'الإلغاء'}`, `الحالة الحالية ${WORK_STATUS_LABELS[state.selectedWork.status] || state.selectedWork.status}؛ الطلب ${idLabel(reqId)}؛ يبقى السجل والتاريخ محفوظين`)) return;
   await submitFlow(async () => {
     try {
       await api(`/api/works/${encodeURIComponent(state.selectedWork.id)}/requests/${encodeURIComponent(reqId)}/approve`, {
