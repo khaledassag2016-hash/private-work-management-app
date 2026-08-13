@@ -59,6 +59,7 @@ const asText = (value) => (value === null || value === undefined ? '' : String(v
 
 function normalizedDateText(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1000 && value <= 9999) return String(value);
   if (typeof value === 'number' && Number.isFinite(value) && value > 1) {
     const date = new Date(Date.UTC(1899, 11, 30) + Math.round(value) * 86400000);
     if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
@@ -93,14 +94,68 @@ function normalizeMoneyHalalas(value, fieldName) {
   return number;
 }
 
+const ARABIC_MONTHS = '(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر)';
+
 function dateCompleteness(dateText) {
   const text = asText(dateText).trim();
   if (!text) return 'MISSING';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{4}\/\d{2}\/\d{2}$/.test(text)) return 'COMPLETE_DAY';
-  if (/^\d{4}-\d{2}$/.test(text) || /^\d{4}\/\d{2}$/.test(text)) return 'COMPLETE_MONTH';
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(text) || /^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(text)) return 'COMPLETE_DAY';
+  if (/^(?:[A-Za-z_]+-)?\d{4}[-/]\d{1,2}$/.test(text) || /^\d{1,2}[/-]\d{4}$/.test(text) || /^(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر)\s+\d{4}$/.test(text) || /^\d{4}\s+(يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|أغسطس|سبتمبر|أكتوبر|نوفمبر|ديسمبر)$/.test(text)) return 'COMPLETE_MONTH';
   if (/^\d{4}$/.test(text)) return 'YEAR_ONLY';
-  if (/^\d{1,2}[/-]\d{1,2}$/.test(text) || /أغسطس|يناير|فبراير|مارس|أبريل|مايو|يونيو|يوليو|سبتمبر|أكتوبر|نوفمبر|ديسمبر/.test(text)) return 'MISSING_YEAR';
+  if (/^\d{1,2}[/-]\d{1,2}$/.test(text) || new RegExp(ARABIC_MONTHS).test(text)) return 'MISSING_YEAR';
   return 'MISSING_YEAR';
+}
+
+function roundHalfUp(numerator, denominator) {
+  if (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || denominator <= 0) throw new Error('accounting effect exceeds safe integer range');
+  const sign = numerator < 0 ? -1 : 1;
+  const absolute = Math.abs(numerator);
+  const quotient = Math.floor(absolute / denominator);
+  const remainder = absolute % denominator;
+  const result = sign * (quotient + (remainder * 2 >= denominator ? 1 : 0));
+  if (!Number.isSafeInteger(result)) throw new Error('accounting effect exceeds safe integer range');
+  return result;
+}
+
+export const ACCOUNTING_EFFECT_KINDS = Object.freeze([
+  'WORK_SHARE',
+  'HALF_SUBSCRIPTION',
+  'HALF_TRANSFER_FEE',
+  'GOVERNED_NET_EFFECT',
+  'RAW_WORK_PRICE',
+]);
+
+export function calculateGovernedFinancialEffect(record, { accountingEffectRule = null, approved = false } = {}) {
+  if (!record) return 0;
+  const explicitlyApproved = approved || record.financialActivationState === 'APPROVED';
+  if (record.reviewStatus !== 'CONFIRMED' || !explicitlyApproved) return 0;
+  if (!accountingEffectRule || !ACCOUNTING_EFFECT_KINDS.includes(accountingEffectRule.kind)) return 0;
+  const originalAmount = record.financialAmountHalalas;
+  if (originalAmount === null || !Number.isSafeInteger(originalAmount)) return 0;
+  if (accountingEffectRule.kind === 'RAW_WORK_PRICE') {
+    if (record.recordType !== 'WORK') throw new Error('RAW_WORK_PRICE applies only to Work records');
+    return 0;
+  }
+  if (accountingEffectRule.kind === 'WORK_SHARE') {
+    if (record.recordType !== 'HISTORICAL_SETTLEMENT') throw new Error('WORK_SHARE requires a separate settlement record');
+    const shareRateBps = Number(accountingEffectRule.shareRateBps);
+    if (!Number.isSafeInteger(shareRateBps) || shareRateBps < 0 || shareRateBps > 10000) throw new Error('WORK_SHARE requires a governed share rate in basis points');
+    return roundHalfUp(originalAmount * shareRateBps, 10000);
+  }
+  if (accountingEffectRule.kind === 'HALF_SUBSCRIPTION') {
+    if (record.recordType !== 'SUBSCRIPTION_EXPENSE') throw new Error('HALF_SUBSCRIPTION requires a subscription expense record');
+    return roundHalfUp(originalAmount, 2);
+  }
+  if (accountingEffectRule.kind === 'HALF_TRANSFER_FEE') {
+    if (record.recordType !== 'TRANSFER_FEE') throw new Error('HALF_TRANSFER_FEE requires a transfer fee record');
+    return -roundHalfUp(originalAmount, 2);
+  }
+  if (accountingEffectRule.kind === 'GOVERNED_NET_EFFECT') {
+    const netEffectHalalas = Number(accountingEffectRule.netEffectHalalas);
+    if (!Number.isSafeInteger(netEffectHalalas)) throw new Error('GOVERNED_NET_EFFECT requires an integer halala effect');
+    return netEffectHalalas;
+  }
+  throw new Error(`unsupported accounting effect rule: ${accountingEffectRule.kind}`);
 }
 
 function classifyFinancialCategory(category) {
@@ -125,6 +180,7 @@ function decisionForRecord(record) {
   if (!record.originalText) return { importDecision: 'REJECTED', decisionReason: 'original source text is missing' };
   if (record.dateCompleteness === 'MISSING_YEAR') reasons.push('date year is missing');
   if (record.dateCompleteness === 'MISSING') reasons.push('date is missing');
+  if (record.uncertaintyFlags.some((flag) => flag.endsWith('_DATE_INCOMPLETE'))) reasons.push('historical date field is incomplete');
   if (record.recordType === 'WORK' && record.customerMappingStatus !== 'CONFIRMED') reasons.push('customer mapping is unresolved');
   if (record.financialAmountHalalas !== null && record.financialAmountHalalas !== 0 && record.financialActivationState !== 'APPROVED') reasons.push('financial activation is not explicitly approved');
   if (record.financialAmountHalalas === 0 && record.zeroPriceReason === null && ['WORK', 'PRICE_OR_PRICE_MOVEMENT'].includes(record.recordType)) reasons.push('zero price has no explicit reason');
@@ -148,6 +204,8 @@ export function normalizeRecord(input) {
   if (financialAmountHalalas !== null && (!Number.isSafeInteger(financialAmountHalalas))) throw new Error('financial amount must be an integer halala amount');
   const zeroPriceReason = input.zeroPriceReason ? asText(input.zeroPriceReason).trim() : null;
   if (zeroPriceReason !== null && !ZERO_PRICE_REASONS.has(zeroPriceReason)) throw new Error(`unsupported zero price reason: ${zeroPriceReason}`);
+  const requestedActivationState = input.financialActivationState ?? (financialAmountHalalas === null || financialAmountHalalas === 0 ? 'NONE' : 'PENDING_REVIEW');
+  const financialActivationState = requestedActivationState === 'APPROVED' ? 'PENDING_REVIEW' : requestedActivationState;
   const record = {
     sourceRecordId: asText(input.sourceRecordId).trim(),
     sourceContainer: asText(input.sourceContainer).trim(),
@@ -165,7 +223,7 @@ export function normalizeRecord(input) {
     uncertaintyFlags: [...new Set(input.uncertaintyFlags ?? [])].sort(),
     customerMappingStatus,
     financialAmountHalalas,
-    financialActivationState: input.financialActivationState ?? (financialAmountHalalas === null || financialAmountHalalas === 0 ? 'NONE' : 'PENDING_REVIEW'),
+    financialActivationState,
     zeroPriceReason,
     importDecision: input.importDecision ?? null,
     decisionReason: input.decisionReason ?? null,
@@ -192,6 +250,8 @@ export function parsePreparationWorkbook(buffer, { sourceStoreId, sourceStoreSha
     const row = rowToObject(workHeaders, workRows[i]);
     if (!asText(row.ID_مؤقت).trim()) continue;
     const price = normalizeMoneyHalalas(row['السعر_النهائي_ريال'], 'work price');
+    const agreementDateCompleteness = dateCompleteness(row['تاريخ_الاتفاق']);
+    const deliveryDateCompleteness = dateCompleteness(row['تاريخ_الإنجاز_والتسليم']);
     const status = statusForPreparedRow(row['حالة_مراجعة_السجل'], row['جاهزية_الاستيراد'], row['حالة_معرف_العميل']);
     records.push(normalizeRecord({
       sourceRecordId: row.ID_مؤقت,
@@ -205,7 +265,9 @@ export function parsePreparationWorkbook(buffer, { sourceStoreId, sourceStoreSha
         quantity: row['الكمية'],
         priceHalalas: price,
         agreementDateText: row['تاريخ_الاتفاق'],
+        agreementDateCompleteness,
         deliveryDateText: row['تاريخ_الإنجاز_والتسليم'],
+        deliveryDateCompleteness,
         status: row['حالة_العمل'],
         sourceId: row['المصدر'],
       },
@@ -217,6 +279,8 @@ export function parsePreparationWorkbook(buffer, { sourceStoreId, sourceStoreSha
       customerMappingStatus: row['حالة_معرف_العميل'] === 'CONFIRMED' ? 'CONFIRMED' : 'UNKNOWN',
       financialAmountHalalas: price,
       uncertaintyFlags: [
+        agreementDateCompleteness === 'COMPLETE_DAY' || agreementDateCompleteness === 'COMPLETE_MONTH' || agreementDateCompleteness === 'YEAR_ONLY' ? null : 'AGREEMENT_DATE_INCOMPLETE',
+        deliveryDateCompleteness === 'COMPLETE_DAY' || deliveryDateCompleteness === 'COMPLETE_MONTH' || deliveryDateCompleteness === 'YEAR_ONLY' ? null : 'DELIVERY_DATE_INCOMPLETE',
         row['حالة_نوع_العمل'] !== 'CONFIRMED' ? 'WORK_TYPE_UNCONFIRMED' : null,
         row['حالة_التخصص'] !== 'CONFIRMED' ? 'SPECIALTY_UNCONFIRMED' : null,
         row['حالة_المادة'] !== 'CONFIRMED' ? 'SUBJECT_UNCONFIRMED' : null,
@@ -258,11 +322,14 @@ export function parsePreparationWorkbook(buffer, { sourceStoreId, sourceStoreSha
       sourceReviewStatus: row['حالة_الحقيقة'],
       importReadiness: readiness,
       dateText: row['شهر_التسوية'],
-      dateCompleteness: 'COMPLETE_MONTH',
+      dateCompleteness: dateCompleteness(row['شهر_التسوية']),
       customerMappingStatus: 'NOT_APPLICABLE',
       financialAmountHalalas: amount,
       financialActivationState: amount && amount !== 0 ? 'PENDING_REVIEW' : 'NONE',
-      uncertaintyFlags: readiness === 'PENDING_REVIEW' ? ['FINANCIAL_IMPORT_REVIEW_REQUIRED'] : [],
+      uncertaintyFlags: [
+        'PREPARED_EFFECT_NON_OPERATIONAL',
+        readiness === 'PENDING_REVIEW' ? 'FINANCIAL_IMPORT_REVIEW_REQUIRED' : null,
+      ].filter(Boolean),
     }));
   }
   return buildPlan(records, { sourceStoreId, sourceStoreSha256 });
@@ -368,8 +435,8 @@ export function importPlan(db, plan, { batchKey, actorUid = 's11-manus', now = p
       id, batch_id, source_store_sha256, source_record_id, source_container, source_location, original_text,
       normalized_json, record_type, review_status, import_decision, decision_reason, reviewer_uid, reviewed_at,
       date_completeness, uncertainty_flags_json, customer_mapping_status, financial_amount_halalas,
-      financial_activation_state, operational_effect_halalas, is_active, staged_at, imported_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`);
+      accounting_effect_halalas, financial_activation_state, operational_effect_halalas, is_active, staged_at, imported_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertActivation = db.prepare('INSERT INTO s11_financial_activations(id, record_id, batch_id, amount_halalas, approved_by, approved_at, approval_reason, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     const insertEvent = db.prepare('INSERT INTO s11_import_events(batch_id, record_id, event_type, actor_uid, occurred_at, details_json) VALUES (?, ?, ?, ?, ?, ?)');
     for (const record of plan.records) {
@@ -379,22 +446,25 @@ export function importPlan(db, plan, { batchKey, actorUid = 's11-manus', now = p
         throw new Error(`source record conflict: ${record.sourceRecordId}`);
       }
       const approval = approvals[record.sourceRecordId];
-      const approved = approval && record.financialAmountHalalas !== null && record.reviewStatus === 'CONFIRMED' && record.importDecision !== 'REJECTED';
-      const activationState = approved ? 'APPROVED' : record.financialActivationState;
-      const operationalEffect = approved ? record.financialAmountHalalas : 0;
-      const storedDecision = approved ? 'ACCEPTED' : record.importDecision;
-      const storedReason = approved ? `explicit approval: ${approval.reason}` : record.decisionReason;
+      const accountingEffectRule = approval?.accountingEffectRule ?? null;
+      const approved = Boolean(approval && accountingEffectRule && record.financialAmountHalalas !== null && record.reviewStatus === 'CONFIRMED' && record.importDecision !== 'REJECTED');
+      const accountingEffectHalalas = approved ? calculateGovernedFinancialEffect(record, { accountingEffectRule, approved: true }) : 0;
+      const financialActivated = approved && accountingEffectHalalas !== 0;
+      const activationState = financialActivated ? 'APPROVED' : record.financialActivationState;
+      const operationalEffect = financialActivated ? accountingEffectHalalas : 0;
+      const storedDecision = financialActivated ? 'ACCEPTED' : record.importDecision;
+      const storedReason = financialActivated ? `explicit approval: ${approval.reason}` : record.decisionReason;
       const recordId = `s11-record-${sha256(`${plan.sourceStoreSha256}:${record.sourceRecordId}`).slice(0, 24)}`;
       insertRecord.run(
         recordId, batchId, plan.sourceStoreSha256, record.sourceRecordId, record.sourceContainer, record.sourceLocation,
         record.originalText, JSON.stringify(record.normalized), record.recordType, record.reviewStatus,
         storedDecision, storedReason, record.reviewerUid, record.reviewedAt, record.dateCompleteness,
         JSON.stringify(record.uncertaintyFlags), record.customerMappingStatus, record.financialAmountHalalas,
-        activationState, operationalEffect, isoNow(now), isoNow(now),
+        accountingEffectHalalas, activationState, operationalEffect, 1, isoNow(now), isoNow(now),
       );
-      if (approved) {
-        insertActivation.run(`s11-activation-${recordId}`, recordId, batchId, record.financialAmountHalalas, approval.approvedBy, approval.approvedAt, approval.reason, 'APPROVED');
-        insertEvent.run(batchId, recordId, 'FINANCIAL_ACTIVATION_APPROVED', actorUid, isoNow(now), JSON.stringify({ approvedBy: approval.approvedBy, amountHalalas: record.financialAmountHalalas }));
+      if (financialActivated) {
+        insertActivation.run(`s11-activation-${recordId}`, recordId, batchId, accountingEffectHalalas, approval.approvedBy, approval.approvedAt, approval.reason, 'APPROVED');
+        insertEvent.run(batchId, recordId, 'FINANCIAL_ACTIVATION_APPROVED', actorUid, isoNow(now), JSON.stringify({ approvedBy: approval.approvedBy, originalAmountHalalas: record.financialAmountHalalas, accountingEffectHalalas, rule: accountingEffectRule.kind }));
       }
       insertEvent.run(batchId, recordId, 'STAGED', actorUid, isoNow(now), JSON.stringify({ decision: storedDecision, operationalEffectHalalas: operationalEffect }));
       insertEvent.run(batchId, recordId, 'IMPORTED', actorUid, isoNow(now), JSON.stringify({ recordType: record.recordType }));
@@ -405,7 +475,7 @@ export function importPlan(db, plan, { batchKey, actorUid = 's11-manus', now = p
 }
 
 function reportFromDb(db, batchId) {
-  const records = db.prepare('SELECT import_decision, record_type, customer_mapping_status, date_completeness, financial_amount_halalas, financial_activation_state, source_record_id FROM s11_historical_records WHERE batch_id = ? ORDER BY source_record_id').all(batchId);
+    const records = db.prepare('SELECT import_decision, record_type, customer_mapping_status, date_completeness, financial_amount_halalas, accounting_effect_halalas, financial_activation_state, source_record_id FROM s11_historical_records WHERE batch_id = ? ORDER BY source_record_id').all(batchId);
   const counts = { ACCEPTED: 0, REJECTED: 0, PENDING_REVIEW: 0, UNKNOWN: 0 };
   const byType = {};
   const unresolvedCustomerMappings = [];
@@ -418,7 +488,7 @@ function reportFromDb(db, batchId) {
     if (!['COMPLETE_DAY', 'COMPLETE_MONTH', 'YEAR_ONLY'].includes(row.date_completeness)) incompleteDates.push(row.source_record_id);
     if (row.financial_amount_halalas !== null && row.financial_activation_state !== 'APPROVED') financialNonOperational.push(row.source_record_id);
   }
-  return { total: records.length, counts, byType, unresolvedCustomerMappings, incompleteDates, financialNonOperational, operationalEffectHalalas: records.reduce((sum, row) => sum + (row.financial_activation_state === 'APPROVED' ? row.financial_amount_halalas || 0 : 0), 0) };
+  return { total: records.length, counts, byType, unresolvedCustomerMappings, incompleteDates, financialNonOperational, operationalEffectHalalas: records.reduce((sum, row) => sum + (row.financial_activation_state === 'APPROVED' ? row.accounting_effect_halalas || 0 : 0), 0) };
 }
 
 export function deactivateBatch(db, batchId, { actorUid = 's11-manus', now = new Date() } = {}) {
@@ -427,7 +497,7 @@ export function deactivateBatch(db, batchId, { actorUid = 's11-manus', now = new
     if (!batch) throw new Error('unknown S11 batch');
     if (batch.status === 'DEACTIVATED') return { deactivated: false, batchId, reason: 'already deactivated' };
     const timestamp = isoNow(now);
-    db.prepare('UPDATE s11_historical_records SET is_active = 0, deactivated_at = ?, operational_effect_halalas = 0, financial_activation_state = CASE WHEN financial_activation_state = \'APPROVED\' THEN \'REVOKED\' ELSE financial_activation_state END WHERE batch_id = ?').run(timestamp, batchId);
+    db.prepare('UPDATE s11_historical_records SET is_active = 0, deactivated_at = ?, accounting_effect_halalas = 0, operational_effect_halalas = 0, financial_activation_state = CASE WHEN financial_activation_state = \'APPROVED\' THEN \'REVOKED\' ELSE financial_activation_state END WHERE batch_id = ?').run(timestamp, batchId);
     db.prepare('UPDATE s11_financial_activations SET state = \'REVOKED\' WHERE batch_id = ? AND state = \'APPROVED\'').run(batchId);
     db.prepare('UPDATE s11_import_batches SET status = \'DEACTIVATED\', deactivated_at = ? WHERE id = ?').run(timestamp, batchId);
     db.prepare('INSERT INTO s11_import_events(batch_id, record_id, event_type, actor_uid, occurred_at, details_json) VALUES (?, NULL, ?, ?, ?, ?)').run(batchId, 'BATCH_DEACTIVATED', actorUid, timestamp, JSON.stringify({ reason: 'governed reversible deactivation' }));
@@ -436,8 +506,8 @@ export function deactivateBatch(db, batchId, { actorUid = 's11-manus', now = new
 }
 
 export function reconcileBatch(db, batchId) {
-  const row = db.prepare('SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END), 0) AS active, COALESCE(SUM(CASE WHEN operational_effect_halalas <> 0 THEN operational_effect_halalas ELSE 0 END), 0) AS operational_effect_halalas FROM s11_historical_records WHERE batch_id = ?').get(batchId);
-  return { total: row.total, active: row.active, operationalEffectHalalas: row.operational_effect_halalas };
+  const row = db.prepare('SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END), 0) AS active, COALESCE(SUM(CASE WHEN accounting_effect_halalas <> 0 THEN accounting_effect_halalas ELSE 0 END), 0) AS accounting_effect_halalas FROM s11_historical_records WHERE batch_id = ?').get(batchId);
+  return { total: row.total, active: row.active, operationalEffectHalalas: row.accounting_effect_halalas };
 }
 
 export function searchHistoricalRecords(db, { batchId = null, query = '' } = {}) {

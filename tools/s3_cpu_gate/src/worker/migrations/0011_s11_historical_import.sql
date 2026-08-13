@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS s11_historical_records (
   uncertainty_flags_json TEXT NOT NULL,
   customer_mapping_status TEXT NOT NULL CHECK (customer_mapping_status IN ('CONFIRMED', 'PENDING_REVIEW', 'UNKNOWN', 'NOT_APPLICABLE')),
   financial_amount_halalas INTEGER,
+  accounting_effect_halalas INTEGER NOT NULL DEFAULT 0,
   financial_activation_state TEXT NOT NULL CHECK (financial_activation_state IN ('NONE', 'PENDING_REVIEW', 'APPROVED', 'REVOKED')),
   operational_effect_halalas INTEGER NOT NULL DEFAULT 0,
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS s11_historical_records (
   imported_at TEXT,
   deactivated_at TEXT,
   UNIQUE (source_store_sha256, source_record_id),
-  CHECK (operational_effect_halalas = 0 OR (
+  CHECK (accounting_effect_halalas = operational_effect_halalas),
+  CHECK (accounting_effect_halalas = 0 OR (
     review_status = 'CONFIRMED' AND import_decision = 'ACCEPTED' AND financial_activation_state = 'APPROVED'
   ))
 );

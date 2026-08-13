@@ -8,13 +8,13 @@ The private preparation workbook was read locally in read-only mode. Its local S
 
 ## Implementation
 
-The S11 implementation adds a mirrored migration and importer module. The model preserves immutable source identity, source location, original text, normalized JSON, record type, review state, decision reason, reviewer metadata, date completeness, uncertainty flags, customer-mapping state, integer-halalah amounts, activation state, batch identity, and append-only import events. Historical records are staged separately from current operational tables.
+The S11 implementation adds a mirrored migration and importer module. The model preserves immutable source identity, source location, original text, normalized JSON, record type, review state, decision reason, reviewer metadata, date completeness, uncertainty flags, customer-mapping state, the original integer-halalah amount, a separate governed accounting effect, activation state, batch identity, and append-only import events. Historical records are staged separately from current operational tables.
 
-A financial historical record has zero operational effect unless it is explicitly approved through the S11 approval path. Approved activation is recorded with reviewer, timestamp, reason, and a separate activation row. Batches are idempotent by source-store digest plus batch key, conflicting source identity is rejected, and batch deactivation revokes effects without deleting provenance.
+A financial historical record has zero accounting and operational effect unless it is explicitly approved through the S11 approval path with a governed D-015 rule. The original historical amount is never treated as the settlement effect automatically: Work prices do not create a second settlement effect; governed work share, half subscription, half transfer-fee, and other explicit rules calculate the accounting effect separately. Approved activation is recorded with reviewer, timestamp, reason, rule, and a separate activation row. Batches are idempotent by source-store digest plus batch key, conflicting source identity is rejected, and batch deactivation revokes effects without deleting provenance.
 
 ## Synthetic acceptance
 
-The deterministic focused suite passed `8/8` tests. It covers missing-year fail-closed behavior, explicit zero-price reasoning, separation of Works/totals/settlements/notes, source preservation, dry-run mutation safety, AC-14, explicit financial approval, idempotency, duplicate/conflict protection, integer halalas, rollback/deactivation, provenance immutability, and authorized historical search.
+The deterministic focused suite passed `10/10` tests. It covers D-015 governed effects, no double counting of raw Work prices, complete-day/month/year-only and missing-year date handling, explicit zero-price reasoning, separation of Works/totals/settlements/notes, source preservation, dry-run mutation safety, AC-14, explicit financial approval, idempotency, duplicate/conflict protection, integer halalas, rollback/deactivation, provenance immutability, and internal staged historical search.
 
 The synthetic dry-run report is complete with accepted, rejected, and pending outcomes. Unapproved historical financial values remain non-operational. No synthetic fixture contains real customer content.
 
@@ -22,7 +22,7 @@ The synthetic dry-run report is complete with accepted, rejected, and pending ou
 
 The prepared private workbook was processed only in the local sandbox after the read-only structural gate. The parser produced `9` records. The sanitized dry-run result was `ACCEPTED=1`, `REJECTED=0`, `PENDING_REVIEW=8`, `UNKNOWN=0`; unresolved customer mappings were `4`; incomplete dates were `0`; financial records remaining non-operational were `9`; operational effect was `0` halalas. The local in-memory staging/import reconciliation was `9` total, `9` active, and `0` operational effect. No Cloud or authoritative production write was performed.
 
-The prepared opening historical balance remains a distinct pending historical record and was not injected into `prior_balance` or any current operational balance. Customer mappings remain pending where the private store does not provide explicit identity. No source fact was guessed or auto-confirmed.
+The prepared opening historical balance remains a distinct pending historical record and was not injected into `prior_balance` or any current operational balance; its operational effect remains `0`. Customer mappings remain pending where the private store does not provide explicit identity. No source fact was guessed or auto-confirmed.
 
 ## Regression and privacy gates
 
@@ -31,16 +31,19 @@ The final evidence stamp must record the exact final PR head and matching final-
 | Gate | Result |
 |---|---|
 | Activation base | PASS — `9b09d3af7491ae0fc119b52e3ecf4ef1aff45ef5` |
-| Focused S11 acceptance | PASS — `8/8` |
+| Focused S11 acceptance | PASS — `10/10` |
+| D-015 financial effect separation | PASS — original amount and governed accounting effect are separate; no raw Work double count |
+| Date uncertainty gate | PASS — actual field completeness; no year inference |
 | Private local dry-run | PASS — no authoritative mutation; zero operational effect |
 | AC-14 | PASS — unapproved historical amounts remain non-operational |
 | Idempotency / duplicate protection | PASS |
 | Rollback / provenance | PASS |
 | Integer-halalah reconciliation | PASS |
+| Internal staged historical search | PASS — no authorization claim; only local staged helper tested |
 | Real data in GitHub | NO |
 | Cloud write | NO |
 | Paid service | NO |
 | Secrets added | NO |
 | Stable refs moved | NO |
-| Final PR head | `0762d70c28645a258011a657f674dd0dbebce271` |
-| Final-head CI run IDs | `31726564199`, `31726564153`, `31726564307`, `31726564145`, `31726564246` (all successful on this head) |
+| Final PR head | TO_BE_STAMPED_AFTER_REPAIR |
+| Final-head CI run IDs | TO_BE_STAMPED_AFTER_REPAIR |

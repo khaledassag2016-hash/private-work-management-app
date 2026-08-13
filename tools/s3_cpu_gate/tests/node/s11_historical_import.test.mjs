@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import XLSX from '../../src/worker/assets/vendor/xlsx-0.20.3.mjs';
 import {
   buildPlan,
+  calculateGovernedFinancialEffect,
   deactivateBatch,
   dryRun,
   importPlan,
@@ -88,6 +89,30 @@ test('parser preserves prepared source text, dates and the separate opening bala
   assert.equal(opening.importDecision, 'PENDING_REVIEW');
   assert.equal(opening.financialAmountHalalas, 374100);
   assert.equal(opening.financialActivationState, 'PENDING_REVIEW');
+  assert.equal(opening.normalized.preparedEffectHalalas, 374100);
+});
+
+test('date completeness is deterministic and never invents a year', () => {
+  assert.equal(normalizeRecord(baseRecord({ sourceRecordId: 'SYN-DATE-MONTH', dateText: '2026-08' })).dateCompleteness, 'COMPLETE_MONTH');
+  assert.equal(normalizeRecord(baseRecord({ sourceRecordId: 'SYN-DATE-DAY', dateText: '2026-08-06' })).dateCompleteness, 'COMPLETE_DAY');
+  assert.equal(normalizeRecord(baseRecord({ sourceRecordId: 'SYN-DATE-YEAR', dateText: '2026' })).dateCompleteness, 'YEAR_ONLY');
+  assert.equal(normalizeRecord(baseRecord({ sourceRecordId: 'SYN-DATE-NOYEAR', dateText: '06/08' })).dateCompleteness, 'MISSING_YEAR');
+  assert.equal(normalizeRecord(baseRecord({ sourceRecordId: 'SYN-DATE-ARABIC-NOYEAR', dateText: 'أغسطس' })).dateCompleteness, 'MISSING_YEAR');
+  assert.equal(normalizeRecord(baseRecord({ sourceRecordId: 'SYN-DATE-EMPTY', dateText: '' })).dateCompleteness, 'MISSING');
+});
+
+test('D-015 financial effect uses governed rules, not raw historical prices', () => {
+  const work = normalizeRecord(baseRecord({ sourceRecordId: 'SYN-RAW-WORK', recordType: 'WORK', financialAmountHalalas: 50000 }));
+  const workShare = normalizeRecord(baseRecord({ sourceRecordId: 'SYN-SHARE', recordType: 'HISTORICAL_SETTLEMENT', financialAmountHalalas: 50000 }));
+  const subscription = normalizeRecord(baseRecord({ sourceRecordId: 'SYN-SUB', recordType: 'SUBSCRIPTION_EXPENSE', financialAmountHalalas: 13650 }));
+  const transfer = normalizeRecord(baseRecord({ sourceRecordId: 'SYN-TRANSFER', recordType: 'TRANSFER_FEE', financialAmountHalalas: 2000 }));
+  const unreviewed = normalizeRecord(baseRecord({ sourceRecordId: 'SYN-UNREVIEWED', recordType: 'HISTORICAL_SETTLEMENT', financialAmountHalalas: 50000, reviewStatus: 'PENDING_REVIEW' }));
+  assert.equal(calculateGovernedFinancialEffect(workShare, { accountingEffectRule: { kind: 'WORK_SHARE', shareRateBps: 7000 }, approved: true }), 35000);
+  assert.equal(calculateGovernedFinancialEffect(subscription, { accountingEffectRule: { kind: 'HALF_SUBSCRIPTION' }, approved: true }), 6825);
+  assert.equal(calculateGovernedFinancialEffect(transfer, { accountingEffectRule: { kind: 'HALF_TRANSFER_FEE' }, approved: true }), -1000);
+  assert.equal(calculateGovernedFinancialEffect(work, { accountingEffectRule: { kind: 'RAW_WORK_PRICE' }, approved: true }), 0);
+  assert.equal(calculateGovernedFinancialEffect(unreviewed, { accountingEffectRule: { kind: 'WORK_SHARE', shareRateBps: 7000 }, approved: true }), 0);
+  assert.equal(calculateGovernedFinancialEffect(workShare, { accountingEffectRule: null, approved: true }), 0);
 });
 
 test('missing year is never guessed and zero price requires an explicit reason', () => {
@@ -135,15 +160,22 @@ test('AC-14 keeps unapproved financial records non-operational and approval is e
   assert.equal(imported.report.operationalEffectHalalas, 0);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM s11_financial_activations').get().count, 0);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM s11_historical_records WHERE operational_effect_halalas <> 0').get().count, 0);
-  const approvedPlan = buildPlan([baseRecord({ sourceRecordId: 'SYN-FIN-APPROVED', recordType: 'PAYMENT_OR_RECEIPT', customerMappingStatus: 'NOT_APPLICABLE', financialAmountHalalas: 13650, financialActivationState: 'PENDING_REVIEW' })], { sourceStoreId: 'synthetic-store', sourceStoreSha256: STORE_SHA, now: NOW });
+  const approvedPlan = buildPlan([baseRecord({ sourceRecordId: 'SYN-FIN-APPROVED', recordType: 'SUBSCRIPTION_EXPENSE', customerMappingStatus: 'NOT_APPLICABLE', financialAmountHalalas: 13650, financialActivationState: 'PENDING_REVIEW' })], { sourceStoreId: 'synthetic-store', sourceStoreSha256: STORE_SHA, now: NOW });
   const approved = importPlan(database, approvedPlan, {
     batchKey: 'approved-batch',
     now: NOW,
-    approvals: { 'SYN-FIN-APPROVED': { approvedBy: 'supervisor-synthetic', approvedAt: NOW, reason: 'synthetic acceptance approval' } },
+    approvals: { 'SYN-FIN-APPROVED': { approvedBy: 'supervisor-synthetic', approvedAt: NOW, reason: 'synthetic acceptance approval', accountingEffectRule: { kind: 'HALF_SUBSCRIPTION' } } },
   });
-  assert.equal(approved.report.operationalEffectHalalas, 13650);
+  assert.equal(approved.report.operationalEffectHalalas, 6825);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM s11_financial_activations WHERE state = \'APPROVED\'').get().count, 1);
   assert.equal(searchHistoricalRecords(database, { batchId: approved.batchId, query: 'SYN-FIN-APPROVED' }).length, 1);
+  const rawWork = importPlan(database, buildPlan([baseRecord({ sourceRecordId: 'SYN-RAW-WORK-IMPORT', recordType: 'WORK', financialAmountHalalas: 50000 })], { sourceStoreId: 'synthetic-store', sourceStoreSha256: STORE_SHA, now: NOW }), {
+    batchKey: 'raw-work-no-double-count',
+    now: NOW,
+    approvals: { 'SYN-RAW-WORK-IMPORT': { approvedBy: 'supervisor-synthetic', approvedAt: NOW, reason: 'raw Work price is not a settlement effect', accountingEffectRule: { kind: 'RAW_WORK_PRICE' } } },
+  });
+  assert.equal(rawWork.report.operationalEffectHalalas, 0);
+  assert.equal(rawWork.report.counts.PENDING_REVIEW, 1);
 });
 
 test('same batch is idempotent, conflicting source is rejected, and duplicate rows are blocked', () => {
@@ -160,14 +192,14 @@ test('same batch is idempotent, conflicting source is rejected, and duplicate ro
 });
 
 test('rollback deactivates the batch, restores zero operational effect, and retains provenance/events', () => {
-  const plan = buildPlan([baseRecord({ sourceRecordId: 'SYN-ROLLBACK', recordType: 'PAYMENT_OR_RECEIPT', customerMappingStatus: 'NOT_APPLICABLE', financialAmountHalalas: 2000, financialActivationState: 'PENDING_REVIEW' })], { sourceStoreId: 'synthetic-store', sourceStoreSha256: STORE_SHA, now: NOW });
+  const plan = buildPlan([baseRecord({ sourceRecordId: 'SYN-ROLLBACK', recordType: 'TRANSFER_FEE', customerMappingStatus: 'NOT_APPLICABLE', financialAmountHalalas: 2000, financialActivationState: 'PENDING_REVIEW' })], { sourceStoreId: 'synthetic-store', sourceStoreSha256: STORE_SHA, now: NOW });
   const database = db();
   const imported = importPlan(database, plan, {
     batchKey: 'rollback-batch',
     now: NOW,
-    approvals: { 'SYN-ROLLBACK': { approvedBy: 'supervisor-synthetic', approvedAt: NOW, reason: 'synthetic approval' } },
+    approvals: { 'SYN-ROLLBACK': { approvedBy: 'supervisor-synthetic', approvedAt: NOW, reason: 'synthetic approval', accountingEffectRule: { kind: 'HALF_TRANSFER_FEE' } } },
   });
-  assert.equal(reconcileBatch(database, imported.batchId).operationalEffectHalalas, 2000);
+  assert.equal(reconcileBatch(database, imported.batchId).operationalEffectHalalas, -1000);
   const result = deactivateBatch(database, imported.batchId, { now: NOW });
   assert.equal(result.deactivated, true);
   const reconciled = reconcileBatch(database, imported.batchId);
