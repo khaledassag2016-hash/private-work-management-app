@@ -2,7 +2,7 @@
 
 إجمالي التغطية المطلوبة: **30/30 FR، 14/14 AC، 7/7 P، 14/14 سيناريو**.
 
-أدلة الإقفال الحالية: S5 `docs/s5/S5_FINAL_VERIFICATION.md`، S6 `docs/s6/S6_FINAL_VERIFICATION.md`، S7 `docs/s7/S7_FINAL_VERIFICATION.md`، S8 `docs/s8/S8_FINAL_VERIFICATION.md`.
+أدلة الإقفال الحالية: S5 `docs/s5/S5_FINAL_VERIFICATION.md`، S6 `docs/s6/S6_FINAL_VERIFICATION.md`، S7 `docs/s7/S7_FINAL_VERIFICATION.md`، S8 `docs/s8/S8_FINAL_VERIFICATION.md`، S9 `docs/s9/S9_FINAL_VERIFICATION.md`.
 
 | المعرف | النوع | المرحلة المسؤولة | طريقة التحقق | الحالة |
 | --- | --- | --- | --- | --- |
@@ -91,9 +91,27 @@
 - Post-merge main `19856a4b8a31b9e756406ccda0f16ac169af236d`: Foundation `31695925778` SUCCESS; S3 `31695925794` SUCCESS.
 - D-017 alerts use authoritative server-side anchors, configurable thresholds with no defaults, and no client-controlled clock.
 
-## S9 inherited verification obligations
+## S9 final UX / acceptance evidence
 
-- Preserve S4–S8 business semantics and authoritative S6/S7 financial truth; S9 is UX/accessibility, not a business-rule rewrite.
-- D-018 replaces manual viewport/RTL acceptance with deterministic automated Playwright/axe/custom assertions; visual snapshots alone are insufficient.
-- D-019 allows Codex→Manus sequential ownership inside the S9 implementation PR only; no concurrent pushes and neither executor may merge.
-- Responsive/RTL, keyboard, touch, errors, sensitive confirmations, duplicate-submit and mobile/desktop capability parity must be objectively regression-tested.
+- PR #82 base main `5808415e2f5f8710beaacf3dc0496d3645f70d77`.
+- Codex final handoff head `ec759af7474336f3b358d0e6a0c263e91e0a498d` then branch writes stopped.
+- Manus final reviewed/repaired head `0eeb902068dc6b411ce3780d96998578ed5dac3e` then branch writes stopped.
+- D-019 sequential ownership satisfied; no concurrent Codex/Manus writes and no return to Codex.
+- Manus repair restored New Work modal focus to its invoker in both mirrored assets and added deterministic regression coverage.
+- Playwright Level A `10 PASS`; Level B `34 PASS + 6 intentional non-applicable skips`.
+- Final-head CI: S9 UX Acceptance `31709356193`, S3 `31709356421`, S2 `31709356846` — SUCCESS.
+- Full Node regression `140 PASS`, `0 failed`; Foundation local final-head validation PASS; secret scan and payload/source-runtime parity PASS.
+- Responsive RTL, keyboard/focus, touch targets, automated accessibility, sensitive confirmations, duplicate-submit protection, error recovery/state clarity and mobile/desktop A–M function parity = PASS.
+- PR #82 Squash/main `7a19bcdd0c85838a6c5e764e86b1a51e76fde0b7`; post-merge S3 `31710108330` SUCCESS.
+- S9 did not alter business/financial semantics, schema/migrations, Cloud resources, real customer data or stable refs.
+
+## S10 inherited verification obligations
+
+- Re-test the integrated system against AC-01..AC-14 as a reproducible status matrix without silently pulling S3-deferred or S11-assigned implementation into S10.
+- AC-11 remains assigned to S3/FR-026 deferred state in this traceability matrix; AC-14/P-07 remain assigned to S11. S10 must report these cross-stage statuses explicitly and fail closed on any unresolved acceptance interpretation rather than fabricate PASS or implement another stage silently.
+- Preserve S4–S9 behavior and authoritative S6/S7 financial truth, including D-009..D-017 and the S9 UX regression contract.
+- Test permissions/security, conflicting edits/concurrency/idempotency, reversal/closed-settlement behavior and exact integer-halalah reconciliation.
+- Backup acceptance requires a real reproducible backup and restore into a separate empty local D1-compatible/SQLite target, with row/history/archive/financial and representative API reconciliation; file-existence-only evidence is insufficient.
+- Use deterministic synthetic two-user, multi-year data. No real customer data, Cloud write, paid service, Billing or payment card.
+- No governing numeric latency SLA exists; measure deterministic performance and query behavior but do not invent a millisecond threshold.
+- S10 starts only from the exact final main SHA produced by the S9 administrative closure and a separately issued `FINAL_ACTIVATED` package.
