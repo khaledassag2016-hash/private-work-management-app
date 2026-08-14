@@ -463,10 +463,36 @@ function Wait-S3FirebaseAddReadiness {
     )
     $deadline = (& $Now).AddSeconds($TimeoutSeconds)
     $attempt = 0
+    $lastFailureFingerprint = $null
+    $identicalFailureCount = 0
     do {
         $attempt++
         $proof = Get-S3FirebaseAddReadiness -Context $Context -Resource $Resource -DisplayName $DisplayName
         $observedUtc = (& $Now).ToUniversalTime().ToString('o')
+        $failureFingerprint = $null
+        $providerStateChanged = $false
+        if (-not $proof.ready) {
+            $projectRecord = Get-S3MapValue -Map $proof -Name 'projectRecord'
+            $fingerprintPayload = [ordered]@{
+                projectReady=[bool]$proof.projectReady
+                iamReady=[bool]$proof.iamReady
+                firebaseBackendReady=[bool]$proof.firebaseBackendReady
+                iamQueryStatus=[string](Get-S3MapValue -Map $proof -Name 'iamQueryStatus')
+                firebaseQueryStatus=[string](Get-S3MapValue -Map $proof -Name 'firebaseQueryStatus')
+                firebaseQueryHttpStatus=(Get-S3MapValue -Map $proof -Name 'firebaseQueryHttpStatus')
+                missingPermissions=@(Get-S3MapValue -Map $proof -Name 'missingPermissions' | Sort-Object)
+                pagesScanned=[int64](Get-S3MapValue -Map $proof -Name 'pagesScanned')
+                projectCount=[int64](Get-S3MapValue -Map $proof -Name 'projectCount')
+                projectStatus=[string](Get-S3MapValue -Map $projectRecord -Name 'status')
+                lifecycleState=[string](Get-S3MapValue -Map $projectRecord -Name 'lifecycleState')
+            }
+            $fingerprintJson = $fingerprintPayload | ConvertTo-Json -Depth 5 -Compress
+            $fingerprintBytes = [Text.Encoding]::UTF8.GetBytes($fingerprintJson)
+            $failureFingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($fingerprintBytes)).ToLowerInvariant()
+            $providerStateChanged = $null -ne $lastFailureFingerprint -and $failureFingerprint -ne $lastFailureFingerprint
+            if ($failureFingerprint -eq $lastFailureFingerprint) { $identicalFailureCount++ }
+            else { $lastFailureFingerprint = $failureFingerprint; $identicalFailureCount = 1 }
+        }
         if ($proof.projectReady -and [string](Get-S3MapValue -Map $Resource -Name 'ownershipProof') -ne 'CREATE_SUCCEEDED_PROVIDER_VERIFIED') {
             if (-not (Set-S3FirebaseProviderVerifiedOwnership -Context $Context -Resource $Resource -ProjectRecord $proof.projectRecord -ProvisioningStatus 'PROJECT_CREATED_AWAITING_FIREBASE')) {
                 throw 'FIREBASE_PROVIDER_OWNERSHIP_PROOF_FAILED'
@@ -483,6 +509,9 @@ function Wait-S3FirebaseAddReadiness {
         Set-S3MapValue -Map $Resource -Name 'firebaseReadinessHttpStatus' -Value (Get-S3MapValue -Map $proof -Name 'firebaseQueryHttpStatus')
         Set-S3MapValue -Map $Resource -Name 'missingFirebaseAddPermissionCount' -Value (@(Get-S3MapValue -Map $proof -Name 'missingPermissions').Count)
         Set-S3MapValue -Map $Resource -Name 'firebaseAvailableProjectsPagesScanned' -Value ([int64](Get-S3MapValue -Map $proof -Name 'pagesScanned'))
+        Set-S3MapValue -Map $Resource -Name 'readinessFailureFingerprint' -Value $failureFingerprint
+        Set-S3MapValue -Map $Resource -Name 'identicalReadinessFailureCount' -Value $identicalFailureCount
+        Set-S3MapValue -Map $Resource -Name 'providerStateChanged' -Value $providerStateChanged
         if ($attempt -eq 1) {
             Set-S3MapValue -Map $Resource -Name 'readinessStartedUtc' -Value $observedUtc
             Set-S3MapValue -Map $Resource -Name 'initialProjectReady' -Value ([bool]$proof.projectReady)
@@ -502,6 +531,11 @@ function Wait-S3FirebaseAddReadiness {
             Set-S3MapValue -Map $Resource -Name 'readyAtUtc' -Value $observedUtc
             Write-S3State -Root $Context.Root -State $Context.State
             return [ordered]@{status='PASS';attempts=$attempt;projectReady=$true;iamReady=$true;firebaseBackendReady=$true}
+        }
+        if ($identicalFailureCount -ge 3) {
+            Set-S3MapValue -Map $Resource -Name 'readinessStatus' -Value 'CIRCUIT_BREAKER'
+            Write-S3State -Root $Context.Root -State $Context.State
+            throw "FIREBASE_ADD_READINESS_CIRCUIT_BREAKER:$failureFingerprint"
         }
         if ((& $Now) -ge $deadline) { break }
         & $Sleep $RetryDelaySeconds

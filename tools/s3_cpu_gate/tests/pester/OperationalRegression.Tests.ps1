@@ -1297,13 +1297,39 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $resource = [ordered]@{projectId='s3cpu-timeout-test';marker=$c.RunId;ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED';provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'}
         $c.State.resources.firebase = $resource
         $script:timeoutClock = [datetime]'2026-08-03T14:40:00Z'
+        $script:timeoutAttempt = 0
         Mock Get-S3FirebaseAddReadiness {
-            [ordered]@{ready=$false;projectReady=$true;iamReady=$true;firebaseBackendReady=$false;projectRecord=[ordered]@{status='EXISTS'}}
+            $script:timeoutAttempt++
+            [ordered]@{ready=$false;projectReady=$true;iamReady=$true;firebaseBackendReady=$false;projectCount=$script:timeoutAttempt;projectRecord=[ordered]@{status='EXISTS'}}
         } -ModuleName Firebase
         Mock Write-S3State {} -ModuleName Firebase
         { Wait-S3FirebaseAddReadiness -Context $c -Resource $resource -DisplayName 'S3 CPU timeout' -TimeoutSeconds 2 -RetryDelaySeconds 1 -Now {$script:timeoutClock} -Sleep {param($Seconds)$script:timeoutClock=$script:timeoutClock.AddSeconds($Seconds)} } | Should -Throw '*FIREBASE_ADD_READINESS_TIMEOUT*'
         $resource.readinessStatus | Should -Be 'TIMEOUT'
         $resource.firebaseBackendReady | Should -BeFalse
+    }
+
+    It 'opens the readiness circuit breaker after three identical provider failures' {
+        $c = Get-TestContext Live
+        $resource = [ordered]@{projectId='s3cpu-circuit-test';marker=$c.RunId;ownershipProof='CREATE_SUCCEEDED_PROVIDER_VERIFIED';provisioningStatus='PROJECT_CREATED_AWAITING_FIREBASE'}
+        $c.State.resources.firebase = $resource
+        $script:circuitClock = [datetime]'2026-08-03T14:40:00Z'
+        $script:circuitSleeps = 0
+        Mock Get-S3FirebaseAddReadiness {
+            [ordered]@{
+                ready=$false;projectReady=$true;iamReady=$true;firebaseBackendReady=$false
+                iamQueryStatus='PASS';firebaseQueryStatus='RETRYABLE_ERROR';firebaseQueryHttpStatus=403
+                projectRecord=[ordered]@{status='EXISTS';lifecycleState='ACTIVE'}
+            }
+        } -ModuleName Firebase
+        Mock Write-S3State {} -ModuleName Firebase
+        {
+            Wait-S3FirebaseAddReadiness -Context $c -Resource $resource -DisplayName 'S3 CPU circuit' -TimeoutSeconds 30 -RetryDelaySeconds 1 -Now {$script:circuitClock} -Sleep {param($Seconds)$script:circuitSleeps++;$script:circuitClock=$script:circuitClock.AddSeconds($Seconds)}
+        } | Should -Throw '*FIREBASE_ADD_READINESS_CIRCUIT_BREAKER*'
+        $resource.readinessStatus | Should -Be 'CIRCUIT_BREAKER'
+        $resource.readinessAttempts | Should -Be 3
+        $resource.identicalReadinessFailureCount | Should -Be 3
+        $resource.readinessFailureFingerprint | Should -Match '^[0-9a-f]{64}$'
+        $script:circuitSleeps | Should -Be 2
     }
 
     It 'parses only the safe availableProjects readiness schema' {
