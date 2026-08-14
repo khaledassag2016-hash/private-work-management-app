@@ -236,7 +236,11 @@ function Assert-S3FirebaseUserSet {
         $phone = Get-S3MapValue -Map $user -Name 'phoneNumber'
         if (-not [string]::IsNullOrWhiteSpace([string]$phone)) { throw 'FIREBASE_USER_PHONE_PRESENT' }
         $links = @(Get-S3MapValue -Map $user -Name 'providerUserInfo')
-        if ($links.Count -ne 0) { throw 'FIREBASE_USER_PROVIDER_LINK_PRESENT' }
+        if ($links.Count -gt 1) { throw 'FIREBASE_USER_PROVIDER_LINK_PRESENT' }
+        foreach ($link in $links) {
+            $providerId = [string](Get-S3MapValue -Map $link -Name 'providerId')
+            if ($providerId -ne 'password') { throw 'FIREBASE_USER_PROVIDER_LINK_PRESENT' }
+        }
     }
     $actualIdentity = (@($actualUids | Sort-Object) -join '|')
     $expectedIdentity = (@($ExpectedUids | Sort-Object) -join '|')

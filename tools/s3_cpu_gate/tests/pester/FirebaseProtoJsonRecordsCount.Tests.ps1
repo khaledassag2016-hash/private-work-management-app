@@ -66,4 +66,27 @@ Describe 'B3 Firebase recordsCount ProtoJSON compatibility' -Tag 'B3' {
         Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount='9223372036854775808';userInfo=@()} } -ModuleName Firebase
         { Get-S3FirebaseUser -ProjectId p -Token token } | Should -Throw '*INTEGER_OUT_OF_RANGE*'
     }
+
+    It 'accepts the native email sign-in provider record' {
+        $users = @(
+            [pscustomobject]@{
+                localId='one'
+                providerUserInfo=@([pscustomobject]@{providerId='password'})
+            }
+        )
+        $proof = Assert-S3FirebaseUserSet -Users $users -ExpectedUids @('one')
+        $proof.verified | Should -BeTrue
+        $proof.providerLinks | Should -Be 0
+    }
+
+    It 'still rejects a federated provider record' {
+        $users = @(
+            [pscustomobject]@{
+                localId='one'
+                providerUserInfo=@([pscustomobject]@{providerId='google.com'})
+            }
+        )
+        { Assert-S3FirebaseUserSet -Users $users -ExpectedUids @('one') } |
+            Should -Throw '*FIREBASE_USER_PROVIDER_LINK_PRESENT*'
+    }
 }
