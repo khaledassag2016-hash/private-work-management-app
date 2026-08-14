@@ -1332,8 +1332,10 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $script:circuitSleeps | Should -Be 2
     }
 
-    It 'parses only the safe availableProjects readiness schema' {
+    It 'parses only the safe availableProjects readiness schema' -Tag 'FirebaseQuotaProject' {
         $c = Get-TestContext Live
+        $helperSource = Get-Content -LiteralPath (Join-Path $SourceRoot 'src\helpers\firebase_available_project.mjs') -Raw
+        $helperSource | Should -Match '"x-goog-user-project": quotaProjectId'
         New-Item -ItemType Directory -Path (Join-Path $TestDrive 'helpers'),(Join-Path $TestDrive 'tools\npm\node_modules\firebase-tools') -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $TestDrive 'helpers\firebase_available_project.mjs') -Value '// test placeholder' -Encoding UTF8
         Mock Invoke-S3Process {
@@ -1343,7 +1345,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $proof.ready | Should -BeTrue
         $proof.pagesScanned | Should -Be 2
         $proof.projectCount | Should -Be 7
-        Should -Invoke Invoke-S3Process -ModuleName Firebase -ParameterFilter {$SensitiveOutput -and $ArgumentList -contains 's3cpu-readiness-test'} -Times 1 -Exactly
+        Should -Invoke Invoke-S3Process -ModuleName Firebase -ParameterFilter {$SensitiveOutput -and $ArgumentList -contains 's3cpu-readiness-test' -and $ArgumentList -contains 'ultra-function-476817-g5'} -Times 1 -Exactly
     }
 
     It 'fails structural availableProjects probe errors without retrying them as readiness' {
@@ -1354,7 +1356,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         { Get-S3FirebaseBackendReadiness -Context $c -ProjectId 's3cpu-readiness-test' -DisplayName 'S3 CPU readiness' } | Should -Throw '*DISPLAY_NAME_MISMATCH*'
     }
 
-    It 'retains only a safe numeric status for retryable availableProjects errors' {
+    It 'retains only a safe numeric status for retryable availableProjects errors' -Tag 'FirebaseQuotaProject' {
         $c = Get-TestContext Live
         New-Item -ItemType Directory -Path (Join-Path $TestDrive 'helpers'),(Join-Path $TestDrive 'tools\npm\node_modules\firebase-tools') -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $TestDrive 'helpers\firebase_available_project.mjs') -Value '// test placeholder' -Encoding UTF8
@@ -1363,6 +1365,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $proof.queryStatus | Should -Be 'RETRYABLE_ERROR'
         $proof.httpStatus | Should -Be 500
         $proof.ready | Should -BeFalse
+        ($proof | ConvertTo-Json -Compress) | Should -Not -Match 'provider details|ultra-function-476817-g5|Bearer'
     }
 
     It 'never invokes addFirebase when readiness fails' {
