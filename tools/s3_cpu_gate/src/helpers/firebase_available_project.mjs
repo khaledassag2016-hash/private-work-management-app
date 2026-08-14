@@ -30,13 +30,16 @@ function getProcessLocalAccessToken(firebaseToolsRoot) {
   return token;
 }
 
-async function getAvailableCloudProjectPage(accessToken, pageToken) {
+async function getAvailableCloudProjectPage(accessToken, quotaProjectId, pageToken) {
   const url = new URL("https://firebase.googleapis.com/v1beta1/availableProjects");
   url.searchParams.set("pageSize", "100");
   if (pageToken) url.searchParams.set("pageToken", pageToken);
   const response = await fetch(url, {
     method: "GET",
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "x-goog-user-project": quotaProjectId,
+    },
     signal: AbortSignal.timeout(90_000),
   });
   if (!response.ok) {
@@ -58,8 +61,12 @@ async function getAvailableCloudProjectPage(accessToken, pageToken) {
   return { projects, nextPageToken: nextPageToken || undefined };
 }
 
-const [firebaseToolsRoot, projectId, expectedDisplayName] = process.argv.slice(2);
-if (!firebaseToolsRoot || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId ?? "")) {
+const [firebaseToolsRoot, projectId, expectedDisplayName, quotaProjectId] = process.argv.slice(2);
+if (
+  !firebaseToolsRoot ||
+  !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId ?? "") ||
+  !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(quotaProjectId ?? "")
+) {
   fail("INVALID_ARGUMENTS", 20);
 } else if (!expectedDisplayName || expectedDisplayName.length > 30) {
   fail("INVALID_DISPLAY_NAME", 20);
@@ -78,7 +85,7 @@ if (!firebaseToolsRoot || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId ?? ""
       if (pagesScanned >= 50) {
         throw Object.assign(new Error("pagination bound"), { s3Invariant: "PAGINATION_BOUND_EXCEEDED" });
       }
-      const page = await getAvailableCloudProjectPage(accessToken, nextPageToken);
+      const page = await getAvailableCloudProjectPage(accessToken, quotaProjectId, nextPageToken);
       pagesScanned += 1;
       const items = page.projects;
       projectCount += items.length;

@@ -394,9 +394,10 @@ function Get-S3FirebaseBackendReadiness {
     )
     $helper = Join-Path $Context.Root 'helpers\firebase_available_project.mjs'
     $firebaseToolsRoot = Join-Path $Context.Root 'tools\npm\node_modules\firebase-tools'
+    $quotaProjectId = 'ultra-function-476817-g5'
     if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { throw 'FIREBASE_READINESS_HELPER_MISSING' }
     if (-not (Test-Path -LiteralPath $firebaseToolsRoot -PathType Container)) { throw 'FIREBASE_TOOLS_ROOT_MISSING' }
-    $result = Invoke-S3Process -Context $Context -FilePath 'node' -ArgumentList @($helper,$firebaseToolsRoot,$ProjectId,$DisplayName) -TimeoutSeconds 90 -AllowFailure -SensitiveOutput
+    $result = Invoke-S3Process -Context $Context -FilePath 'node' -ArgumentList @($helper,$firebaseToolsRoot,$ProjectId,$DisplayName,$quotaProjectId) -TimeoutSeconds 90 -AllowFailure -SensitiveOutput
     try { $record = $result.StdOut | ConvertFrom-Json }
     catch { throw 'FIREBASE_AVAILABLE_PROJECTS_PROBE_JSON_INVALID' }
     $status = [string](Get-S3MapValue -Map $record -Name 'status')
