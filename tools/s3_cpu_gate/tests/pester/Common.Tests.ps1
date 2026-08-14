@@ -1,5 +1,22 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
 Describe 'Common security helpers' {
+ BeforeAll {
+  function Initialize-TestPreCloudPayload {
+   New-Item -ItemType Directory -Path (Join-Path $TestDrive 'worker\src'),(Join-Path $TestDrive 'worker\migrations') -Force|Out-Null
+   Set-Content (Join-Path $TestDrive 'worker\src\index.js') 'export default {}'
+   foreach($relative in @(
+    'schema.sql',
+    'schema_s6.sql',
+    'migrations\0005_s5_domain_data_api.sql',
+    'migrations\0006_s6_financial_core.sql',
+    'migrations\0007_s7_payments_collections_reversals.sql',
+    'migrations\0008_s7_pr_b_settlement_core.sql',
+    'migrations\0009_s7_d014_d016_authoritative_settlement.sql',
+    'migrations\0010_s8_search_filter_alert_core.sql',
+    'migrations\0011_s11_historical_import.sql'
+   )){Set-Content (Join-Path $TestDrive "worker\$relative") 'SELECT 1;'}
+  }
+ }
  BeforeEach {
   foreach($name in @('worker','python')){Remove-Item -LiteralPath (Join-Path $TestDrive $name) -Recurse -Force -ErrorAction SilentlyContinue}
   $env:PATH='C:\Users\MC\Desktop\1\python;'+$env:PATH
@@ -32,21 +49,19 @@ Describe 'Common security helpers' {
   $script:stateTempPaths[0]|Should -Match 'state\.json\.\d+\.[a-f0-9]{32}\.tmp$'
  }
  It 'scans only the positive allowlisted pre-cloud payload and records its identity' {
-  $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'worker\src'),(Join-Path $TestDrive 'python') -Force|Out-Null
-  Set-Content (Join-Path $TestDrive 'worker\src\index.js') 'export default {}';Set-Content (Join-Path $TestDrive 'worker\schema.sql') 'SELECT 1;'
+  $c=Get-TestContext;Initialize-TestPreCloudPayload;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'python') -Force|Out-Null
   Copy-Item (Join-Path $SourceRoot 'src\python\secret_scan.py') (Join-Path $TestDrive 'python\secret_scan.py')
   $record=Assert-S3DeploymentPayloadNoSecret -Context $c -Scope PreCloud
-  $record.status|Should -Be PASS;$record.files.path|Should -Contain 'worker\src\index.js';$record.payloadSha256|Should -Match '^[a-f0-9]{64}$'
+  $record.status|Should -Be PASS;$record.files.path|Should -Contain 'worker\src\index.js';$record.files.path|Should -Contain 'worker\schema_s6.sql';$record.files.path|Should -Contain 'worker\migrations\0011_s11_historical_import.sql';$record.payloadSha256|Should -Match '^[a-f0-9]{64}$'
  }
  It 'fails closed for a synthetic secret inside the required payload' {
-  $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'worker\src'),(Join-Path $TestDrive 'python') -Force|Out-Null
-  Set-Content (Join-Path $TestDrive 'worker\src\index.js') (("-----BEGIN "+"PRIVATE KEY-----")+"`nsynthetic`n"+("-----END "+"PRIVATE KEY-----"));Set-Content (Join-Path $TestDrive 'worker\schema.sql') 'SELECT 1;'
+  $c=Get-TestContext;Initialize-TestPreCloudPayload;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'python') -Force|Out-Null
+  Set-Content (Join-Path $TestDrive 'worker\src\index.js') (("-----BEGIN "+"PRIVATE KEY-----")+"`nsynthetic`n"+("-----END "+"PRIVATE KEY-----"))
   Copy-Item (Join-Path $SourceRoot 'src\python\secret_scan.py') (Join-Path $TestDrive 'python\secret_scan.py')
   {Assert-S3DeploymentPayloadNoSecret -Context $c -Scope PreCloud}|Should -Throw
  }
  It 'rejects a file outside the deployment allowlist' {
-  $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'worker\src') -Force|Out-Null
-  Set-Content (Join-Path $TestDrive 'worker\src\index.js') 'export default {}';Set-Content (Join-Path $TestDrive 'worker\schema.sql') 'SELECT 1;';Set-Content (Join-Path $TestDrive 'worker\unexpected.txt') 'not deployable'
+  $c=Get-TestContext;Initialize-TestPreCloudPayload;Set-Content (Join-Path $TestDrive 'worker\migrations\9999_unapproved.sql') 'SELECT 1;'
   {Get-S3PayloadFile -Context $c -Scope PreCloud}|Should -Throw '*UNALLOWLISTED*'
  }
  It 'requires a fresh final-payload identity after a deployment file changes' {
@@ -59,8 +74,7 @@ Describe 'Common security helpers' {
   $after.payloadSha256|Should -Not -Be $before.payloadSha256
  }
  It 'fails closed when the scanner process errors or times out in scope' {
-  $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'worker\src'),(Join-Path $TestDrive 'python') -Force|Out-Null
-  Set-Content (Join-Path $TestDrive 'worker\src\index.js') 'export default {}';Set-Content (Join-Path $TestDrive 'worker\schema.sql') 'SELECT 1;';Set-Content (Join-Path $TestDrive 'python\secret_scan.py') '# scanner'
+  $c=Get-TestContext;Initialize-TestPreCloudPayload;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'python') -Force|Out-Null;Set-Content (Join-Path $TestDrive 'python\secret_scan.py') '# scanner'
   Mock Invoke-S3Process {throw 'انتهت مهلة python'} -ModuleName Common
   {Assert-S3DeploymentPayloadNoSecret -Context $c -Scope PreCloud}|Should -Throw '*مهلة*'
  }

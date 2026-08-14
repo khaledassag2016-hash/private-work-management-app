@@ -196,8 +196,19 @@ function Get-S3PayloadFile {
  $deploymentAssets=Join-Path $deploymentRoot 'assets'
  $config=Join-Path $deploymentRoot 'wrangler.json'
  $seed=Join-Path $root 'temp\allowlist.sql'
+ $preCloudRequiredFiles=@(
+  'worker\schema.sql',
+  'worker\schema_s6.sql',
+  'worker\migrations\0005_s5_domain_data_api.sql',
+  'worker\migrations\0006_s6_financial_core.sql',
+  'worker\migrations\0007_s7_payments_collections_reversals.sql',
+  'worker\migrations\0008_s7_pr_b_settlement_core.sql',
+  'worker\migrations\0009_s7_d014_d016_authoritative_settlement.sql',
+  'worker\migrations\0010_s8_search_filter_alert_core.sql',
+  'worker\migrations\0011_s11_historical_import.sql'
+ )
  $paths=switch($Scope){
-  'PreCloud' {@($source,$schema)}
+  'PreCloud' {@($source)+@($preCloudRequiredFiles|ForEach-Object{Join-Path $root $_})}
   'CloudflareExecution' {@((Join-Path $deploymentRoot 'src'),$config,$schema)}
   'FinalDeployment' {@((Join-Path $deploymentRoot 'src'),$config)}
   'D1Seed' {@($seed)}
@@ -212,7 +223,7 @@ function Get-S3PayloadFile {
  }
  if($files.Count -eq 0){throw 'DEPLOYMENT_PAYLOAD_EMPTY'}
  $allowed=@()
- if($Scope -eq 'PreCloud'){$allowed=@('worker\schema.sql','worker\src\','worker\assets\')}
+ if($Scope -eq 'PreCloud'){$allowed=@('worker\src\','worker\assets\')+@($preCloudRequiredFiles)}
  elseif($Scope -in @('CloudflareExecution','FinalDeployment')){$allowed=@('workspace\worker\wrangler.json','workspace\worker\src\','workspace\worker\assets\')}
  elseif($Scope -eq 'D1Seed'){$allowed=@('temp\allowlist.sql')}
  $allCandidates=switch($Scope){
