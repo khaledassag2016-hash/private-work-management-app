@@ -14,7 +14,7 @@
 
 - `S1 = CLOSED_COMPLETE`.
 - `S2 = CLOSED_COMPLETE`.
-- `S3 = CLOSED_BLOCKED_DEFERRED` under D-008; it is not S3 COMPLETE.
+- `S3 = REOPENED_IN_PROGRESS` under S3-R / Issue #2; it is not S3 COMPLETE.
 - `S4 = CLOSED_COMPLETE`.
 - `S5 = CLOSED_COMPLETE`.
 - `S6 = CLOSED_COMPLETE`.
@@ -28,6 +28,29 @@
 - `S10_COMPLETE = TRUE` after the same closure condition becomes effective.
 - `S11 = CLOSED_COMPLETE` after PR #88 implementation/review plus this S11 administrative closure PR, applicable final-head CI, Squash merge, post-merge verification and Issue #10 closure become effective.
 - `S11_COMPLETE = TRUE` after the same closure condition becomes effective.
+
+## S3-R — preserved Codex Live checkpoint
+
+This section preserves the latest validated state of the old Codex Live run for D-021 resumability. It does **not** declare S3 complete and does not allow an independent new Live run to inherit PASS automatically without its own evidence.
+
+- `OLD_CODEX_RUN_ID = s3cpu-20260814-170441-fcdbae71`.
+- `OLD_CODEX_RUN_PRESERVE = YES`.
+- `PR94_SQUASH_MAIN = 0320bdfaa231ef9ad56f0e7b04f3603d35c55091`.
+- `LAST_VALID_CHECKPOINT = CLOUDFLARE_PROVISIONED_PASS`.
+- `FIREBASE_ADD = PASS`.
+- `FIREBASE_AUTHENTICATION = PASS`.
+- `D1 = PASS`.
+- `WORKER_BINDING = PASS`.
+- `S10 = PASS`.
+- `S11 = PASS`.
+- `LAST_BLOCKED_GATE = ACCESS_RULES_AUDIT_CPU_TELEMETRY`.
+- `LAST_BLOCKER = workers.dev hostname NXDOMAIN`.
+- `LAST_FAILURE_FINGERPRINT = 8046f374b37cdc2fe4d79fbbd741819cde2b21fcdf381265a83ddcdb3ea12645`.
+- `LAST_BLOCKER_CURRENT_STATUS = DNS/HTTPS subsequently observed reachable; the active Live run must validate this before dependent gates`.
+- `NO_RERUN_PRIOR_CODEX_GATES = TRUE` for any authorized continuation of the preserved Codex run unless an exact checkpoint is explicitly invalidated.
+- `S3_READY_FOR_CLOSURE = NO`.
+- The old Codex resources are preserved and are not owned by any independent new Live run. No cleanup, delete, reset or reuse of those resources is authorized by this checkpoint.
+- Runtime secrets/tokens/passwords are intentionally absent from repository state and must never be committed.
 
 ## Stable refs
 
@@ -316,10 +339,10 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 
 ## Next stage
 
-- `NEXT_STAGE = NONE_AUTHORIZED`.
-- S11 is the final stage in this closure cycle.
-- No later stage is authorized or started by this closure.
-- Any later Live/Deployment execution or reopening of S3 requires separate explicit supervisory authorization and remains governed by D-021.
+- `NEXT_STAGE = S3_R_REOPENED_IN_PROGRESS`.
+- S11 was the final stage in the prior closure cycle; S3 has since been explicitly reopened under separate S3-R supervision.
+- No stage after S3-R is authorized by this checkpoint.
+- Any Live/Deployment continuation remains governed by D-021 and the preserved checkpoint above.
 
 ## Permanent rules
 
