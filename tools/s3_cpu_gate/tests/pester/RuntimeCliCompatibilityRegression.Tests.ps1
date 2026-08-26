@@ -45,4 +45,14 @@ Describe 'Runtime CLI compatibility regressions' {
    Remove-Module Toolchain -Force -ErrorAction SilentlyContinue
   }
  }
+
+ It 'parses the official gcloud SDK version output deterministically' {
+  $toolchainModule=Join-Path $ModuleRoot 'Toolchain.psm1'
+  Import-Module $toolchainModule -Force
+  ConvertFrom-S3GcloudVersionOutput -Output @('Google Cloud SDK 577.0.0','bq 2.1.0') | Should -Be '577.0.0'
+  { ConvertFrom-S3GcloudVersionOutput -Output @('gcloud unavailable') } | Should -Throw '*GCLOUD_VERSION_OUTPUT_INVALID*'
+  (Get-Content -Raw $toolchainModule) | Should -Match "gcloud=@\('gcloud','--version'\)"
+  (Get-Content -Raw $toolchainModule) | Should -Match 'TOOL_VERSION_COMMAND_FAILED'
+  Remove-Module Toolchain -Force -ErrorAction SilentlyContinue
+ }
 }
