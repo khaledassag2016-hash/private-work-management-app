@@ -1589,16 +1589,22 @@ Describe 'S3-R Harness secure rehydration regressions' {
 
 Describe 'S3-R authoritative runtime rehydration' {
  It 'rehydrates same UIDs from Firebase and D1 evidence without provisioning' {
-  $c=Get-TestContext Live;$c.State.resources.firebase=[ordered]@{projectId='preserved-project'}
+  $c=Get-TestContext Live;$c.State.resources.firebase=[ordered]@{projectId='preserved-project'};$c.State.resources.cloudflare=[ordered]@{accountId='account';d1Id='d1-id';marker=$c.RunId};$c.RuntimeSecrets.cloudflareToken='management-session'
   $uid1=[guid]::NewGuid().ToString('N');$uid2=[guid]::NewGuid().ToString('N');$apiKey=[guid]::NewGuid().ToString('N');$admin=[guid]::NewGuid().ToString('N')
   Mock Get-S3FirebaseProjectPresence {'EXISTS'} -ModuleName Firebase
+  Mock Get-S3FirebaseUser {@([ordered]@{localId=$uid1;providerUserInfo=@([ordered]@{providerId='password'})},[ordered]@{localId=$uid2;providerUserInfo=@([ordered]@{providerId='password'})})} -ModuleName Firebase
+  Mock Get-S3CloudflareD1RunUidSet {@($uid1,$uid2)} -ModuleName Firebase
+  Mock Get-S3FederatedProviderSnapshot {[ordered]@{verified=$true;enabledCount=0}} -ModuleName Firebase
+  Mock Assert-S3FirebaseConfiguration {[ordered]@{verified=$true}} -ModuleName Firebase
+  Mock Invoke-S3GoogleRest {[ordered]@{}} -ModuleName Firebase
   Mock New-S3FirebaseAdminUser {throw 'PROVISIONING_MUST_NOT_RUN'} -ModuleName Firebase
   Mock Update-S3FirebaseAdminUserPassword {} -ModuleName Firebase
   Mock Get-S3FirebaseIdToken {param($A,$Email,$S);[void]$A;[void]$S;[pscustomobject]@{IdToken=[guid]::NewGuid().ToString('N');RefreshToken=[guid]::NewGuid().ToString('N');LocalId=($Email -replace '@example.invalid','')}} -ModuleName Firebase
-  $provider={param($project,$expected) [void]$project;[void]$expected;[ordered]@{adminToken=$admin;credentials=@([ordered]@{uid=$uid1;email="$uid1@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey},[ordered]@{uid=$uid2;email="$uid2@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey});firebaseUsers=@([ordered]@{localId=$uid1;providerUserInfo=@([ordered]@{providerId='password'})},[ordered]@{localId=$uid2;providerUserInfo=@([ordered]@{providerId='password'})});d1Uids=@($uid1,$uid2)}}
+  $provider={param($project,$expected) [void]$project;[void]$expected;[ordered]@{adminToken=$admin;credentials=@([ordered]@{uid=$uid1;email="$uid1@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey},[ordered]@{uid=$uid2;email="$uid2@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey})}}
   $r=Invoke-S3FirebaseRuntimeRehydration -Context $c -ExpectedUids @() -CredentialProvider $provider
   $r.status|Should -Be 'PASS';$r.sameUids|Should -BeTrue;$r.provisioningSkipped|Should -BeTrue;$r.secrets|Should -Be 'MEMORY_ONLY'
   Should -Invoke New-S3FirebaseAdminUser -ModuleName Firebase -Times 0 -Exactly;Should -Invoke Update-S3FirebaseAdminUserPassword -ModuleName Firebase -Times 2 -Exactly
+  Should -Invoke Get-S3CloudflareD1RunUidSet -ModuleName Firebase -Times 1 -Exactly
   $c.State|ConvertTo-Json -Depth 30|Should -Not -Match ($apiKey+'|'+$admin)
  }
  It 'reads remote Worker settings and compares effective state without returning values' {
@@ -1612,5 +1618,16 @@ Describe 'S3-R authoritative runtime rehydration' {
   $s.public.settings.variables[0].valueNonEmpty|Should -BeTrue;$s.privateVars.TEST_RESET_NONCE|Should -Be $nonce
   (ConvertTo-Json $s.public -Depth 30)|Should -Not -Match $nonce
   Test-S3CloudflareWorkerRemoteSnapshot -Before $s -After $s | Should -BeTrue
+ }
+}
+
+
+Describe 'S3-R D1 failure restoration' {
+ It 'restores uid2 authorization in finally when temporary D1 mutation fails' {
+  $c=Get-TestContext Live;$c.RuntimeSecrets.uid1='uid-one';$c.RuntimeSecrets.uid2='uid-two';$c.State.resources.cloudflare=[ordered]@{d1Name='synthetic-d1'};$calls=[Collections.Generic.List[string]]::new()
+  Mock Invoke-S3HttpRequest { $value=($Body|ConvertFrom-Json).value;$isFirst=$value -eq 'synthetic-before';$action=if($isFirst){'CREATE'}else{'UPDATE'};$actor=if($isFirst){'uid-one'}else{'uid-two'};[pscustomobject]@{status=200;body=([ordered]@{ok=$true;audit=[ordered]@{action=$action;actorUid=$actor;createdAt='2026-08-26T12:00:00.000Z';runId=$c.RunId;before=$(if($isFirst){$null}else{[ordered]@{value='synthetic-before'}});after=[ordered]@{value=$value}}}|ConvertTo-Json -Compress)} } -ModuleName CpuGate
+  Mock Invoke-S3D1Sql { param($Context,$Sql,[switch]$AllowFailure,[switch]$PassThru);[void]$Context;[void]$AllowFailure;[void]$PassThru;$calls.Add($Sql);if($calls.Count -eq 1){throw 'TEMP_D1_MUTATION_FAILED'}} -ModuleName CpuGate
+  {Invoke-S3AuditAcceptance -Context $c -BaseUri 'https://synthetic.workers.dev' -Token1 'a' -Token2 'b' -Nonce 'n'}|Should -Throw '*TEMP_D1_MUTATION_FAILED*'
+  $calls.Count|Should -Be 2;$calls[1]|Should -Match 'active=1'
  }
 }

@@ -98,10 +98,11 @@ function Get-S3CloudflareToken {
 }
 
 function Test-S3CloudflareReadOnlyMethod {
-    param([Parameter(Mandatory)][string]$Method,[Parameter(Mandatory)][string]$Uri)
+    param([Parameter(Mandatory)][string]$Method,[Parameter(Mandatory)][string]$Uri,[switch]$AllowReadOnlyD1Query)
     $normalizedMethod = $Method.ToUpperInvariant()
     if ($normalizedMethod -eq 'GET') { return $true }
     if ($normalizedMethod -eq 'POST' -and $Uri -match '/accounts/[^/]+/workers/observability/telemetry/query$') { return $true }
+    if ($normalizedMethod -eq 'POST' -and $AllowReadOnlyD1Query -and $Uri -match '/accounts/[^/]+/d1/database/[^/]+/query$') { return $true }
     throw "CLOUDFLARE_WRITE_API_FORBIDDEN: $normalizedMethod $Uri"
 }
 
@@ -111,9 +112,10 @@ function Invoke-S3CloudflareRest {
         [Parameter(Mandatory)][string]$Uri,
         [Parameter(Mandatory)][string]$Token,
         [AllowNull()][object]$Body = $null,
-        [int]$TimeoutSeconds = 90
+        [int]$TimeoutSeconds = 90,
+        [switch]$AllowReadOnlyD1Query
     )
-    [void](Test-S3CloudflareReadOnlyMethod -Method $Method -Uri $Uri)
+    [void](Test-S3CloudflareReadOnlyMethod -Method $Method -Uri $Uri -AllowReadOnlyD1Query:$AllowReadOnlyD1Query)
     $parameters = @{Method=$Method;Uri=$Uri;Headers=@{Authorization="Bearer $Token"};TimeoutSec=$TimeoutSeconds}
     if ($null -ne $Body) {
         $parameters.ContentType = 'application/json'
@@ -723,6 +725,20 @@ function New-S3WranglerConfig {
     $path = Join-Path $workerDirectory 'wrangler.json'
     $configuration | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $path -Encoding UTF8
     return $path
+}
+
+function Get-S3CloudflareD1RunUidSet {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$Token,[Parameter(Mandatory)][string]$DatabaseId,[Parameter(Mandatory)][string]$RunMarker)
+    if($RunMarker -notmatch '^[A-Za-z0-9-]{1,128}$'){throw 'D1_RUN_MARKER_INVALID'}
+    $sql="SELECT uid, active FROM app_users WHERE run_marker='$RunMarker' ORDER BY uid"
+    $response=Invoke-S3CloudflareRest -Method POST -Uri "https://api.cloudflare.com/client/v4/accounts/$AccountId/d1/database/$DatabaseId/query" -Token $Token -Body @{sql=$sql} -AllowReadOnlyD1Query
+    $rows=[Collections.Generic.List[object]]::new()
+    foreach($result in @($response.result)){foreach($row in @((Get-S3CloudflareValue -InputObject $result -Name @('results','result')))){$rows.Add($row)}}
+    $active=@($rows|Where-Object{[int](Get-S3CloudflareValue -InputObject $_ -Name 'active') -eq 1})
+    $uids=@($active|ForEach-Object{[string](Get-S3CloudflareValue -InputObject $_ -Name 'uid')}|Where-Object{-not [string]::IsNullOrWhiteSpace($_)}|Sort-Object -Unique)
+    if($rows.Count -ne 2 -or $active.Count -ne 2 -or $uids.Count -ne 2){throw 'D1_AUTHORITATIVE_UID_SET_INVALID'}
+    return $uids
 }
 
 function Get-S3CloudflareD1ExactMatches {
