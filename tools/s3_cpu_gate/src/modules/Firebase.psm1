@@ -581,6 +581,28 @@ function Assert-S3FirebaseThirdSignupRejected {
     throw 'FIREBASE_THIRD_SIGNUP_ACCEPTED'
 }
 
+function New-S3FirebaseCredentialProvider {
+    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
+    param([Parameter(Mandatory)]$Context)
+    if(-not $PSCmdlet.ShouldProcess([string]$Context.RunId,'Create in-memory Firebase credential provider')){return}
+    $capturedContext=$Context
+    return {
+        param([string]$ProjectId,[string[]]$ExpectedUids)
+        $adminResult=Invoke-S3Process -Context $capturedContext -FilePath 'gcloud' -ArgumentList @('auth','print-access-token') -TimeoutSeconds 120 -AllowFailure -SensitiveOutput
+        if($adminResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace([string]$adminResult.StdOut)){throw 'FIREBASE_REHYDRATION_ADMIN_SESSION_REQUIRED'}
+        $adminToken=[string]$adminResult.StdOut.Trim()
+        $sdkResult=Invoke-S3Process -Context $capturedContext -FilePath 'firebase' -ArgumentList @('apps:sdkconfig','WEB','--project',$ProjectId,'--json') -TimeoutSeconds 120 -AllowFailure -SensitiveOutput
+        if($sdkResult.ExitCode -ne 0){throw 'FIREBASE_REHYDRATION_WEB_CONFIG_UNAVAILABLE'}
+        try{$sdk=$sdkResult.StdOut|ConvertFrom-Json}catch{throw 'FIREBASE_REHYDRATION_WEB_CONFIG_INVALID'}
+        $apiKey=[string]$sdk.apiKey
+        if([string]::IsNullOrWhiteSpace($apiKey) -and $null -ne $sdk.config){$apiKey=[string]$sdk.config.apiKey}
+        if([string]::IsNullOrWhiteSpace($apiKey)){throw 'FIREBASE_REHYDRATION_WEB_API_KEY_REQUIRED'}
+        $users=@(Get-S3FirebaseUser -ProjectId $ProjectId -Token $adminToken);$credentials=@()
+        foreach($uid in $ExpectedUids){$user=@($users|Where-Object{[string]$_.localId -ceq [string]$uid})|Select-Object -First 1;if($null -eq $user){throw 'FIREBASE_REHYDRATION_UID_NOT_FOUND'};$email=[string]$user.email;if([string]::IsNullOrWhiteSpace($email)){throw 'FIREBASE_REHYDRATION_EMAIL_NOT_FOUND'};$credentials+=,[ordered]@{uid=[string]$uid;email=$email;password=Get-S3SyntheticPassword;apiKey=$apiKey}}
+        return [ordered]@{adminToken=$adminToken;credentials=$credentials}
+    }.GetNewClosure()
+}
+
 function Invoke-S3FirebaseRuntimeRehydration {
     [CmdletBinding()]
     param(
