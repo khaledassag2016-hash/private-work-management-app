@@ -12,3 +12,28 @@ Describe 'State machine invariants' {
  It 'branch resource writes ownership marker' { $c=Get-TestContext;Invoke-S3BranchAndDraftPr $c|Out-Null;$c.State.resources.branch.marker|Should -Be $c.RunId }
  It 'cleanup clears runtime secrets' { $c=Get-TestContext;Invoke-S3FirebaseProvision $c|Out-Null;Invoke-S3CloudflareProvision $c|Out-Null;Invoke-S3Cleanup $c|Out-Null;$c.RuntimeSecrets.Count|Should -Be 0 }
 }
+
+
+Describe 'S3-R preserved-run recovery invariants' {
+ It 'accepts only closed checkpoints for Resume' {
+  $c=Get-TestContext; $c.State.currentState='60_CLOUDFLARE_PROVISIONED'; $c.State.completed=@('00_PACKAGE_READY','60_CLOUDFLARE_PROVISIONED')
+  Assert-S3ResumeCheckpointSafe -State $c.State | Should -BeTrue
+  $c.State.currentState='30_BRANCH_AND_DRAFT_PR'; {Assert-S3ResumeCheckpointSafe -State $c.State}|Should -Throw '*RESUME_REQUIRES_CLOSED_CHECKPOINT*'
+ }
+ It 'rehydrates exactly the preserved two UIDs in Simulation without provisioning' {
+  $c=Get-TestContext; $c.Mode='Simulation'; $c.State.resources.firebase=[ordered]@{projectId='preserved';uid1='uid-one';uid2='uid-two'}
+  $r=Invoke-S3FirebaseRuntimeRehydration -Context $c -ExpectedUids @('uid-one','uid-two') -CredentialProvider { param($project,$uids) @() }
+  $r.status|Should -Be 'SIMULATED';$r.sameUids|Should -BeTrue;$r.provisioningSkipped|Should -BeTrue;$r.secrets|Should -Be 'MEMORY_ONLY'
+  $c.RuntimeSecrets.uid1|Should -Be 'uid-one';$c.State.results|ConvertTo-Json -Depth 20|Should -Not -Match 'mock-rehydrated-token'
+ }
+ It 'restores the Worker config after a successful action' {
+  $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
+  Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';'ok' } -Restore { param($snapshot) $script:restoreCalled=$true } | Should -Be 'ok'
+  (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalled|Should -BeTrue
+ }
+ It 'restores the Worker config when the action fails' {
+  $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
+  {Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';throw 'CPU_GATE_FAILED' } -Restore { param($snapshot) $script:restoreCalledOnFailure=$true }}|Should -Throw '*CPU_GATE_FAILED*'
+  (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalledOnFailure|Should -BeTrue
+ }
+}

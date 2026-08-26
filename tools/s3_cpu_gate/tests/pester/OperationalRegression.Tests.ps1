@@ -1560,3 +1560,27 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         Should -Invoke Invoke-S3Process -ModuleName Cleanup -Times 0 -Exactly
     }
 }
+
+
+Describe 'S3-R Harness secure rehydration regressions' {
+ It 'never provisions Firebase or Cloudflare on a resumed preserved run' {
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
+  $source|Should -Match 'currentState -eq ''40_PRE_CLOUD_GATE'' -and -not \$context\.IsResumed'
+  $source|Should -Match 'currentState -eq ''50_FIREBASE_PROVISIONED'' -and -not \$context\.IsResumed'
+  $source|Should -Match 'Invoke-S3FirebaseRuntimeRehydration'
+ }
+ It 'does not run cleanup automatically for a resumed preserved run' {
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
+  $source|Should -Match 'Mode -ne ''Plan'' -and -not \$context\.IsResumed'
+ }
+ It 'brackets Live CPU Gate with Worker state restoration' {
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
+  $source|Should -Match 'Invoke-S3WithWorkerStateRestore'
+  (Get-Content (Join-Path $SourceRoot 'src\modules\Common.psm1') -Raw)|Should -Match 'WORKER_STATE_RESTORE_FAILED'
+ }
+ It 'keeps rehydration credentials memory-only' {
+  $firebase=Get-Content (Join-Path $SourceRoot 'src\modules\Firebase.psm1') -Raw
+  $firebase|Should -Match 'secrets=.MEMORY_ONLY.'
+  $firebase|Should -Match 'provisioningSkipped=\$true'
+ }
+}

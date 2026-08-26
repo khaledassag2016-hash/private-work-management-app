@@ -573,6 +573,66 @@ function Assert-S3FirebaseThirdSignupRejected {
     throw 'FIREBASE_THIRD_SIGNUP_ACCEPTED'
 }
 
+function Invoke-S3FirebaseRuntimeRehydration {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Context,
+        [string[]]$ExpectedUids=@(),
+        [Parameter(Mandatory)][scriptblock]$CredentialProvider
+    )
+    if ($ExpectedUids.Count -ne 0 -and ($ExpectedUids.Count -ne 2 -or @($ExpectedUids | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0)) { throw 'FIREBASE_REHYDRATION_UID_SET_INVALID' }
+    if ($Context.Mode -eq 'Simulation') {
+        if ($ExpectedUids.Count -ne 2) { throw 'FIREBASE_REHYDRATION_UID_SET_REQUIRED_IN_SIMULATION' }
+        $Context.RuntimeSecrets.uid1=$ExpectedUids[0]
+        $Context.RuntimeSecrets.uid2=$ExpectedUids[1]
+        $Context.RuntimeSecrets.token1='mock-rehydrated-token-1'
+        $Context.RuntimeSecrets.token2='mock-rehydrated-token-2'
+        return [ordered]@{status='SIMULATED';users=2;sameUids=$true;secrets='MEMORY_ONLY';provisioningSkipped=$true}
+    }
+    if ($Context.Mode -ne 'Live') { return [ordered]@{status='PLANNED';provisioningSkipped=$true} }
+    $resource = Get-S3MapValue -Map $Context.State.resources -Name 'firebase'
+    if ($null -eq $resource) { throw 'FIREBASE_REHYDRATION_RESOURCE_MISSING' }
+    $projectId = [string](Get-S3MapValue -Map $resource -Name 'projectId')
+    if ([string]::IsNullOrWhiteSpace($projectId)) { throw 'FIREBASE_REHYDRATION_PROJECT_ID_MISSING' }
+    $presence = Get-S3FirebaseProjectPresence -Context $Context -ProjectId $projectId
+    if ($presence -ne 'EXISTS') { throw "FIREBASE_REHYDRATION_PROJECT_$presence" }
+    if ($null -eq $CredentialProvider) { throw 'FIREBASE_REHYDRATION_CREDENTIALS_REQUIRED' }
+    $credentials = @(& $CredentialProvider $projectId $ExpectedUids)
+    if ($credentials.Count -ne 2) { throw 'FIREBASE_REHYDRATION_CREDENTIAL_COUNT_MISMATCH' }
+    $byUid = @{};$apiKey=$null
+    foreach ($credential in $credentials) {
+        $uid = [string](Get-S3MapValue -Map $credential -Name 'uid')
+        $email = [string](Get-S3MapValue -Map $credential -Name 'email')
+        $password = [string](Get-S3MapValue -Map $credential -Name 'password')
+        $candidateApiKey = [string](Get-S3MapValue -Map $credential -Name 'apiKey')
+        if (($ExpectedUids.Count -gt 0 -and $uid -notin $ExpectedUids) -or $byUid.ContainsKey($uid) -or [string]::IsNullOrWhiteSpace($email) -or [string]::IsNullOrWhiteSpace($password) -or [string]::IsNullOrWhiteSpace($candidateApiKey)) { throw 'FIREBASE_REHYDRATION_CREDENTIAL_SET_INVALID' }
+        if ($null -eq $apiKey) {$apiKey=$candidateApiKey} elseif ($apiKey -cne $candidateApiKey) { throw 'FIREBASE_REHYDRATION_API_KEY_MISMATCH' }
+        $byUid[$uid]=[ordered]@{email=$email;password=$password}
+    }
+    if ($ExpectedUids.Count -eq 0) { $ExpectedUids=@($byUid.Keys | Sort-Object) }
+    if ($ExpectedUids.Count -ne 2 -or @($ExpectedUids | Where-Object { -not $byUid.ContainsKey($_) }).Count -ne 0) { throw 'FIREBASE_REHYDRATION_UID_MISMATCH' }
+    $tokens=@{}
+    try {
+        foreach ($uid in $ExpectedUids) {
+            $credential=$byUid[$uid]
+            $token=Get-S3FirebaseIdToken -ApiKey $apiKey -Email $credential.email -Password $credential.password
+            if ($token.LocalId -ne $uid) { throw 'FIREBASE_REHYDRATION_LOCAL_ID_MISMATCH' }
+            $tokens[$uid]=$token
+        }
+        $Context.RuntimeSecrets.apiKey=$apiKey
+        $Context.RuntimeSecrets.uid1=$ExpectedUids[0];$Context.RuntimeSecrets.uid2=$ExpectedUids[1]
+        $Context.RuntimeSecrets.email1=$byUid[$ExpectedUids[0]].email;$Context.RuntimeSecrets.email2=$byUid[$ExpectedUids[1]].email
+        $Context.RuntimeSecrets.password1=$byUid[$ExpectedUids[0]].password;$Context.RuntimeSecrets.password2=$byUid[$ExpectedUids[1]].password
+        $Context.RuntimeSecrets.token1=$tokens[$ExpectedUids[0]].IdToken;$Context.RuntimeSecrets.token2=$tokens[$ExpectedUids[1]].IdToken
+        $Context.RuntimeSecrets.refreshToken1=$tokens[$ExpectedUids[0]].RefreshToken;$Context.RuntimeSecrets.refreshToken2=$tokens[$ExpectedUids[1]].RefreshToken
+        return [ordered]@{status='PASS';projectId=$projectId;users=2;sameUids=$true;secrets='MEMORY_ONLY';provisioningSkipped=$true}
+    }
+    finally {
+        $credentials=$null;$byUid=$null;$tokens=$null;$apiKey=$null
+        [GC]::Collect()
+    }
+}
+
 function Invoke-S3FirebaseProvision {
     param([Parameter(Mandatory)]$Context)
     if ($Context.Mode -eq 'Simulation') {
@@ -690,6 +750,8 @@ function Invoke-S3FirebaseProvision {
         $Context.RuntimeSecrets.refreshToken2=$id2.RefreshToken
         $firebaseResource = Get-S3MapValue -Map $Context.State.resources -Name 'firebase'
         Set-S3MapValue -Map $firebaseResource -Name 'users' -Value 2
+        Set-S3MapValue -Map $firebaseResource -Name 'uid1' -Value $uid1
+        Set-S3MapValue -Map $firebaseResource -Name 'uid2' -Value $uid2
         Set-S3MapValue -Map $firebaseResource -Name 'billing' -Value $false
         Set-S3MapValue -Map $Context.State.results -Name 'firebaseGuard' -Value ([ordered]@{
             spark=$true
