@@ -185,6 +185,21 @@ function Restore-S3CloudflareWorkerLocalConfig {
     return $configPath
 }
 
+function New-S3CloudflareObservabilityTokenProvider {
+    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
+    param([Parameter(Mandatory)]$Context)
+    if(-not $PSCmdlet.ShouldProcess([string]$Context.RunId,'Create in-memory Cloudflare observability provider')){return}
+    $capturedContext=$Context
+    return {
+        param([string]$AccountId,[string]$WorkerName)
+        [void]$AccountId
+        [void]$WorkerName
+        $token=[string](Get-S3MapValue -Map $capturedContext.RuntimeSecrets -Name 'cloudflareToken')
+        if([string]::IsNullOrWhiteSpace($token)){throw 'CLOUDFLARE_OBSERVABILITY_SESSION_REQUIRED'}
+        return $token
+    }.GetNewClosure()
+}
+
 function Invoke-S3CloudflareRuntimeRehydration {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][string]$Token,[Parameter(Mandatory)][scriptblock]$ObservabilityTokenProvider)

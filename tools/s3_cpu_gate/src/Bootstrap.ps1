@@ -1,8 +1,15 @@
-﻿[CmdletBinding()]param([ValidateSet('Interactive','Plan','Simulation','Live')][string]$Mode='Interactive',[switch]$Resume,[switch]$SkipToolchain)
+﻿[CmdletBinding()]param([ValidateSet('Interactive','Plan','Simulation','Live')][string]$Mode='Interactive',[switch]$Resume,[switch]$SkipToolchain,[switch]$SyncRuntime,[string]$SourceRoot='',[string]$ExpectedSourceCommit='')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $root='C:\Users\MC\Desktop\1'
 if($PSScriptRoot -ne $root){throw 'شغّل الحزمة من C:\Users\MC\Desktop\1 فقط.'}
+if($SyncRuntime){
+ if([string]::IsNullOrWhiteSpace($SourceRoot)){throw 'SOURCE_ROOT_REQUIRED_FOR_RUNTIME_SYNC'}
+ $setup=Join-Path $SourceRoot 'tools\s3_cpu_gate\S3-CPU-Gate-Setup.ps1'
+ if(-not(Test-Path -LiteralPath $setup -PathType Leaf)){throw 'AUTHORITATIVE_SETUP_NOT_FOUND'}
+ & $setup -RuntimeRoot $root -PreserveActiveState -ExpectedSourceCommit $ExpectedSourceCommit -Confirm:$false
+ if($LASTEXITCODE -and $LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+}
 $versionManifestPath=Join-Path $PSScriptRoot 'version-manifest.json'
 if(-not(Test-Path -LiteralPath $versionManifestPath -PathType Leaf)){throw 'VERSION_MANIFEST_MISSING'}
 $versionManifest=Get-Content -LiteralPath $versionManifestPath -Raw -Encoding UTF8|ConvertFrom-Json
@@ -36,6 +43,6 @@ if(-not $pwsh){
 }
 if(-not $SkipToolchain){& $pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'Initialize-Toolchain.ps1');if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}}
 $arguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'S3-CpuGate-Orchestrator.ps1'),'-Mode',$Mode)
-if($Resume){$arguments+='-Resume'}
+if($Resume){$arguments+='-Resume';$arguments+='-AutoRehydrateProviders'}
 & $pwsh @arguments
 exit $LASTEXITCODE

@@ -1,12 +1,21 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$RuntimeRoot = 'C:\Users\MC\Desktop\1'
+    [string]$RuntimeRoot = 'C:\Users\MC\Desktop\1',
+    [switch]$PreserveActiveState,
+    [string]$ExpectedSourceCommit = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $sourceRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path
+if(-not [string]::IsNullOrWhiteSpace($ExpectedSourceCommit)){
+    if($ExpectedSourceCommit -notmatch '^[0-9a-fA-F]{40}$'){throw 'EXPECTED_SOURCE_COMMIT_INVALID'}
+    $git=Get-Command git.exe -ErrorAction SilentlyContinue
+    if($null -eq $git){throw 'AUTHORITATIVE_SOURCE_GIT_REQUIRED'}
+    $actualSourceCommit=((& $git.Source -C $sourceRoot rev-parse HEAD 2>$null)|Select-Object -First 1).Trim()
+    if($actualSourceCommit -cne $ExpectedSourceCommit.ToLowerInvariant()){throw 'AUTHORITATIVE_SOURCE_COMMIT_MISMATCH'}
+}
 $allowedFiles = @(
     @{ Source = 'src\Bootstrap.ps1'; Target = 'Bootstrap.ps1' },
     @{ Source = 'src\Initialize-Toolchain.ps1'; Target = 'Initialize-Toolchain.ps1' },
@@ -104,7 +113,7 @@ $statePath = Join-Path $RuntimeRoot 'state.json'
 if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $current = [string]$state.currentState
-    if ($current -notin @('80_RESOURCES_DESTROYED','90_REPORT_READY')) {
+    if ($current -notin @('80_RESOURCES_DESTROYED','90_REPORT_READY') -and -not ($PreserveActiveState -and $current -eq '60_CLOUDFLARE_PROVISIONED')) {
         throw 'ACTIVE_OR_UNCLEAN_STATE_PRESENT'
     }
 }
@@ -145,8 +154,10 @@ try {
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $payloadDestination) -Force | Out-Null
         Copy-Item -LiteralPath $payloadStage -Destination $payloadDestination -Recurse -Force
-        [ordered]@{ status = 'PASS'; sourceRoot = $sourceRoot; runtimeRoot = $RuntimeRoot; stagedAtUtc = [DateTime]::UtcNow.ToString('o'); statePreserved = $true } |
-            ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $RuntimeRoot 'config\runtime-staging.json') -Encoding UTF8
+        if(-not $PreserveActiveState){
+            [ordered]@{ status = 'PASS'; sourceRoot = $sourceRoot; runtimeRoot = $RuntimeRoot; stagedAtUtc = [DateTime]::UtcNow.ToString('o'); statePreserved = $true } |
+                ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $RuntimeRoot 'config\runtime-staging.json') -Encoding UTF8
+        }
     }
 }
 finally {

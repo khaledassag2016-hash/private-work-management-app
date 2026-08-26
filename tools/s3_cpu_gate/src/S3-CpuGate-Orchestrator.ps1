@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([ValidateSet('Interactive','Plan','Simulation','Live')][string]$Mode='Interactive',[switch]$Resume,[switch]$NoOpenFolder,[string]$CloudflareAccountId='', [scriptblock]$FirebaseCredentialProvider=$null,[scriptblock]$CloudflareObservabilityTokenProvider=$null)
+param([ValidateSet('Interactive','Plan','Simulation','Live')][string]$Mode='Interactive',[switch]$Resume,[switch]$NoOpenFolder,[switch]$AutoRehydrateProviders,[string]$CloudflareAccountId='', [scriptblock]$FirebaseCredentialProvider=$null,[scriptblock]$CloudflareObservabilityTokenProvider=$null)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $moduleRoot=Join-Path $PSScriptRoot 'modules'
@@ -9,6 +9,10 @@ if($Mode -eq 'Interactive'){$Mode=Select-S3Mode}
 $context=$null;$cleanupResult=$null;$cpu=[ordered]@{status='NOT_EXECUTED';reasons=@('NOT_REACHED')};$hadFailure=$false
 try{
  $context=New-S3Context -Mode $Mode -Resume:$Resume
+ if($AutoRehydrateProviders -and $context.IsResumed -and $context.State.currentState -eq '60_CLOUDFLARE_PROVISIONED'){
+  if($null -eq $FirebaseCredentialProvider){$FirebaseCredentialProvider=New-S3FirebaseCredentialProvider -Context $context}
+  if($null -eq $CloudflareObservabilityTokenProvider){$CloudflareObservabilityTokenProvider=New-S3CloudflareObservabilityTokenProvider -Context $context}
+ }
  Write-S3Log -Context $context -Message "بدء التشغيل $($context.RunId) بوضع $Mode"
  if($null -eq (Get-S3MapValue -Map $context.State.results -Name 'cliSessions')){[void](Initialize-S3CliSessionInventory -Context $context)}
  if($context.IsResumed){

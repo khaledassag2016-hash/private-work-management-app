@@ -46,6 +46,38 @@ Describe 'Runtime CLI compatibility regressions' {
   }
  }
 
+ It 'permits only explicit checkpoint-60 preservation during runtime sync' {
+  $setup=Get-Content -Raw (Join-Path $SourceRoot 'S3-CPU-Gate-Setup.ps1')
+  $setup | Should -Match '\[switch\]\$PreserveActiveState'
+  $setup | Should -Match '\$PreserveActiveState -and \$current -eq ''60_CLOUDFLARE_PROVISIONED'''
+  $setup | Should -Match '\$ExpectedSourceCommit'
+  $setup | Should -Match 'AUTHORITATIVE_SOURCE_COMMIT_MISMATCH'
+  $setup | Should -Match 'statePreserved = \$true'
+  $setup | Should -Match 'if\(-not \$PreserveActiveState\)'
+ }
+
+ It 'syncs before Resume and forwards only provider factories, never secret values' {
+  $bootstrap=Get-Content -Raw (Join-Path $SourceRoot 'src\Bootstrap.ps1')
+  $orchestrator=Get-Content -Raw (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1')
+  $bootstrap | Should -Match '\$SyncRuntime'
+  $bootstrap | Should -Match 'PreserveActiveState'
+  $bootstrap | Should -Match 'AutoRehydrateProviders'
+  $orchestrator | Should -Match 'New-S3FirebaseCredentialProvider'
+  $orchestrator | Should -Match 'New-S3CloudflareObservabilityTokenProvider'
+  $orchestrator | Should -Not -Match '(?i)password|apiKey|accessToken|refreshToken.*param'
+ }
+
+ It 'uses existing authenticated sessions and keeps rehydration material memory-only' {
+  $firebase=Get-Content -Raw (Join-Path $ModuleRoot 'Firebase.psm1')
+  $cloudflare=Get-Content -Raw (Join-Path $ModuleRoot 'Cloudflare.psm1')
+  $firebase | Should -Match "auth','print-access-token"
+  $firebase | Should -Match "apps:sdkconfig"
+  $firebase | Should -Match 'Get-S3SyntheticPassword'
+  $cloudflare | Should -Match 'New-S3CloudflareObservabilityTokenProvider'
+  $cloudflare | Should -Match 'RuntimeSecrets'
+  $firebase | Should -Not -Match 'Set-Content.*adminToken|Set-Content.*apiKey|ConvertTo-Json.*password'
+ }
+
  It 'parses the official gcloud SDK version output deterministically' {
   $toolchainModule=Join-Path $ModuleRoot 'Toolchain.psm1'
   Import-Module $toolchainModule -Force
