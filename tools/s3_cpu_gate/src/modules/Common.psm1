@@ -309,4 +309,47 @@ function Clear-S3RuntimeSecret {
  $Context.RuntimeSecrets.Clear();[GC]::Collect();[GC]::WaitForPendingFinalizers()
 }
 
+function Get-S3StableHash {
+ [CmdletBinding()] param([AllowNull()][string]$Value)
+ if($null -eq $Value){$Value=''}
+ $bytes=[Text.Encoding]::UTF8.GetBytes($Value);$digest=[Security.Cryptography.SHA256]::HashData($bytes)
+ return ([BitConverter]::ToString($digest) -replace '-','').ToLowerInvariant()
+}
+
+function Assert-S3ResumeCheckpointSafe {
+ [CmdletBinding()] param([Parameter(Mandatory)]$State)
+ $current=[string](Get-S3MapValue -Map $State -Name 'currentState')
+ if($current -notin @('40_PRE_CLOUD_GATE','50_FIREBASE_PROVISIONED','60_CLOUDFLARE_PROVISIONED','70_CPU_GATE_EXECUTED')){
+  throw 'RESUME_REQUIRES_CLOSED_CHECKPOINT'
+ }
+ $completed=@(Get-S3MapValue -Map $State -Name 'completed')
+ if($completed.Count -eq 0 -or $current -notin $completed){throw 'RESUME_CHECKPOINT_INCONSISTENT'}
+ return $true
+}
+
+function Invoke-S3WithWorkerStateRestore {
+ [CmdletBinding()] param(
+  [Parameter(Mandatory)]$Context,
+  [Parameter(Mandatory)][scriptblock]$Action,
+  [Parameter(Mandatory)][scriptblock]$Restore,
+  [scriptblock]$Snapshot=$null,
+  [scriptblock]$Verify=$null
+ )
+  $remoteSnapshot=$null
+  if($null -ne $Snapshot){$remoteSnapshot=& $Snapshot;if($null -eq $remoteSnapshot){throw 'REMOTE_WORKER_SNAPSHOT_UNAVAILABLE'}}
+  $snapshotPath=Join-Path $Context.Root 'backups\worker-wrangler-before-cpu.json'
+ $configPath=Join-Path $Context.Root 'workspace\worker\wrangler.json'
+ if(-not (Test-Path -LiteralPath $configPath -PathType Leaf)){throw 'WORKER_STATE_SNAPSHOT_SOURCE_MISSING'}
+ New-Item -ItemType Directory -Path (Split-Path $snapshotPath) -Force|Out-Null
+ Copy-Item -LiteralPath $configPath -Destination $snapshotPath -Force
+ $actionError=$null;$restoreError=$null;$result=$null
+ try{$result=& $Action}catch{$actionError=$_.Exception}
+ finally{
+  try{Copy-Item -LiteralPath $snapshotPath -Destination $configPath -Force;& $Restore $snapshotPath;if($null -ne $Verify){$verification=& $Verify $remoteSnapshot;if($verification -ne $true){throw 'REMOTE_WORKER_RESTORE_VERIFICATION_FAILED'}}}catch{$restoreError=$_.Exception}
+ }
+ if($null -ne $restoreError){throw ('WORKER_STATE_RESTORE_FAILED:'+ (Protect-S3Text $restoreError.Message))}
+ if($null -ne $actionError){throw $actionError}
+ return $result
+}
+
 Export-ModuleMember -Function *-S3*
