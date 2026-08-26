@@ -14,6 +14,7 @@ Describe 'State machine invariants' {
 }
 
 
+# S3-R final-head CI semantic-no-op marker; no test behavior change.
 Describe 'S3-R preserved-run recovery invariants' {
  It 'accepts only closed checkpoints for Resume' {
   $c=Get-TestContext; $c.State.currentState='60_CLOUDFLARE_PROVISIONED'; $c.State.completed=@('00_PACKAGE_READY','60_CLOUDFLARE_PROVISIONED')
