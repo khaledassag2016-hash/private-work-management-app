@@ -102,6 +102,14 @@ function Get-S3ToolPlan {
  }
  return $rows
 }
+function ConvertFrom-S3GcloudVersionOutput {
+ param([Parameter(Mandatory)][string[]]$Output)
+ $text=($Output -join "`n")
+ $match=[regex]::Match($text,'(?m)^Google Cloud SDK\s+([0-9]+\.[0-9]+\.[0-9]+)\s*$')
+ if(-not $match.Success){$match=[regex]::Match($text,'(?m)\b([0-9]+\.[0-9]+\.[0-9]+)\b')}
+ if(-not $match.Success){throw 'GCLOUD_VERSION_OUTPUT_INVALID'}
+ return $match.Groups[1].Value
+}
 function Initialize-S3LocalToolchain {
  [CmdletBinding()]param([string]$Root='C:\Users\MC\Desktop\1',[switch]$NonInteractive)
  Enable-S3LocalToolPath -Root $Root
@@ -110,9 +118,9 @@ function Initialize-S3LocalToolchain {
  Install-S3Python $Root;Install-S3Node $Root;Enable-S3LocalToolPath $Root;Install-S3GitHubCli $Root;Install-S3PortableGit $Root;Install-S3GoogleCloud $Root;Install-S3NpmTool $Root;Install-S3PowerShellModule $Root;Enable-S3LocalToolPath $Root
  $versions=[ordered]@{}
  $versionCommands=[ordered]@{
-  pwsh=@('pwsh','-NoProfile','-Command','$PSVersionTable.PSVersion.ToString()');python=@('python','--version');node=@('node','--version');npm=@('npm','--version');firebase=@('firebase','--version');wrangler=@('wrangler','--version');gcloud=@('gcloud','version','--format=value(core.version)')
+  pwsh=@('pwsh','-NoProfile','-Command','$PSVersionTable.PSVersion.ToString()');python=@('python','--version');node=@('node','--version');npm=@('npm','--version');firebase=@('firebase','--version');wrangler=@('wrangler','--version');gcloud=@('gcloud','--version')
  }
- foreach($name in $versionCommands.Keys){$spec=$versionCommands[$name];$command=$spec[0];$resolved=Get-Command $command -ErrorAction SilentlyContinue;if(-not $resolved){throw "TOOL_MISSING: $name"};$output=& $resolved.Source @($spec[1..($spec.Count-1)]) 2>$null|Select-Object -First 1;$versions[$name]=[string]$output}
+ foreach($name in $versionCommands.Keys){$spec=$versionCommands[$name];$command=$spec[0];$resolved=Get-Command $command -ErrorAction SilentlyContinue;if(-not $resolved){throw "TOOL_MISSING: $name"};$output=@(& $resolved.Source @($spec[1..($spec.Count-1)]) 2>&1);$exitCode=$LASTEXITCODE;if($exitCode -ne 0){throw "TOOL_VERSION_COMMAND_FAILED: $name exit=$exitCode"};if($name -eq 'gcloud'){$versions[$name]=ConvertFrom-S3GcloudVersionOutput -Output ([string[]]$output)}else{$versions[$name]=[string](@($output|Select-Object -First 1)[0])}}
  $expected=[ordered]@{pwsh=$script:ToolDefinitions.PowerShell.Version;python=$script:ToolDefinitions.Python.Version;node=$script:ToolDefinitions.Node.Version;npm=$script:ToolDefinitions.Npm.Version;firebase=$script:ToolDefinitions.FirebaseCli.Version;wrangler=$script:ToolDefinitions.Wrangler.Version;gcloud=$script:ToolDefinitions.GoogleCloud.Version}
  foreach($name in $expected.Keys){$actual=([string]$versions[$name]).TrimStart('v').Replace('Python ','');if($actual -ne [string]$expected[$name]){throw "TOOL_VERSION_MISMATCH: $name expected=$($expected[$name]) actual=$actual"}}
  $versions|ConvertTo-Json -Depth 5|Set-Content (Join-Path $Root 'reports\toolchain-paths.json') -Encoding UTF8

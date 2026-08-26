@@ -92,7 +92,7 @@ Describe 'Live readiness regression guards' {
 
     It 'keeps the Pester acceptance count at the approved suite size' {
         $validation = Get-Content (Join-Path $SourceRoot 'build\Invoke-Phase1PowerShellValidation.ps1') -Raw
-        $validation | Should -Match '\$expectedPesterCount\s*=\s*305'
+        $validation | Should -Match '\$expectedPesterCount\s*=\s*306'
         $validation | Should -Match '\$result\.TotalCount\s+-eq\s+\$expectedPesterCount'
         $validation | Should -Match '\$result\.PassedCount\s+-eq\s+\$expectedPesterCount'
     }
