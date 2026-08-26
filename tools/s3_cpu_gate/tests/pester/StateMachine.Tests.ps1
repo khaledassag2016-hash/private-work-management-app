@@ -22,18 +22,18 @@ Describe 'S3-R preserved-run recovery invariants' {
  }
  It 'rehydrates exactly the preserved two UIDs in Simulation without provisioning' {
   $c=Get-TestContext; $c.Mode='Simulation'; $c.State.resources.firebase=[ordered]@{projectId='preserved';uid1='uid-one';uid2='uid-two'}
-  $r=Invoke-S3FirebaseRuntimeRehydration -Context $c -ExpectedUids @('uid-one','uid-two') -CredentialProvider { param($project,$uids) @() }
+  $r=Invoke-S3FirebaseRuntimeRehydration -Context $c -ExpectedUids @('uid-one','uid-two') -CredentialProvider { param($project,$uids) [void]$project;[void]$uids;@() }
   $r.status|Should -Be 'SIMULATED';$r.sameUids|Should -BeTrue;$r.provisioningSkipped|Should -BeTrue;$r.secrets|Should -Be 'MEMORY_ONLY'
   $c.RuntimeSecrets.uid1|Should -Be 'uid-one';$c.State.results|ConvertTo-Json -Depth 20|Should -Not -Match 'mock-rehydrated-token'
  }
  It 'restores the Worker config after a successful action' {
   $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
-  Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';'ok' } -Restore { param($snapshot) $script:restoreCalled=$true } | Should -Be 'ok'
+  Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';'ok' } -Restore { param($snapshot) [void]$snapshot;$script:restoreCalled=$true } | Should -Be 'ok'
   (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalled|Should -BeTrue
  }
  It 'restores the Worker config when the action fails' {
   $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
-  {Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';throw 'CPU_GATE_FAILED' } -Restore { param($snapshot) $script:restoreCalledOnFailure=$true }}|Should -Throw '*CPU_GATE_FAILED*'
+  {Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';throw 'CPU_GATE_FAILED' } -Restore { param($snapshot) [void]$snapshot;$script:restoreCalledOnFailure=$true }}|Should -Throw '*CPU_GATE_FAILED*'
   (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalledOnFailure|Should -BeTrue
  }
 }

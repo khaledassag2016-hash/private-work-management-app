@@ -127,6 +127,89 @@ function Invoke-S3CloudflareRest {
     return $response
 }
 
+function Get-S3CloudflareWorkerRemoteSnapshot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][string]$Token)
+    [void]$Context
+    $base="https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/scripts/$WorkerName"
+    $settings=(Invoke-S3CloudflareRest -Method GET -Uri "$base/settings" -Token $Token).result
+    $versions=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions" -Token $Token).result
+    $deployments=(Invoke-S3CloudflareRest -Method GET -Uri "$base/deployments" -Token $Token).result
+    $bindingRecords=[Collections.Generic.List[object]]::new();$variableRecords=[Collections.Generic.List[object]]::new();$privateVars=[ordered]@{}
+    foreach($binding in @((Get-S3CloudflareValue -InputObject $settings -Name @('bindings')))){
+        $name=[string](Get-S3CloudflareValue -InputObject $binding -Name @('name'));$type=[string](Get-S3CloudflareValue -InputObject $binding -Name @('type'))
+        if([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($type)){throw 'REMOTE_WORKER_BINDING_METADATA_INVALID'}
+        $record=[ordered]@{name=$name;type=$type}
+        $databaseId=Get-S3CloudflareValue -InputObject $binding -Name @('database_id','databaseId','id')
+        if($type -eq 'd1' -and -not [string]::IsNullOrWhiteSpace([string]$databaseId)){$record.databaseId=[string]$databaseId}
+        $bindingRecords.Add($record)
+        if($type -eq 'plain_text'){
+            $text=[string](Get-S3CloudflareValue -InputObject $binding -Name @('text','value'))
+            $privateVars[$name]=$text
+            $variableRecords.Add([ordered]@{name=$name;type=$type;valueNonEmpty=(-not [string]::IsNullOrWhiteSpace($text));valueHash=$(if([string]::IsNullOrWhiteSpace($text)){$null}else{Get-S3StableHash $text})})
+        }
+    }
+    $latestVersion=@($versions.items)|Sort-Object {[datetime]$_.metadata.created_on} -Descending|Select-Object -First 1
+    $latestDeployment=@($deployments.deployments)|Sort-Object {[datetime]$_.created_on} -Descending|Select-Object -First 1
+    $activeVersionId=$null
+    if($null -ne $latestDeployment){$activeVersion=@($latestDeployment.versions|Where-Object {[int](Get-S3CloudflareValue -InputObject $_ -Name 'percentage') -eq 100}|Select-Object -First 1);if($activeVersion.Count -gt 0){$activeVersionId=[string](Get-S3CloudflareValue -InputObject $activeVersion[0] -Name 'version_id')}}
+    return [pscustomobject]@{
+        public=[ordered]@{
+        scriptName=$WorkerName
+        settings=[ordered]@{
+            compatibilityDate=[string](Get-S3CloudflareValue -InputObject $settings -Name @('compatibility_date','compatibilityDate'))
+            compatibilityFlags=@(Get-S3CloudflareValue -InputObject $settings -Name @('compatibility_flags','compatibilityFlags'))
+            usageModel=[string](Get-S3CloudflareValue -InputObject $settings -Name @('usage_model','usageModel'))
+            observability=Get-S3CloudflareValue -InputObject $settings -Name @('observability')
+            bindings=@($bindingRecords|Sort-Object name,type)
+            variables=@($variableRecords|Sort-Object name)
+        }
+        deployment=[ordered]@{activeVersionId=$activeVersionId;latestVersionId=$(if($null -ne $latestVersion){[string]$latestVersion.id}else{$null});latestDeploymentId=$(if($null -ne $latestDeployment){[string]$latestDeployment.id}else{$null})}
+        }
+        privateVars=$privateVars
+    }
+}
+
+function Restore-S3CloudflareWorkerLocalConfig {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)]$Snapshot)
+    $configPath=Join-Path $Context.Root 'workspace\worker\wrangler.json'
+    $config=Get-Content -LiteralPath $configPath -Raw|ConvertFrom-Json
+    if($null -eq $config.vars){$config|Add-Member -NotePropertyName vars -NotePropertyValue ([pscustomobject]@{})}
+    $privateVars=Get-S3CloudflareValue -InputObject $Snapshot -Name @('privateVars')
+    foreach($property in @($config.vars.PSObject.Properties.Name)){$config.vars.PSObject.Properties.Remove($property)}
+    foreach($key in @($privateVars.Keys)){$config.vars|Add-Member -NotePropertyName $key -NotePropertyValue ([string]$privateVars[$key]) -Force}
+    $config|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $configPath -Encoding UTF8
+    return $configPath
+}
+
+function Invoke-S3CloudflareRuntimeRehydration {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][string]$Token,[Parameter(Mandatory)][scriptblock]$ObservabilityTokenProvider)
+    $snapshot=Get-S3CloudflareWorkerRemoteSnapshot -Context $Context -AccountId $AccountId -WorkerName $WorkerName -Token $Token
+    $variables=@((Get-S3CloudflareValue -InputObject $snapshot.public.settings -Name @('variables')))
+    $nonce=@($variables|Where-Object {[string]$_.name -eq 'TEST_RESET_NONCE'})|Select-Object -First 1
+    if($null -eq $nonce -or [string]$nonce.type -ne 'plain_text' -or $nonce.valueNonEmpty -ne $true){throw 'WORKER_TEST_RESET_NONCE_INVALID'}
+    $newObservabilityToken=[string](& $ObservabilityTokenProvider $AccountId $WorkerName)
+    if([string]::IsNullOrWhiteSpace($newObservabilityToken)){throw 'WORKERS_OBSERVABILITY_CREDENTIAL_REQUIRED'}
+    [void](Test-S3WorkersObservabilityAuthorization -AccountId $AccountId -Token $newObservabilityToken)
+    $Context.RuntimeSecrets.testResetNonce=[string](Get-S3CloudflareValue -InputObject $snapshot.privateVars -Name @('TEST_RESET_NONCE'))
+    $Context.RuntimeSecrets.cloudflareObservabilityToken=$newObservabilityToken
+    if([string]::IsNullOrWhiteSpace([string]$Context.RuntimeSecrets.testResetNonce)){throw 'WORKER_TEST_RESET_NONCE_READ_FAILED'}
+    return [ordered]@{status='PASS';worker=$WorkerName;nonce='PRESENT';nonceType='plain_text';observability='AUTHORIZED';secrets='MEMORY_ONLY';remoteSnapshot=$snapshot.public}
+}
+
+function Test-S3CloudflareWorkerRemoteSnapshot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Before,[Parameter(Mandatory)]$After)
+    $beforePublic=Get-S3CloudflareValue -InputObject $Before -Name @('public');if($null -ne $beforePublic){$Before=$beforePublic}
+    $afterPublic=Get-S3CloudflareValue -InputObject $After -Name @('public');if($null -ne $afterPublic){$After=$afterPublic}
+    if([string](Get-S3CloudflareValue -InputObject $Before -Name @('scriptName')) -ne [string](Get-S3CloudflareValue -InputObject $After -Name @('scriptName'))){return $false}
+    $beforeSettings=(Get-S3CloudflareValue -InputObject $Before -Name @('settings')|ConvertTo-Json -Depth 30 -Compress)
+    $afterSettings=(Get-S3CloudflareValue -InputObject $After -Name @('settings')|ConvertTo-Json -Depth 30 -Compress)
+    return $beforeSettings -eq $afterSettings
+}
+
 function Invoke-S3CloudflarePagedGet {
     param([Parameter(Mandatory)][string]$Uri,[Parameter(Mandatory)][string]$Token,[ValidateRange(1,100)][int]$PerPage=50)
     $items = [Collections.Generic.List[object]]::new()

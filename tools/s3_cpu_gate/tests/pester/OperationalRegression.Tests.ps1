@@ -1571,7 +1571,8 @@ Describe 'S3-R Harness secure rehydration regressions' {
  }
  It 'does not run cleanup automatically for a resumed preserved run' {
   $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
-  $source|Should -Match 'Mode -ne ''Plan'' -and -not \$context\.IsResumed'
+  $source|Should -Match 'resumedSuccess'
+  $source|Should -Match '-not \$context\.IsResumed -or \$resumedSuccess'
  }
  It 'brackets Live CPU Gate with Worker state restoration' {
   $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
@@ -1582,5 +1583,34 @@ Describe 'S3-R Harness secure rehydration regressions' {
   $firebase=Get-Content (Join-Path $SourceRoot 'src\modules\Firebase.psm1') -Raw
   $firebase|Should -Match 'secrets=.MEMORY_ONLY.'
   $firebase|Should -Match 'provisioningSkipped=\$true'
+ }
+}
+
+
+Describe 'S3-R authoritative runtime rehydration' {
+ It 'rehydrates same UIDs from Firebase and D1 evidence without provisioning' {
+  $c=Get-TestContext Live;$c.State.resources.firebase=[ordered]@{projectId='preserved-project'}
+  $uid1=[guid]::NewGuid().ToString('N');$uid2=[guid]::NewGuid().ToString('N');$apiKey=[guid]::NewGuid().ToString('N');$admin=[guid]::NewGuid().ToString('N')
+  Mock Get-S3FirebaseProjectPresence {'EXISTS'} -ModuleName Firebase
+  Mock New-S3FirebaseAdminUser {throw 'PROVISIONING_MUST_NOT_RUN'} -ModuleName Firebase
+  Mock Update-S3FirebaseAdminUserPassword {} -ModuleName Firebase
+  Mock Get-S3FirebaseIdToken {param($A,$Email,$S);[void]$A;[void]$S;[pscustomobject]@{IdToken=[guid]::NewGuid().ToString('N');RefreshToken=[guid]::NewGuid().ToString('N');LocalId=($Email -replace '@example.invalid','')}} -ModuleName Firebase
+  $provider={param($project,$expected) [void]$project;[void]$expected;[ordered]@{adminToken=$admin;credentials=@([ordered]@{uid=$uid1;email="$uid1@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey},[ordered]@{uid=$uid2;email="$uid2@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey});firebaseUsers=@([ordered]@{localId=$uid1;providerUserInfo=@([ordered]@{providerId='password'})},[ordered]@{localId=$uid2;providerUserInfo=@([ordered]@{providerId='password'})});d1Uids=@($uid1,$uid2)}}
+  $r=Invoke-S3FirebaseRuntimeRehydration -Context $c -ExpectedUids @() -CredentialProvider $provider
+  $r.status|Should -Be 'PASS';$r.sameUids|Should -BeTrue;$r.provisioningSkipped|Should -BeTrue;$r.secrets|Should -Be 'MEMORY_ONLY'
+  Should -Invoke New-S3FirebaseAdminUser -ModuleName Firebase -Times 0 -Exactly;Should -Invoke Update-S3FirebaseAdminUserPassword -ModuleName Firebase -Times 2 -Exactly
+  $c.State|ConvertTo-Json -Depth 30|Should -Not -Match ($apiKey+'|'+$admin)
+ }
+ It 'reads remote Worker settings and compares effective state without returning values' {
+  $c=Get-TestContext Live;$nonce=('n'+[guid]::NewGuid().ToString('N'));$responses=@{
+   settings=[pscustomobject]@{success=$true;errors=@();result=[ordered]@{compatibility_date='2026-08-01';compatibility_flags=@();usage_model='standard';observability=[ordered]@{enabled=$true};bindings=@([ordered]@{name='DB';type='d1';id='d1-id'},[ordered]@{name='TEST_RESET_NONCE';type='plain_text';text=$nonce})}}
+   versions=[pscustomobject]@{success=$true;errors=@();result=[ordered]@{items=@([ordered]@{id='v1';metadata=[ordered]@{created_on='2026-08-15T00:00:00Z'}})}}
+   deployments=[pscustomobject]@{success=$true;errors=@();result=[ordered]@{deployments=@([ordered]@{id='dep1';created_on='2026-08-15T00:00:00Z';versions=@([ordered]@{percentage=100;version_id='v1'})})}}
+  }
+  Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token);[void]$Method;[void]$Token;if($Uri -match '/settings$'){$responses.settings}elseif($Uri -match '/versions$'){$responses.versions}else{$responses.deployments}} -ModuleName Cloudflare
+  $s=Get-S3CloudflareWorkerRemoteSnapshot -Context $c -AccountId 'account' -WorkerName 'worker' -Token 'token'
+  $s.public.settings.variables[0].valueNonEmpty|Should -BeTrue;$s.privateVars.TEST_RESET_NONCE|Should -Be $nonce
+  (ConvertTo-Json $s.public -Depth 30)|Should -Not -Match $nonce
+  Test-S3CloudflareWorkerRemoteSnapshot -Before $s -After $s | Should -BeTrue
  }
 }
