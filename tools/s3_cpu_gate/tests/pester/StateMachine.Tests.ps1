@@ -29,12 +29,12 @@ Describe 'S3-R preserved-run recovery invariants' {
  }
  It 'restores the Worker config after a successful action' {
   $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
-  Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';'ok' } -Restore { param($snapshot) [void]$snapshot;$script:restoreCalled=$true } | Should -Be 'ok'
+  Invoke-S3WithWorkerStateRestore -Context $c -Snapshot { [ordered]@{public=[ordered]@{deployment=[ordered]@{activeVersionId='v1'}}} } -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';'ok' } -Restore { param($snapshot) if($snapshot.public.deployment.activeVersionId -ne 'v1'){throw 'REMOTE_OBJECT_NOT_PASSED'};$script:restoreCalled=$true } | Should -Be 'ok'
   (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalled|Should -BeTrue
  }
  It 'restores the Worker config when the action fails' {
   $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
-  {Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';throw 'CPU_GATE_FAILED' } -Restore { param($snapshot) [void]$snapshot;$script:restoreCalledOnFailure=$true }}|Should -Throw '*CPU_GATE_FAILED*'
+  {Invoke-S3WithWorkerStateRestore -Context $c -Snapshot { [ordered]@{public=[ordered]@{deployment=[ordered]@{activeVersionId='v2'}}} } -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';throw 'CPU_GATE_FAILED' } -Restore { param($snapshot) if($snapshot.public.deployment.activeVersionId -ne 'v2'){throw 'REMOTE_OBJECT_NOT_PASSED'};$script:restoreCalledOnFailure=$true }}|Should -Throw '*CPU_GATE_FAILED*'
   (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalledOnFailure|Should -BeTrue
  }
 }

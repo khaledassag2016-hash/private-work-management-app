@@ -12,7 +12,7 @@ class DomainError extends Error {
 
 function reject(status, code, requestId, cacheState = 'none', runMarker = '', scenario = '') {
   const s3Correlation = { runId: runMarker, requestId, scenario };
-  console.log(JSON.stringify({ event: 'auth_result', requestId, code, cacheState, allowed: false, runId: runMarker, scenario, s3Correlation }));
+  console.log({ event: 'auth_result', requestId, code, cacheState, allowed: false, runId: runMarker, scenario, s3Correlation });
   return Response.json({ ok: false, code, requestId }, { status });
 }
 
@@ -832,9 +832,16 @@ async function readAuthorized(request, env, requestId, scenario) {
     if (!user) throw new DomainError('UID_NOT_ALLOWED', 403);
     const requestedRunId = request.headers.get('x-s3-run-id') || '';
     const runId = requestedRunId === env.RUN_MARKER ? requestedRunId : '';
+    const forceCertificateRefresh = request.headers.get('x-s3-force-certificate-refresh') === 'true';
+    let cacheState = verified.cacheState;
+    if (forceCertificateRefresh) {
+      if (env.TEST_CONTROLS !== 'enabled' || !env.TEST_RESET_NONCE || request.headers.get('x-s3-test-reset') !== env.TEST_RESET_NONCE) throw new DomainError('TEST_CONTROL_DENIED', 403);
+      await getCertificates(env, true);
+      cacheState = 'miss';
+    }
     const s3Correlation = { runId, requestId, scenario };
-    console.log(JSON.stringify({ event: 'auth_result', requestId, code: 'ALLOW', cacheState: verified.cacheState, allowed: true, runId, scenario, s3Correlation, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) }));
-    return { user, cacheState: verified.cacheState };
+    console.log({ event: 'auth_result', requestId, code: 'ALLOW', cacheState, allowed: true, runId, scenario, s3Correlation, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) });
+    return { user, cacheState };
   } catch (error) {
     if (error instanceof DomainError) throw error;
     throw new DomainError(error instanceof Error ? error.message : 'AUTH_FAILED', 401);

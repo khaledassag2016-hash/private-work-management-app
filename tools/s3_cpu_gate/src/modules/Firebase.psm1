@@ -219,8 +219,10 @@ function Assert-S3FirebaseConfiguration {
     param([AllowNull()][object]$Configuration,[AllowNull()][object]$ProviderProof)
     $signIn = Get-S3RequiredPropertyValue -InputObject $Configuration -Name 'signIn'
     $email = Get-S3RequiredPropertyValue -InputObject $signIn -Name 'email'
-    $phone = Get-S3RequiredPropertyValue -InputObject $signIn -Name 'phoneNumber'
-    $anonymous = Get-S3RequiredPropertyValue -InputObject $signIn -Name 'anonymous'
+    $phone = Get-S3MapValue -Map $signIn -Name 'phoneNumber'
+    if ($null -eq $phone) { $phone = [ordered]@{} }
+    $anonymous = Get-S3MapValue -Map $signIn -Name 'anonymous'
+    if ($null -eq $anonymous) { $anonymous = [ordered]@{} }
     $client = Get-S3RequiredPropertyValue -InputObject $Configuration -Name 'client'
     $permissions = Get-S3RequiredPropertyValue -InputObject $client -Name 'permissions'
     Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $email -Name 'enabled') -Expected $true -Name 'email.enabled'
@@ -782,6 +784,10 @@ function Invoke-S3FirebaseRuntimeRehydration {
     }
     if ($ExpectedUids.Count -ne 2 -or (@($ExpectedUids|Sort-Object)-join '|') -cne (@($firebaseUids)-join '|')) { throw 'FIREBASE_REHYDRATION_LEGACY_UID_MISMATCH' }
     if ($ExpectedUids.Count -ne 2 -or @($ExpectedUids | Where-Object { -not $byUid.ContainsKey($_) }).Count -ne 0) { throw 'FIREBASE_REHYDRATION_UID_MISMATCH' }
+    $configurationUri="https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config"
+    $configuration=Invoke-S3GoogleRest -Method GET -Uri $configurationUri -Token $adminToken -QuotaProjectId $projectId
+    $providerProof=Get-S3FederatedProviderSnapshot -ProjectId $projectId -Token $adminToken
+    [void](Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof $providerProof)
     $tokens=@{}
     try {
         foreach ($uid in $ExpectedUids) {
@@ -798,7 +804,6 @@ function Invoke-S3FirebaseRuntimeRehydration {
         $Context.RuntimeSecrets.token1=$tokens[$ExpectedUids[0]].IdToken;$Context.RuntimeSecrets.token2=$tokens[$ExpectedUids[1]].IdToken
         $afterUsers=@(Get-S3FirebaseUser -ProjectId $projectId -Token $adminToken)
         [void](Assert-S3FirebaseUserSet -Users $afterUsers -ExpectedUids $ExpectedUids)
-        $configUri="https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config";$configuration=Invoke-S3GoogleRest -Method GET -Uri $configUri -Token $adminToken -QuotaProjectId $projectId;$providerProof=Get-S3FederatedProviderSnapshot -ProjectId $projectId -Token $adminToken;[void](Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof $providerProof)
         $Context.RuntimeSecrets.refreshToken1=$tokens[$ExpectedUids[0]].RefreshToken;$Context.RuntimeSecrets.refreshToken2=$tokens[$ExpectedUids[1]].RefreshToken
         return [ordered]@{status='PASS';projectId=$projectId;users=2;sameUids=$true;firebaseRevalidated=$true;emailPasswordOnly=$true;secrets='MEMORY_ONLY';provisioningSkipped=$true}
     }

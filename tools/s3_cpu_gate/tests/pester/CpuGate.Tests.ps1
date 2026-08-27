@@ -32,18 +32,48 @@ Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
   function Get-B2ExpectedFixture([string[]]$Ids,[string]$Scenario='scenario-a'){@($Ids|ForEach-Object{[ordered]@{runId='run-b2';requestId=$_;scenario=$Scenario}})}
   function Get-B2RecordFixture([string]$RequestId,[string]$Scenario='scenario-a',[object]$Cpu=2.5,[object]$Wall=8.0,[string]$Outcome='ok',[string]$RunId='run-b2',[string]$CloudflareRequestId=''){
    if([string]::IsNullOrWhiteSpace($CloudflareRequestId)){$CloudflareRequestId="cf-$RequestId"}
-   [ordered]@{runId=$RunId;requestId=$RequestId;scenario=$Scenario;cloudflareRequestId=$CloudflareRequestId;cpu_ms=$Cpu;wall_ms=$Wall;outcome=$Outcome}
+   [ordered]@{runId=$RunId;requestId=$RequestId;scenario=$Scenario;cloudflareRequestId=$CloudflareRequestId;cpu_ms=$Cpu;wall_ms=$Wall;outcome=$Outcome;cache_state='hit';hasCorrelation=$true;hasInvocation=$true;duplicateCorrelation=$false;duplicateInvocation=$false}
   }
   function Get-B2QueryResultFixture([object[]]$Records){[ordered]@{status='PASS';records=$Records;pageCount=1;paginationComplete=$true;truncated=$false;samplingDetected=$false;apiSuccess=$true;errors=@()}}
   function Get-B2OfficialTelemetryEvent([string]$RequestId,[string]$EventId,[double]$Cpu,[double]$Wall){
    [ordered]@{
     '$metadata'=[ordered]@{id=$EventId;requestId="cf-$RequestId";account='account';cloudService='workers'}
     '$workers'=[ordered]@{requestId="cf-$RequestId";cpuTimeMs=$Cpu;wallTimeMs=$Wall;outcome='ok';eventType='fetch';scriptName='s3-worker'}
-    dataset='cloudflare-workers';source=[ordered]@{event='s3_correlation';s3Correlation=[ordered]@{runId='run-b2';requestId=$RequestId;scenario='scenario-a'}};timestamp=1760000000000
+    dataset='cloudflare-workers';source=[ordered]@{event='s3_correlation';cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId=$RequestId;scenario='scenario-a'}};timestamp=1760000000000
    }
   }
  }
  It 'accepts a complete correlated telemetry response' {$e=Get-B2ExpectedFixture @('a','b');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'),(Get-B2RecordFixture 'b'));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).status|Should -Be 'PASS'}
+ It 'merges separate custom and invocation events by Cloudflare request ID' {
+  $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a'};source=[ordered]@{event='auth_result';cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
+  $invocation=[ordered]@{'$metadata'=[ordered]@{id='invoke-a';requestId='cf-a'};'$workers'=[ordered]@{requestId='cf-a';cpuTimeMs=2.5;wallTimeMs=8;outcome='ok';eventType='fetch'}}
+  $records=@(Merge-S3WorkerTelemetryEvent -Items @($invocation,$custom) -RunId 'run-b2' -Scenario 'scenario-a');$records.Count|Should -Be 1;$records[0].cpu_ms|Should -Be 2.5;$records[0].cache_state|Should -Be 'hit';$records[0].hasCorrelation|Should -BeTrue;$records[0].hasInvocation|Should -BeTrue
+ }
+ It 'ignores unrelated warmup/reset/audit events' {
+  $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a'};source=[ordered]@{cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
+  $invocation=[ordered]@{'$metadata'=[ordered]@{id='invoke-a';requestId='cf-a'};'$workers'=[ordered]@{requestId='cf-a';cpuTimeMs=2.5;wallTimeMs=8;outcome='ok';eventType='fetch'}}
+  $unrelated=[ordered]@{'$metadata'=[ordered]@{id='warmup';requestId='cf-warmup'};'$workers'=[ordered]@{requestId='cf-warmup';cpuTimeMs=1;wallTimeMs=5;outcome='ok';eventType='fetch'}}
+  $q=Get-B2QueryResultFixture @(@(Merge-S3WorkerTelemetryEvent -Items @($unrelated,$invocation,$custom) -RunId 'run-b2' -Scenario 'scenario-a'));$r=Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a')) $q;$r.status|Should -Be 'PASS'
+ }
+ It 'fails a correlated event missing its invocation record' {
+  $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a'};source=[ordered]@{cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
+  $q=Get-B2QueryResultFixture @(@(Merge-S3WorkerTelemetryEvent -Items @($custom) -RunId 'run-b2' -Scenario 'scenario-a'));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a')) $q).reasons|Should -Contain 'INVOCATION_RECORD_MISSING:a'
+ }
+ It 'fails duplicate correlated events for one invocation' {
+  $custom1=[ordered]@{'$metadata'=[ordered]@{id='custom-a1';requestId='cf-a'};source=[ordered]@{cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
+  $custom2=[ordered]@{'$metadata'=[ordered]@{id='custom-a2';requestId='cf-a'};source=[ordered]@{cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
+  $invocation=[ordered]@{'$metadata'=[ordered]@{id='invoke-a';requestId='cf-a'};'$workers'=[ordered]@{requestId='cf-a';cpuTimeMs=2.5;wallTimeMs=8;outcome='ok';eventType='fetch'}}
+  $q=Get-B2QueryResultFixture @(@(Merge-S3WorkerTelemetryEvent -Items @($custom1,$custom2,$invocation) -RunId 'run-b2' -Scenario 'scenario-a'));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a')) $q).reasons|Should -Contain 'DUPLICATE_CORRELATION:a'
+ }
+ It 'fails an extra current-run correlated request ID' {
+  $a=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a';cloudflareRequestId='cf-a';cpu_ms=2;wall_ms=8;outcome='ok';cache_state='hit';hasCorrelation=$true;hasInvocation=$true;duplicateCorrelation=$false;duplicateInvocation=$false}
+  $extra=[ordered]@{runId='run-b2';requestId='extra';scenario='scenario-a';cloudflareRequestId='cf-extra';cpu_ms=2;wall_ms=8;outcome='ok';cache_state='hit';hasCorrelation=$true;hasInvocation=$true;duplicateCorrelation=$false;duplicateInvocation=$false}
+  $q=Get-B2QueryResultFixture @($a,$extra);(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a')) $q).reasons|Should -Contain 'EXTRA_REQUEST_ID'
+ }
+ It 'rejects non-200 or ok=false positive HTTP responses' {
+  {Assert-S3HttpPositiveResponse -Response ([pscustomobject]@{status=201;body='{"ok":true}'}) -Name positive}|Should -Throw '*HTTP_POSITIVE_FAILED*'
+  {Assert-S3HttpPositiveResponse -Response ([pscustomobject]@{status=200;body='{"ok":false}'}) -Name positive}|Should -Throw '*HTTP_OK_FALSE*'
+ }
  It 'fails missing telemetry' {$e=Get-B2ExpectedFixture @('a','b');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).reasons -join ','|Should -Match 'MISSING_REQUEST_ID'}
  It 'fails a duplicate Request ID' {$e=Get-B2ExpectedFixture @('a');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'),(Get-B2RecordFixture 'a' -CloudflareRequestId 'cf-a-2'));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).reasons -join ','|Should -Match 'DUPLICATE_REQUEST_ID'}
  It 'fails missing or nonnumeric CPU time' {$e=Get-B2ExpectedFixture @('a','b');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a' -Cpu $null),(Get-B2RecordFixture 'b' -Cpu 'bad'));$r=Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q;@($r.reasons|Where-Object{$_ -match 'CPU_TIME_INVALID'}).Count|Should -Be 2}
@@ -52,22 +82,26 @@ Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
  It 'fails missing Cloudflare request ID' {$e=Get-B2ExpectedFixture @('a');$x=Get-B2RecordFixture 'a';$x.cloudflareRequestId='';$q=Get-B2QueryResultFixture @($x);(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).reasons -join ','|Should -Match 'CLOUDFLARE_REQUEST_ID_MISSING'}
  It 'fails truncation' {$e=Get-B2ExpectedFixture @('a');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'));$q.truncated=$true;(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).reasons|Should -Contain 'TELEMETRY_TRUNCATED'}
  It 'fails sampling or unacceptable abr_level' {$e=Get-B2ExpectedFixture @('a');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'));$q.samplingDetected=$true;(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).reasons|Should -Contain 'TELEMETRY_SAMPLING_DETECTED'}
+ It 'fails when response statistics report ABR above one' {
+  Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{statistics=[pscustomobject]@{abr_level=2};events=[pscustomobject]@{events=@()}}}} -ModuleName Cloudflare
+  $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'FAIL';$q.samplingDetected|Should -BeTrue;$q.abrLevel|Should -Be 2
+ }
  It 'uses the current schema and reads all telemetry pagination pages' {
   $script:page=0
   $script:firstFrom=$null;$script:firstTo=$null
   Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token,$Body)
    [void]$Method;[void]$Uri;[void]$Token
-   $Body.queryId | Should -Be 's3cpu-run-b2-scenario-a';$Body.timeframe.from | Should -BeOfType [long];$Body.timeframe.to | Should -BeGreaterThan $Body.timeframe.from;$Body.dry | Should -BeTrue;$Body.parameters.datasets | Should -Contain 'cloudflare-workers';$Body.parameters.filters.Count | Should -Be 0;$Body.PSObject.Properties.Name | Should -Not -Contain 'page';$Body.PSObject.Properties.Name | Should -Not -Contain 'cursor'
+   $Body.queryId | Should -Be 's3cpu-run-b2-scenario-a';$Body.timeframe.from | Should -BeOfType [long];$Body.timeframe.to | Should -BeGreaterThan $Body.timeframe.from;$Body.dry | Should -BeTrue;$Body.parameters.datasets | Should -Contain 'cloudflare-workers';$Body.parameters.filters.Count | Should -Be 1;$Body.parameters.filters[0].key | Should -Be '$metadata.service';$Body.parameters.filters[0].operation | Should -Be 'eq';$Body.parameters.filters[0].value | Should -Be 's3-worker';$Body.PSObject.Properties.Name | Should -Not -Contain 'page';$Body.PSObject.Properties.Name | Should -Not -Contain 'cursor'
    if($script:page -eq 0){$script:firstFrom=$Body.timeframe.from;$script:firstTo=$Body.timeframe.to}else{$Body.timeframe.from|Should -Be $script:firstFrom;$Body.timeframe.to|Should -Be $script:firstTo}
    $script:page++
    if($script:page -eq 1){[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{count=3;events=@((Get-B2OfficialTelemetryEvent 'a' 'event-a' 2 8),(Get-B2OfficialTelemetryEvent 'b' 'event-b' 3 9))}}}}
    elseif($script:page -eq 2){$Body.offset | Should -Be 'event-b';[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{events=@((Get-B2OfficialTelemetryEvent 'c' 'event-c' 4 10))}}}}
   } -ModuleName Cloudflare
-  $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -PageSize 2;$q.status|Should -Be 'PASS';$q.pageCount|Should -Be 2;$q.records.Count|Should -Be 3;$q.records[0].requestId|Should -Be 'a';$q.records[1].cloudflareRequestId|Should -Be 'cf-b';$q.records[2].scenario|Should -Be 'scenario-a';(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a','b','c')) $q).status|Should -Be 'PASS'
+  $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'PASS';$q.pageCount|Should -Be 2;$q.records.Count|Should -Be 3;$q.records[0].requestId|Should -Be 'a';$q.records[1].cloudflareRequestId|Should -Be 'cf-b';$q.records[2].scenario|Should -Be 'scenario-a';(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a','b','c')) $q).status|Should -Be 'PASS'
  }
- It 'accepts an optional missing event count when the page is short' {Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{events=@()}}}} -ModuleName Cloudflare;$q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a;$q.status|Should -Be 'PASS';$q.paginationComplete|Should -BeTrue;$q.errors.Count|Should -Be 0}
- It 'fails an API error' {Mock Invoke-S3CloudflareRest {throw 'mock api error'} -ModuleName Cloudflare;$q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a;$q.status|Should -Be 'FAIL';$q.apiSuccess|Should -BeFalse}
- It 'fails after the bounded telemetry timeout' {$e=Get-B2ExpectedFixture @('a');Mock Invoke-S3WorkersTelemetryQuery {Get-B2QueryResultFixture @()} -ModuleName CpuGate;$fixed=[DateTime]'2026-08-05T08:00:00Z';$r=Wait-S3WorkersTelemetry -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -ExpectedRequests $e -TimeoutSeconds 0 -RetryDelaySeconds 0 -Now {$fixed} -Sleep {param($Seconds);[void]$Seconds};$r.status|Should -Be 'FAIL';$r.reasons|Should -Contain 'TELEMETRY_TIMEOUT'}
+ It 'accepts an optional missing event count when the page is short' {Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{events=@()}}}} -ModuleName Cloudflare;$q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'PASS';$q.paginationComplete|Should -BeTrue;$q.errors.Count|Should -Be 0}
+ It 'fails an API error' {Mock Invoke-S3CloudflareRest {throw 'mock api error'} -ModuleName Cloudflare;$q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'FAIL';$q.apiSuccess|Should -BeFalse}
+ It 'fails after the bounded telemetry timeout' {$e=Get-B2ExpectedFixture @('a');Mock Invoke-S3WorkersTelemetryQuery {Get-B2QueryResultFixture @()} -ModuleName CpuGate;$fixed=[DateTime]'2026-08-05T08:00:00Z';$r=Wait-S3WorkersTelemetry -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -ExpectedRequests $e -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -TimeoutSeconds 0 -RetryDelaySeconds 0 -Now {$fixed} -Sleep {param($Seconds);[void]$Seconds};$r.status|Should -Be 'FAIL';$r.reasons|Should -Contain 'TELEMETRY_TIMEOUT'}
  It 'fails an invocation termination outcome' {$e=Get-B2ExpectedFixture @('a');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a' -Outcome exceededCpu));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).reasons -join ','|Should -Match 'INVOCATION_TERMINATED'}
  It 'fails additional unrequested Request IDs' {$e=Get-B2ExpectedFixture @('a');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'),(Get-B2RecordFixture extra));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).reasons|Should -Contain 'EXTRA_REQUEST_ID'}
  It 'does not contain a wrangler tail fallback and uses the isolated Observability credential' {$source=Get-Content (Join-Path $SourceRoot 'src\modules\CpuGate.psm1') -Raw;$source|Should -Not -Match '(?i)wrangler.*tail|Start-S3Tail|ConvertFrom-S3TailEvent';$source|Should -Match '/workers/observability/telemetry/query';$source|Should -Match 'cloudflareObservabilityToken';$worker=Get-Content (Join-Path $SourceRoot 'src\worker\src\index.js') -Raw;$worker|Should -Match 'x-s3-run-id';$worker|Should -Match 'x-s3-request-id';$worker|Should -Match 'x-s3-scenario';$worker|Should -Match 's3Correlation'}

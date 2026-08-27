@@ -114,6 +114,14 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
         $proof.emailPasswordOnly | Should -BeTrue
         $proof.otherProviders | Should -BeFalse
     }
+    It 'accepts omitted false-only signIn containers as empty defaults' {
+        $configuration=[pscustomobject]@{signIn=[pscustomobject]@{email=[pscustomobject]@{enabled=$true;passwordRequired=$true}};client=[pscustomobject]@{permissions=[pscustomobject]@{disabledUserSignup=$true;disabledUserDeletion=$true}}}
+        {Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof ([ordered]@{verified=$true;enabledCount=0})}|Should -Not -Throw
+    }
+    It 'still rejects non-boolean values in documented boolean fields' {
+        $configuration=[pscustomobject]@{signIn=[pscustomobject]@{email=[pscustomobject]@{enabled='true';passwordRequired=$true};phoneNumber=[pscustomobject]@{};anonymous=[pscustomobject]@{}};client=[pscustomobject]@{permissions=[pscustomobject]@{disabledUserSignup=$true;disabledUserDeletion=$true}}}
+        {Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof ([ordered]@{verified=$true;enabledCount=0})}|Should -Throw '*FIREBASE_BOOLEAN_EXPECTED*'
+    }
     It 'records firebaseGuard only after independent provider proof' {
         $source=Get-Content (Join-Path $SourceRoot 'src\modules\Firebase.psm1') -Raw
         $proofIndex=$source.IndexOf('$providerProof = Disable-S3FederatedProvider')

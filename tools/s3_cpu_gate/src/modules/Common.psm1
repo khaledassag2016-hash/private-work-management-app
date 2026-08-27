@@ -364,7 +364,7 @@ function Invoke-S3WithWorkerStateRestore {
  $actionError=$null;$restoreError=$null;$result=$null
  try{$result=& $Action}catch{$actionError=$_.Exception}
  finally{
-  try{Copy-Item -LiteralPath $snapshotPath -Destination $configPath -Force;& $Restore $snapshotPath;if($null -ne $Verify){$verification=& $Verify $remoteSnapshot;if($verification -ne $true){throw 'REMOTE_WORKER_RESTORE_VERIFICATION_FAILED'}}}catch{$restoreError=$_.Exception}
+  try{Copy-Item -LiteralPath $snapshotPath -Destination $configPath -Force;& $Restore $remoteSnapshot;if($null -ne $Verify){$verification=& $Verify $remoteSnapshot;if($verification -ne $true){throw 'REMOTE_WORKER_RESTORE_VERIFICATION_FAILED'}}}catch{$restoreError=$_.Exception}
  }
  if($null -ne $restoreError){throw ('WORKER_STATE_RESTORE_FAILED:'+ (Protect-S3Text $restoreError.Message))}
  if($null -ne $actionError){throw $actionError}
