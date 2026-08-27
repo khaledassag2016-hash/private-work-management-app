@@ -1659,6 +1659,38 @@ Describe 'S3-R legacy checkpoint-60 Count root cause' {
  }
 }
 
+Describe 'S3-R Firebase Web App discovery' {
+ It 'fails closed when the preserved project has zero Web Apps' {
+  { Select-S3FirebaseWebApp -Apps @() } | Should -Throw '*FIREBASE_REHYDRATION_WEB_APP_MISSING*'
+ }
+ It 'selects the only preserved Web App deterministically' {
+  $selected=Select-S3FirebaseWebApp -Apps @([ordered]@{appId='web-app-one';platform='WEB'},[ordered]@{appId='android-app-one';platform='ANDROID'})
+  $selected.appId | Should -Be 'web-app-one';$selected.platform | Should -Be 'WEB'
+ }
+ It 'fails closed when multiple preserved Web Apps exist' {
+  { Select-S3FirebaseWebApp -Apps @([ordered]@{appId='web-app-one';platform='WEB'},[ordered]@{appId='web-app-two';platform='WEB'}) } | Should -Throw '*FIREBASE_REHYDRATION_WEB_APP_AMBIGUOUS*'
+ }
+ It 'classifies an invalid Firebase CLI session separately from app and sdkconfig failures' {
+  $result=[pscustomobject]@{ExitCode=1;StdOut='';StdErr='not logged in'}
+  (Get-S3FirebaseCliFailureCode -Result $result -Operation 'apps-list') | Should -Be 'FIREBASE_REHYDRATION_FIREBASE_SESSION_UNAVAILABLE'
+  { Assert-S3FirebaseCliFailure -Result $result -Operation 'apps-list' } | Should -Throw '*FIREBASE_REHYDRATION_FIREBASE_SESSION_UNAVAILABLE*'
+ }
+ It 'distinguishes inventory API failure from sdkconfig API failure' {
+  $result=[pscustomobject]@{ExitCode=1;StdOut='';StdErr='backend unavailable'}
+  (Get-S3FirebaseCliFailureCode -Result $result -Operation 'apps-list') | Should -Be 'FIREBASE_REHYDRATION_WEB_APP_INVENTORY_API_FAILURE'
+  (Get-S3FirebaseCliFailureCode -Result $result -Operation 'sdkconfig') | Should -Be 'FIREBASE_REHYDRATION_WEB_SDKCONFIG_API_FAILURE'
+ }
+ It 'uses the exact single Web App ID for valid sdkconfig rehydration' {
+  $c=Get-TestContext Live;$calls=[Collections.Generic.List[object]]::new()
+  $process={param([string]$FilePath,[string[]]$Arguments);[void]$calls.Add(@($FilePath,$Arguments));if($Arguments -contains 'print-access-token'){return [pscustomobject]@{ExitCode=0;StdOut='synthetic-admin';StdErr=''}};if($Arguments -contains 'apps:list'){return [pscustomobject]@{ExitCode=0;StdOut='{"result":[{"appId":"web-app-one","platform":"WEB"}]}' ;StdErr=''}};if($Arguments -contains 'apps:sdkconfig'){return [pscustomobject]@{ExitCode=0;StdOut='{"apiKey":"synthetic-api-key"}' ;StdErr=''}};throw 'UNEXPECTED_FIREBASE_COMMAND'}
+  $users={param([string]$ProjectId,[string]$Token);[void]$ProjectId;[void]$Token;@([ordered]@{localId='uid-one';email='uid-one@example.invalid'})}
+  $provider=New-S3FirebaseCredentialProvider -Context $c -ProcessProvider $process -UserProvider $users
+  $result=& $provider 'preserved-project' @('uid-one')
+  $result.webAppId | Should -Be 'web-app-one';$result.credentials.Count | Should -Be 1
+  @($calls[2][1]) | Should -Contain 'web-app-one'
+ }
+}
+
 Describe 'S3-R D1 failure restoration' {
  It 'restores uid2 authorization in finally when temporary D1 mutation fails' {
   $c=Get-TestContext Live;$c.RuntimeSecrets.uid1='uid-one';$c.RuntimeSecrets.uid2='uid-two';$c.State.resources.cloudflare=[ordered]@{d1Name='synthetic-d1'};$calls=[Collections.Generic.List[string]]::new()

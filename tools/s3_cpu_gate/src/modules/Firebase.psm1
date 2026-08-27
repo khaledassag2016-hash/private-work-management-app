@@ -581,25 +581,83 @@ function Assert-S3FirebaseThirdSignupRejected {
     throw 'FIREBASE_THIRD_SIGNUP_ACCEPTED'
 }
 
+function Get-S3FirebaseCliFailureCode {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Result,[Parameter(Mandatory)][ValidateSet('session','apps-list','sdkconfig')][string]$Operation)
+    $diagnostic=Protect-S3Text (([string]$Result.StdErr) + ' ' + ([string]$Result.StdOut))
+    if($Operation -eq 'session' -or $diagnostic -match '(?i)not logged|login required|unauthorized|authentication|credential|could not authenticate|access denied|permission denied'){
+        return 'FIREBASE_REHYDRATION_FIREBASE_SESSION_UNAVAILABLE'
+    }
+    if($Operation -eq 'apps-list'){return 'FIREBASE_REHYDRATION_WEB_APP_INVENTORY_API_FAILURE'}
+    return 'FIREBASE_REHYDRATION_WEB_SDKCONFIG_API_FAILURE'
+}
+
+function Assert-S3FirebaseCliFailure {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Result,[Parameter(Mandatory)][ValidateSet('session','apps-list','sdkconfig')][string]$Operation)
+    $diagnostic=Protect-S3Text (([string]$Result.StdErr) + ' ' + ([string]$Result.StdOut))
+    if([string]::IsNullOrWhiteSpace($diagnostic)){$diagnostic='NO_DIAGNOSTIC'}
+    if($diagnostic.Length -gt 256){$diagnostic=$diagnostic.Substring(0,256)}
+    $code=Get-S3FirebaseCliFailureCode -Result $Result -Operation $Operation
+    $fingerprint=Get-S3StableHash ("$code|$Operation|$($Result.ExitCode)|$diagnostic")
+    throw ("$code|operation=$Operation|exitCode=$($Result.ExitCode)|fingerprint=$fingerprint|diagnostic=$diagnostic")
+}
+
+function Select-S3FirebaseWebApp {
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][object[]]$Apps)
+    $webApps=@($Apps | Where-Object {
+        $platform=[string](Get-S3MapValue -Map $_ -Name 'platform')
+        $appId=[string](Get-S3MapValue -Map $_ -Name 'appId')
+        $platform -match '(?i)^web$' -and -not [string]::IsNullOrWhiteSpace($appId)
+    })
+    if($webApps.Count -eq 0){throw 'FIREBASE_REHYDRATION_WEB_APP_MISSING'}
+    if($webApps.Count -gt 1){throw 'FIREBASE_REHYDRATION_WEB_APP_AMBIGUOUS'}
+    $selected=$webApps[0]
+    return [ordered]@{appId=[string](Get-S3MapValue -Map $selected -Name 'appId');platform='WEB'}
+}
+
+function Get-S3FirebaseWebConfiguration {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$ProjectId,[AllowNull()][scriptblock]$ProcessProvider=$null)
+    $capturedContext=$Context
+    $runner=$ProcessProvider
+    if($null -eq $runner){
+        $runner={param([string]$FilePath,[string[]]$Arguments) Invoke-S3Process -Context $capturedContext -FilePath $FilePath -ArgumentList $Arguments -TimeoutSeconds 120 -AllowFailure -SensitiveOutput}.GetNewClosure()
+    }
+    $appsResult=& $runner -FilePath 'firebase' -Arguments @('apps:list','WEB','--project',$ProjectId,'--json','--non-interactive')
+    if($appsResult.ExitCode -ne 0){Assert-S3FirebaseCliFailure -Result $appsResult -Operation 'apps-list'}
+    try{$appsPayload=$appsResult.StdOut|ConvertFrom-Json}catch{throw 'FIREBASE_REHYDRATION_WEB_APP_INVENTORY_INVALID'}
+    $appsValue=Get-S3MapValue -Map $appsPayload -Name 'result'
+    if($null -eq $appsValue){$appsValue=Get-S3MapValue -Map $appsPayload -Name 'apps'}
+    if($null -eq $appsValue -and $appsPayload -is [array]){$appsValue=$appsPayload}
+    $selectedApp=Select-S3FirebaseWebApp -Apps @($appsValue)
+    $sdkResult=& $runner -FilePath 'firebase' -Arguments @('apps:sdkconfig','WEB',$selectedApp.appId,'--project',$ProjectId,'--json','--non-interactive')
+    if($sdkResult.ExitCode -ne 0){Assert-S3FirebaseCliFailure -Result $sdkResult -Operation 'sdkconfig'}
+    try{$sdk=$sdkResult.StdOut|ConvertFrom-Json}catch{throw 'FIREBASE_REHYDRATION_WEB_CONFIG_INVALID'}
+    $apiKey=[string]$sdk.apiKey
+    if([string]::IsNullOrWhiteSpace($apiKey) -and $null -ne $sdk.config){$apiKey=[string]$sdk.config.apiKey}
+    if([string]::IsNullOrWhiteSpace($apiKey)){throw 'FIREBASE_REHYDRATION_WEB_API_KEY_REQUIRED'}
+    return [ordered]@{appId=$selectedApp.appId;apiKey=$apiKey}
+}
+
 function New-S3FirebaseCredentialProvider {
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
-    param([Parameter(Mandatory)]$Context)
+    param([Parameter(Mandatory)]$Context,[AllowNull()][scriptblock]$ProcessProvider=$null,[AllowNull()][scriptblock]$UserProvider=$null)
     if(-not $PSCmdlet.ShouldProcess([string]$Context.RunId,'Create in-memory Firebase credential provider')){return}
-    $capturedContext=$Context
+    $capturedContext=$Context;$capturedProcessProvider=$ProcessProvider;$capturedUserProvider=$UserProvider
+    if($null -eq $capturedProcessProvider){$capturedProcessProvider={param([string]$FilePath,[string[]]$Arguments) Invoke-S3Process -Context $capturedContext -FilePath $FilePath -ArgumentList $Arguments -TimeoutSeconds 120 -AllowFailure -SensitiveOutput}.GetNewClosure()}
+    if($null -eq $capturedUserProvider){$capturedUserProvider={param([string]$ProjectId,[string]$Token) Get-S3FirebaseUser -ProjectId $ProjectId -Token $Token}.GetNewClosure()}
     return {
         param([string]$ProjectId,[string[]]$ExpectedUids)
-        $adminResult=Invoke-S3Process -Context $capturedContext -FilePath 'gcloud' -ArgumentList @('auth','print-access-token') -TimeoutSeconds 120 -AllowFailure -SensitiveOutput
-        if($adminResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace([string]$adminResult.StdOut)){throw 'FIREBASE_REHYDRATION_ADMIN_SESSION_REQUIRED'}
+        $adminResult=& $capturedProcessProvider -FilePath 'gcloud' -Arguments @('auth','print-access-token')
+        if($adminResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($adminResult.StdOut)){Assert-S3FirebaseCliFailure -Result $adminResult -Operation 'session'}
         $adminToken=[string]$adminResult.StdOut.Trim()
-        $sdkResult=Invoke-S3Process -Context $capturedContext -FilePath 'firebase' -ArgumentList @('apps:sdkconfig','WEB','--project',$ProjectId,'--json') -TimeoutSeconds 120 -AllowFailure -SensitiveOutput
-        if($sdkResult.ExitCode -ne 0){throw 'FIREBASE_REHYDRATION_WEB_CONFIG_UNAVAILABLE'}
-        try{$sdk=$sdkResult.StdOut|ConvertFrom-Json}catch{throw 'FIREBASE_REHYDRATION_WEB_CONFIG_INVALID'}
-        $apiKey=[string]$sdk.apiKey
-        if([string]::IsNullOrWhiteSpace($apiKey) -and $null -ne $sdk.config){$apiKey=[string]$sdk.config.apiKey}
-        if([string]::IsNullOrWhiteSpace($apiKey)){throw 'FIREBASE_REHYDRATION_WEB_API_KEY_REQUIRED'}
-        $users=@(Get-S3FirebaseUser -ProjectId $ProjectId -Token $adminToken);$credentials=@()
+        $webConfig=Get-S3FirebaseWebConfiguration -Context $capturedContext -ProjectId $ProjectId -ProcessProvider $capturedProcessProvider
+        $selectedApp=[ordered]@{appId=$webConfig.appId;platform='WEB'};$apiKey=[string]$webConfig.apiKey
+        $users=@(& $capturedUserProvider -ProjectId $ProjectId -Token $adminToken);$credentials=@()
         foreach($uid in $ExpectedUids){$user=@($users|Where-Object{[string]$_.localId -ceq [string]$uid})|Select-Object -First 1;if($null -eq $user){throw 'FIREBASE_REHYDRATION_UID_NOT_FOUND'};$email=[string]$user.email;if([string]::IsNullOrWhiteSpace($email)){throw 'FIREBASE_REHYDRATION_EMAIL_NOT_FOUND'};$credentials+=,[ordered]@{uid=[string]$uid;email=$email;password=Get-S3SyntheticPassword;apiKey=$apiKey}}
-        return [ordered]@{adminToken=$adminToken;credentials=$credentials}
+        return [ordered]@{adminToken=$adminToken;apiKey=$apiKey;webAppId=$selectedApp.appId;credentials=$credentials}
     }.GetNewClosure()
 }
 
