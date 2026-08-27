@@ -13,6 +13,23 @@ Describe 'B3 Firebase recordsCount ProtoJSON compatibility' -Tag 'B3' {
         $script:capturedFirebaseRestHeaders['x-goog-user-project'] | Should -Be 'ultra-function-476817-g5'
     }
 
+    It 'sends the REST-compatible string int64 limit for accounts:query' {
+        $script:capturedFirebaseRestBody = $null
+        $script:capturedFirebaseRestUri = $null
+        Mock Invoke-RestMethod {
+            param($Uri,$Body)
+            $script:capturedFirebaseRestUri = $Uri
+            $script:capturedFirebaseRestBody = $Body
+            [pscustomobject]@{recordsCount='0'}
+        } -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId 's3cpu-test' -Token 'test-token').Count | Should -Be 0
+        $script:capturedFirebaseRestUri | Should -Match '/projects/s3cpu-test/accounts:query$'
+        $request = $script:capturedFirebaseRestBody | ConvertFrom-Json
+        $request.limit | Should -BeOfType ([string])
+        $request.limit | Should -Be '100'
+        $request.returnUserInfo | Should -BeTrue
+    }
+
     It 'accepts recordsCount string zero with omitted userInfo as zero users' {
         Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount='0'} } -ModuleName Firebase
         @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 0

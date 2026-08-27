@@ -209,7 +209,7 @@ function Assert-S3FirebaseConfiguration {
 
 function Get-S3FirebaseUser {
     param([string]$ProjectId,[string]$Token)
-    $response = Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:query" -Token $Token -Body @{returnUserInfo=$true;limit=100}
+    $response = Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:query" -Token $Token -Body @{returnUserInfo=$true;limit='100'}
     $hasUserInfo = Test-S3PropertyPresent -InputObject $response -Name 'userInfo'
     $users = @()
     if ($hasUserInfo) {
