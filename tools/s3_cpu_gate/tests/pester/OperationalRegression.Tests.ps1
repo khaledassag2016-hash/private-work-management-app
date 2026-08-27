@@ -1680,9 +1680,17 @@ Describe 'S3-R Firebase Web App discovery' {
   (Get-S3FirebaseCliFailureCode -Result $result -Operation 'apps-list') | Should -Be 'FIREBASE_REHYDRATION_WEB_APP_INVENTORY_API_FAILURE'
   (Get-S3FirebaseCliFailureCode -Result $result -Operation 'sdkconfig') | Should -Be 'FIREBASE_REHYDRATION_WEB_SDKCONFIG_API_FAILURE'
  }
+ It 'parses the raw firebase-tools sdkconfig envelope with status result sdkConfig and apiKey' {
+  $payload='{"status":"success","result":{"sdkConfig":{"apiKey":"synthetic-api-key"}}}' | ConvertFrom-Json
+  Get-S3FirebaseSdkConfigApiKey -Payload $payload | Should -Be 'synthetic-api-key'
+ }
+ It 'fails closed for an unexpected firebase-tools sdkconfig envelope' {
+  $payload='{"status":"success","result":{"sdkConfig":{"config":{"apiKey":"synthetic-api-key"}}}}' | ConvertFrom-Json
+  { Get-S3FirebaseSdkConfigApiKey -Payload $payload } | Should -Throw '*FIREBASE_REHYDRATION_WEB_SDKCONFIG_SHAPE_INVALID*'
+ }
  It 'uses the exact single Web App ID for valid sdkconfig rehydration' {
   $c=Get-TestContext Live;$calls=[Collections.Generic.List[object]]::new()
-  $process={param([string]$FilePath,[string[]]$Arguments);[void]$calls.Add(@($FilePath,$Arguments));if($Arguments -contains 'print-access-token'){return [pscustomobject]@{ExitCode=0;StdOut='synthetic-admin';StdErr=''}};if($Arguments -contains 'apps:list'){return [pscustomobject]@{ExitCode=0;StdOut='{"result":[{"appId":"web-app-one","platform":"WEB"}]}' ;StdErr=''}};if($Arguments -contains 'apps:sdkconfig'){return [pscustomobject]@{ExitCode=0;StdOut='{"apiKey":"synthetic-api-key"}' ;StdErr=''}};throw 'UNEXPECTED_FIREBASE_COMMAND'}
+  $process={param([string]$FilePath,[string[]]$Arguments);[void]$calls.Add(@($FilePath,$Arguments));if($Arguments -contains 'print-access-token'){return [pscustomobject]@{ExitCode=0;StdOut='synthetic-admin';StdErr=''}};if($Arguments -contains 'apps:list'){return [pscustomobject]@{ExitCode=0;StdOut='{"result":[{"appId":"web-app-one","platform":"WEB"}]}' ;StdErr=''}};if($Arguments -contains 'apps:sdkconfig'){return [pscustomobject]@{ExitCode=0;StdOut='{"status":"success","result":{"sdkConfig":{"apiKey":"synthetic-api-key"}}}' ;StdErr=''}};throw 'UNEXPECTED_FIREBASE_COMMAND'}
   $users={param([string]$ProjectId,[string]$Token);[void]$ProjectId;[void]$Token;@([ordered]@{localId='uid-one';email='uid-one@example.invalid'})}
   $provider=New-S3FirebaseCredentialProvider -Context $c -ProcessProvider $process -UserProvider $users
   $result=& $provider 'preserved-project' @('uid-one')

@@ -617,6 +617,23 @@ function Select-S3FirebaseWebApp {
     return [ordered]@{appId=[string](Get-S3MapValue -Map $selected -Name 'appId');platform='WEB'}
 }
 
+function Get-S3FirebaseSdkConfigApiKey {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Payload,[ValidateNotNullOrEmpty()][string]$FailureCode='FIREBASE_REHYDRATION_WEB_SDKCONFIG_SHAPE_INVALID')
+    try {
+        $status = [string](Get-S3RequiredPropertyValue -InputObject $Payload -Name 'status')
+        if ($status -cne 'success') { throw 'status' }
+        $result = Get-S3RequiredPropertyValue -InputObject $Payload -Name 'result'
+        $sdkConfig = Get-S3RequiredPropertyValue -InputObject $result -Name 'sdkConfig'
+        $apiKeyValue = Get-S3RequiredPropertyValue -InputObject $sdkConfig -Name 'apiKey'
+        if ($apiKeyValue -isnot [string] -or [string]::IsNullOrWhiteSpace($apiKeyValue)) { throw 'apiKey' }
+        return [string]$apiKeyValue
+    }
+    catch {
+        throw $FailureCode
+    }
+}
+
 function Get-S3FirebaseWebConfiguration {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$ProjectId,[AllowNull()][scriptblock]$ProcessProvider=$null)
@@ -635,9 +652,7 @@ function Get-S3FirebaseWebConfiguration {
     $sdkResult=& $runner -FilePath 'firebase' -Arguments @('apps:sdkconfig','WEB',$selectedApp.appId,'--project',$ProjectId,'--json','--non-interactive')
     if($sdkResult.ExitCode -ne 0){Assert-S3FirebaseCliFailure -Result $sdkResult -Operation 'sdkconfig'}
     try{$sdk=$sdkResult.StdOut|ConvertFrom-Json}catch{throw 'FIREBASE_REHYDRATION_WEB_CONFIG_INVALID'}
-    $apiKey=[string]$sdk.apiKey
-    if([string]::IsNullOrWhiteSpace($apiKey) -and $null -ne $sdk.config){$apiKey=[string]$sdk.config.apiKey}
-    if([string]::IsNullOrWhiteSpace($apiKey)){throw 'FIREBASE_REHYDRATION_WEB_API_KEY_REQUIRED'}
+    $apiKey=Get-S3FirebaseSdkConfigApiKey -Payload $sdk
     return [ordered]@{appId=$selectedApp.appId;apiKey=$apiKey}
 }
 
@@ -838,8 +853,7 @@ function Invoke-S3FirebaseProvision {
         $appId = [string]($apps.result.appId ?? $apps.appId)
         if ([string]::IsNullOrWhiteSpace($appId)) { throw 'FIREBASE_WEB_APP_ID_MISSING' }
         $sdk = (Invoke-S3Process -Context $Context -FilePath 'firebase' -ArgumentList @('apps:sdkconfig','WEB',$appId,'--project',$projectId,'--json') -TimeoutSeconds 180 -SensitiveOutput).StdOut | ConvertFrom-Json
-        $apiKey = [string]($sdk.result.sdkConfig.apiKey ?? $sdk.sdkConfig.apiKey)
-        if ([string]::IsNullOrWhiteSpace($apiKey)) { throw 'FIREBASE_WEB_API_KEY_MISSING' }
+        $apiKey = Get-S3FirebaseSdkConfigApiKey -Payload $sdk -FailureCode 'FIREBASE_WEB_API_KEY_MISSING'
         $accessToken = Get-S3GoogleAccessToken -Context $Context
         $configUri = "https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config"
         $body = @{name="projects/$projectId/config";signIn=@{email=@{enabled=$true;passwordRequired=$true};phoneNumber=@{enabled=$false};anonymous=@{enabled=$false};allowDuplicateEmails=$false};client=@{permissions=@{disabledUserSignup=$true;disabledUserDeletion=$true}}}
