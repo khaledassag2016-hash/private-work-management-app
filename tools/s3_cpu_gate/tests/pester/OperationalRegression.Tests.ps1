@@ -1580,6 +1580,12 @@ Describe 'S3-R Harness secure rehydration regressions' {
   $cloudflareIndex=$orchestrator.IndexOf('Invoke-S3CloudflareRuntimeRehydration');$firebaseIndex=$orchestrator.IndexOf('Invoke-S3FirebaseRuntimeRehydration');$cloudflareIndex|Should -BeGreaterThan -1;$firebaseIndex|Should -BeGreaterThan $cloudflareIndex
   $rehydrationStart=$firebase.IndexOf('function Invoke-S3FirebaseRuntimeRehydration');$firebaseBlock=$firebase.Substring($rehydrationStart);$configIndex=$firebaseBlock.IndexOf('Invoke-S3GoogleRest -Method GET -Uri $configurationUri');$passwordIndex=$firebaseBlock.IndexOf('Update-S3FirebaseAdminUserPassword');$tokenIndex=$firebaseBlock.IndexOf('Get-S3FirebaseIdToken');$rehydrationStart|Should -BeGreaterThan -1;$configIndex|Should -BeGreaterThan -1;$passwordIndex|Should -BeGreaterThan $configIndex;$tokenIndex|Should -BeGreaterThan $passwordIndex
  }
+ It 'keeps checkpoint 60 and blocks cleanup/report after CPU decision FAIL' {
+  $c=Get-TestContext Live;$c.State.currentState='60_CLOUDFLARE_PROVISIONED';$c.State.completed=@('00_PACKAGE_READY','60_CLOUDFLARE_PROVISIONED');$decision=[ordered]@{status='FAIL';reasons=@('CPU_REJECTED')}
+  {Complete-S3CpuGateDecision -Context $c -CpuDecision $decision}|Should -Throw '*CPU_GATE_DECISION_FAILED*'
+  (Get-S3MapValue -Map $c.State.results -Name 'cpu').status|Should -Be 'FAIL';$c.State.currentState|Should -Be '60_CLOUDFLARE_PROVISIONED'
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$source|Should -Match 'Complete-S3CpuGateDecision';$source|Should -Match '-not \$cpuDecisionFailed';$source|Should -Match 'currentState -eq ''80_RESOURCES_DESTROYED'''
+ }
  It 'does not run cleanup automatically for a resumed preserved run' {
   $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
   $source|Should -Match 'resumedSuccess'

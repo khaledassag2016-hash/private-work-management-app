@@ -91,13 +91,26 @@ Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
   $script:firstFrom=$null;$script:firstTo=$null
   Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token,$Body)
    [void]$Method;[void]$Uri;[void]$Token
-   $Body.queryId | Should -Be 's3cpu-run-b2-scenario-a';$Body.timeframe.from | Should -BeOfType [long];$Body.timeframe.to | Should -BeGreaterThan $Body.timeframe.from;$Body.dry | Should -BeTrue;$Body.parameters.datasets | Should -Contain 'cloudflare-workers';$Body.parameters.filters.Count | Should -Be 1;$Body.parameters.filters[0].key | Should -Be '$metadata.service';$Body.parameters.filters[0].operation | Should -Be 'eq';$Body.parameters.filters[0].value | Should -Be 's3-worker';$Body.PSObject.Properties.Name | Should -Not -Contain 'page';$Body.PSObject.Properties.Name | Should -Not -Contain 'cursor'
+   $Body.queryId | Should -Be 's3cpu-run-b2-scenario-a';[int]$Body.limit | Should -BeLessOrEqual 100;$Body.timeframe.from | Should -BeOfType [long];$Body.timeframe.to | Should -BeGreaterThan $Body.timeframe.from;$Body.dry | Should -BeTrue;$Body.parameters.datasets | Should -Contain 'cloudflare-workers';$Body.parameters.filters.Count | Should -Be 1;$Body.parameters.filters[0].key | Should -Be '$metadata.service';$Body.parameters.filters[0].operation | Should -Be 'eq';$Body.parameters.filters[0].value | Should -Be 's3-worker';$Body.PSObject.Properties.Name | Should -Not -Contain 'page';$Body.PSObject.Properties.Name | Should -Not -Contain 'cursor'
    if($script:page -eq 0){$script:firstFrom=$Body.timeframe.from;$script:firstTo=$Body.timeframe.to}else{$Body.timeframe.from|Should -Be $script:firstFrom;$Body.timeframe.to|Should -Be $script:firstTo}
    $script:page++
    if($script:page -eq 1){[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{count=3;events=@((Get-B2OfficialTelemetryEvent 'a' 'event-a' 2 8),(Get-B2OfficialTelemetryEvent 'b' 'event-b' 3 9))}}}}
    elseif($script:page -eq 2){$Body.offset | Should -Be 'event-b';[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{events=@((Get-B2OfficialTelemetryEvent 'c' 'event-c' 4 10))}}}}
   } -ModuleName Cloudflare
   $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'PASS';$q.pageCount|Should -Be 2;$q.records.Count|Should -Be 3;$q.records[0].requestId|Should -Be 'a';$q.records[1].cloudflareRequestId|Should -Be 'cf-b';$q.records[2].scenario|Should -Be 'scenario-a';(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a','b','c')) $q).status|Should -Be 'PASS'
+ }
+ It 'uses default limit 100 and rejects a limit above the official maximum' {
+  $body=Get-S3WorkersObservabilityQueryBody -QueryId q -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -ToUtc ([DateTime]'2026-08-05T08:00:00Z');$body.limit|Should -Be 100
+  {Get-S3WorkersObservabilityQueryBody -QueryId q -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -ToUtc ([DateTime]'2026-08-05T08:00:00Z') -Limit 101}|Should -Throw
+  {Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -PageSize 101}|Should -Throw
+ }
+ It 'paginates safely when the official response contains more than 100 events' {
+  $script:page=0
+  Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token,$Body);[void]$Method;[void]$Uri;[void]$Token;[int]$Body.limit|Should -Be 100;$script:page++
+   if($script:page -eq 1){[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{count=101;events=@(1..100|ForEach-Object{Get-B2OfficialTelemetryEvent "a$_" "event-$_" 2 8})}}}}
+   elseif($script:page -eq 2){$Body.offset|Should -Be 'event-100';[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{events=@((Get-B2OfficialTelemetryEvent 'a101' 'event-101' 2 8))}}}}
+  } -ModuleName Cloudflare
+  $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'PASS';$q.pageCount|Should -Be 2;$q.rawCount|Should -Be 101;$q.records.Count|Should -Be 101
  }
  It 'accepts an optional missing event count when the page is short' {Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{events=@()}}}} -ModuleName Cloudflare;$q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'PASS';$q.paginationComplete|Should -BeTrue;$q.errors.Count|Should -Be 0}
  It 'fails an API error' {Mock Invoke-S3CloudflareRest {throw 'mock api error'} -ModuleName Cloudflare;$q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'FAIL';$q.apiSuccess|Should -BeFalse}

@@ -15,3 +15,11 @@ def test_simulation_deletes_cloudflare(tmp_path): assert simulate(tmp_path)['res
 def test_failure_still_deletes_firebase(tmp_path): assert simulate(tmp_path,'60_CLOUDFLARE_PROVISIONED')['resources']['firebase']['deleted'] is True
 def test_failure_still_deletes_cloudflare(tmp_path): assert simulate(tmp_path,'60_CLOUDFLARE_PROVISIONED')['resources']['cloudflare']['deleted'] is True
 def test_failure_does_not_claim_report_ready(tmp_path): assert simulate(tmp_path,'60_CLOUDFLARE_PROVISIONED')['currentState']!='90_REPORT_READY'
+def test_cpu_decision_fail_preserves_checkpoint_and_blocks_cleanup_report(tmp_path):
+    result=simulate(tmp_path,'CPU_GATE_DECISION_FAILED')
+    assert result['currentState']=='60_CLOUDFLARE_PROVISIONED'
+    assert result['results']['cpu']['status']=='FAIL'
+    assert result['failure']=='CPU_GATE_DECISION_FAILED'
+    assert 'deleted' not in result['resources']['firebase']
+    assert 'deleted' not in result['resources']['cloudflare']
+    assert not (tmp_path/'reports'/'simulation.json').exists()

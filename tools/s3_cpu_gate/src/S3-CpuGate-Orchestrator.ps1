@@ -58,22 +58,24 @@ try{
    $cpu=Invoke-S3WithWorkerStateRestore -Context $context -Snapshot { Get-S3CloudflareWorkerRemoteSnapshot -Context $context -AccountId $accountId -WorkerName $workerName -Token $workerToken } -Action { Invoke-S3CpuGate -Context $context } -Restore { param($snapshot) $versionId=[string](Get-S3CloudflareValue -InputObject $snapshot.public.deployment -Name 'activeVersionId');if([string]::IsNullOrWhiteSpace($versionId)){throw 'REMOTE_WORKER_ACTIVE_VERSION_MISSING'};$restore=Invoke-S3Process -Context $context -FilePath 'wrangler' -ArgumentList @('versions','deploy',$versionId,'--name',$workerName,'--yes') -WorkingDirectory (Join-Path $context.Root 'workspace\worker') -TimeoutSeconds 600;if($restore.ExitCode -ne 0){throw 'REMOTE_WORKER_VERSION_RESTORE_FAILED'} } -Verify { param($snapshot) $after=Get-S3CloudflareWorkerRemoteSnapshot -Context $context -AccountId $accountId -WorkerName $workerName -Token $workerToken;Test-S3CloudflareWorkerRemoteSnapshot -Before $snapshot -After $after }
    Set-S3MapValue -Map $cpu -Name 'REMOTE_WORKER_RESTORE_VERIFIED' -Value $true;Set-S3MapValue -Map $cpu -Name 'REMOTE_WORKER_EFFECTIVE_STATE_RESTORED' -Value $true
   }else{$cpu=Invoke-S3CpuGate -Context $context}
-  Set-S3MapValue -Map $context.State.results -Name 'cpu' -Value $cpu;Set-S3Checkpoint $context '70_CPU_GATE_EXECUTED'
+  Complete-S3CpuGateDecision -Context $context -CpuDecision $cpu | Out-Null
  }
  if($context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $context.IsResumed){$cpu=Get-S3MapValue -Map $context.State.results -Name 'cpu'}
 }catch{
  $hadFailure=$true
  $failureReason=Protect-S3Text $_.Exception.Message
+ $cpuDecisionFailed=($failureReason -eq 'CPU_GATE_DECISION_FAILED')
  if($null -ne $context){
   [void](Write-S3FailureEvidence -Context $context -Reason $failureReason -FailureRecord $_ -Operation 'orchestrator.main')
-  try{New-S3BlockerReport -Context $context -Reason $failureReason|Out-Null}catch{Write-Verbose ("تعذر إنشاء blocker-report.zip: " + $_.Exception.Message)}
+  if(-not $cpuDecisionFailed){try{New-S3BlockerReport -Context $context -Reason $failureReason|Out-Null}catch{Write-Verbose ("تعذر إنشاء blocker-report.zip: " + $_.Exception.Message)}}
  }
  Write-Information -InformationAction Continue ('توقف آمن: '+$failureReason)
 }finally{
  try{
    $hasOwnedCloudResource=$false;if($null -ne $context){$hasOwnedCloudResource=Test-S3HasOwnedCloudResource -Context $context}
+   $cpuDecisionFailed=($null -ne $context -and $context.State.currentState -eq '60_CLOUDFLARE_PROVISIONED' -and $null -ne $cpu -and [string](Get-S3MapValue -Map $cpu -Name 'status') -ne 'PASS')
    $resumedSuccess=($null -ne $context -and $context.IsResumed -and $context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $null -ne $cpu -and [string](Get-S3MapValue -Map $cpu -Name 'status') -eq 'PASS' -and -not $hadFailure)
-   if($null -ne $context -and $Mode -ne 'Plan' -and $hasOwnedCloudResource -and (-not $context.IsResumed -or $resumedSuccess)){
+   if($null -ne $context -and $Mode -ne 'Plan' -and $hasOwnedCloudResource -and (-not $cpuDecisionFailed) -and (-not $context.IsResumed -or $resumedSuccess)){
    Show-S3Stage 8 9 'التنظيف الإلزامي' 'سيُحذف فقط ما أنشأته الحزمة ويحمل Run ID، وستُحفظ جلسات المستخدم السابقة.'
    $cleanupResult=Invoke-S3Cleanup -Context $context
    if($context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $cleanupResult.status -eq 'PASS'){Set-S3Checkpoint $context '80_RESOURCES_DESTROYED'}

@@ -30,14 +30,18 @@ def simulate(root:Path, fail_at:str|None=None)->dict:
         state["resources"]["cloudflare"]={"worker":f"{run_id}-worker","d1Name":f"{run_id}-d1","marker":run_id,"billing":False};advance("60_CLOUDFLARE_PROVISIONED")
         negatives={name:"PASS" for name in ("uid_not_allowed","unknown_kid","modified_signature","expired","audience","issuer","certificate_fetch","invalid_cache_metadata")}
         payload={"groups":{"cache_hit_round_1":rows(100,2.1,"hit"),"cache_hit_round_2":rows(100,2.2,"hit"),"cache_miss":rows(20,4.5,"miss")},"plan_free":True,"billing_absent":True,"security_reduced":False,"telemetry_official":True,"stable":True,"independent_reproducible_cpu_terminations":0,"negativeTests":negatives}
-        decision=evaluate(payload);state["results"]["cpu"]=decision;advance("70_CPU_GATE_EXECUTED")
+        if fail_at=="CPU_GATE_DECISION_FAILED":payload["groups"]["cache_miss"]=[]
+        decision=evaluate(payload);state["results"]["cpu"]=decision
+        if decision.get("status")!="PASS":raise RuntimeError("CPU_GATE_DECISION_FAILED")
+        advance("70_CPU_GATE_EXECUTED")
     except Exception as exc:
         state["failure"]=str(exc)
     finally:
-        # cleanup is unconditional for resources owned by this run
-        for key in ("cloudflare","firebase"):
-            resource=state["resources"].get(key)
-            if resource and resource.get("marker")==run_id:resource["deleted"]=True
+        cpu_decision_failed=state["currentState"]=="60_CLOUDFLARE_PROVISIONED" and state["results"].get("cpu",{}).get("status")=="FAIL"
+        if not cpu_decision_failed:
+            for key in ("cloudflare","firebase"):
+                resource=state["resources"].get(key)
+                if resource and resource.get("marker")==run_id:resource["deleted"]=True
         if state["currentState"]=="70_CPU_GATE_EXECUTED" and not state["failure"]:advance("80_RESOURCES_DESTROYED")
         for item in temp.iterdir():
             if item.is_file():item.unlink()

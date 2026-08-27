@@ -258,14 +258,16 @@ async function installAuthTransport() {
     const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, new TextEncoder().encode(signed));
     return `${signed}.${b64url(new Uint8Array(signature))}`;
   };
+  let certificateFetchCount = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, options = {}) => {
     const href = input instanceof Request ? input.url : String(input);
-    if (href.includes('/robot/v1/metadata/x509/')) return new Response(JSON.stringify({ [kid]: certificatePem }), { status: 200, headers: { 'Cache-Control': 'public, max-age=3600' } });
+    if (href.includes('/robot/v1/metadata/x509/')) { certificateFetchCount += 1; return new Response(JSON.stringify({ [kid]: certificatePem }), { status: 200, headers: { 'Cache-Control': 'public, max-age=3600' } }); }
     return originalFetch(input, options);
   };
   return {
     tokenFor,
+    certificateFetches() { return certificateFetchCount; },
     async tokens() { return { valid: await tokenFor('uid-one'), ghost: await tokenFor('uid-ghost'), wrongAudience: await tokenFor('uid-one', { aud: 'wrong-project' }) }; },
     dispose() { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); },
   };
@@ -442,6 +444,36 @@ test('S10 security and permissions exercise the real Worker authentication bound
       historical_import_no_bypass: 'PASS', secrets_in_errors: 'PASS',
     };
   } finally {
+    auth.dispose();
+    database.close();
+  }
+});
+
+test('S3 forced cache miss refreshes certificates before JWT verification and reports verified miss state', async () => {
+  const fixture = newFixture('s3-forced-cache-miss');
+  const { database, env } = fixture;
+  const auth = await installAuthTransport();
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (entry, ...rest) => { if (entry?.event === 'auth_result') logs.push(entry); void rest; };
+  try {
+    const nonce = 'synthetic-reset-nonce';
+    env.TEST_CONTROLS = 'enabled';
+    env.TEST_RESET_NONCE = nonce;
+    const token = await auth.tokenFor('uid-one');
+    const response = await workerCall(env, '/private/ping', token, { headers: {
+      'x-s3-request-id': 'forced-cache-miss-request',
+      'x-s3-run-id': env.RUN_MARKER,
+      'x-s3-scenario': 'cache_miss',
+      'x-s3-force-certificate-refresh': 'true',
+      'x-s3-test-reset': nonce,
+    } });
+    assert.equal(response.status, 200);
+    assert.equal(auth.certificateFetches(), 1);
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].cacheState, 'miss');
+  } finally {
+    console.log = originalLog;
     auth.dispose();
     database.close();
   }

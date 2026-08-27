@@ -205,7 +205,7 @@ function Invoke-S3CpuGate {
  if($Context.Mode -eq 'Simulation'){
   function MakeRows([int]$Count,[double]$Base,[string]$Cache){$rows=@();for($index=0;$index -lt $Count;$index++){$rows+=[ordered]@{cpu_ms=$Base+(($index%7)*0.07);wall_ms=20+(($index%5)*0.4);outcome='ok';cache_state=$Cache}};return $rows}
   $payload=[ordered]@{groups=[ordered]@{cache_hit_round_1=MakeRows 100 2.1 'hit';cache_hit_round_2=MakeRows 100 2.2 'hit';cache_miss=MakeRows 20 4.5 'miss'};plan_free=$true;billing_absent=$true;security_reduced=$false;telemetry_official=$true;stable=$true;independent_reproducible_cpu_terminations=0;audit=[ordered]@{status='PASS';dbSide=$true};negativeTests=[ordered]@{uid_not_allowed='PASS';unknown_kid='PASS';modified_signature='PASS';expired='PASS';audience='PASS';issuer='PASS';certificate_fetch='PASS';invalid_cache_metadata='PASS'}}
-  $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;$payload|ConvertTo-Json -Depth 20|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8;return $decision
+  $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;if([string](Get-S3MapValue -Map $decision -Name 'status') -eq 'PASS'){$payload|ConvertTo-Json -Depth 20|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8};return $decision
  }
  if($Context.Mode -ne 'Live'){return [ordered]@{status='NOT_EXECUTED';reasons=@('PLAN_MODE')}}
  $cloudflare=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';$uri="$((Get-S3MapValue -Map $cloudflare -Name 'url'))/private/ping";$token1=[string]$Context.RuntimeSecrets.token1;$token2=[string]$Context.RuntimeSecrets.token2;$nonce=[string]$Context.RuntimeSecrets.testResetNonce
@@ -229,7 +229,7 @@ function Invoke-S3CpuGate {
   Set-S3WorkerTestVariable -Context $Context -Vars @{TEST_CONTROLS='disabled';TEST_RESET_NONCE=$null;EXPECTED_AUDIENCE_OVERRIDE=$null;EXPECTED_ISSUER_PROJECT_OVERRIDE=$null;TEST_NOW_OFFSET_SECONDS=$null;CERT_URL_OVERRIDE=$null;FORCE_CACHE_METADATA_INVALID=$null}
   $group1=@($telemetry1.records);$group2=@($telemetry2.records);$misses=@($telemetryMiss.records)
   $payload=[ordered]@{run_id=$Context.RunId;groups=[ordered]@{cache_hit_round_1=$group1;cache_hit_round_2=$group2;cache_miss=$misses};plan_free=(Get-S3MapValue -Map $cloudflare -Name 'freePlan');billing_absent=(Get-S3MapValue -Map $cloudflare -Name 'billingAbsent');security_reduced=$false;telemetry_official=$true;telemetry_endpoint='POST /accounts/{account_id}/workers/observability/telemetry/query';stable=$true;independent_reproducible_cpu_terminations=0;audit=$audit;negativeTests=$negative}
-  $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;$payload|ConvertTo-Json -Depth 30|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8;return $decision
+  $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;if([string](Get-S3MapValue -Map $decision -Name 'status') -eq 'PASS'){$payload|ConvertTo-Json -Depth 30|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8};return $decision
  }finally{$token1=$null;$token2=$null;$cloudflareObservabilityToken=$null;[GC]::Collect()}
 }
 Export-ModuleMember -Function *-S3*

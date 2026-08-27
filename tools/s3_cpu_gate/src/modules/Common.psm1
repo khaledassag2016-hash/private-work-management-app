@@ -346,6 +346,14 @@ function Assert-S3ResumeCheckpointSafe {
  return $true
 }
 
+function Complete-S3CpuGateDecision {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)]$CpuDecision)
+ Set-S3MapValue -Map $Context.State.results -Name 'cpu' -Value $CpuDecision
+ if([string](Get-S3MapValue -Map $CpuDecision -Name 'status') -ne 'PASS'){throw 'CPU_GATE_DECISION_FAILED'}
+ Set-S3Checkpoint $Context '70_CPU_GATE_EXECUTED'
+ return $CpuDecision
+}
+
 function Invoke-S3WithWorkerStateRestore {
  [CmdletBinding()] param(
   [Parameter(Mandatory)]$Context,

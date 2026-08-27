@@ -476,7 +476,7 @@ function Get-S3WorkersObservabilityQueryBody {
         [Parameter(Mandatory)][datetime]$FromUtc,
         [Parameter(Mandatory)][datetime]$ToUtc,
         [string]$WorkerName,
-        [ValidateRange(1,2000)][int]$Limit = 500,
+        [ValidateRange(1,100)][int]$Limit = 100,
         [object[]]$Filters = @(),
         [string]$Offset
     )
@@ -630,7 +630,7 @@ function Invoke-S3WorkersTelemetryQuery {
         [Parameter(Mandatory)][string]$Scenario,
         [Parameter(Mandatory)][string]$WorkerName,
         [Parameter(Mandatory)][datetime]$FromUtc,
-        [ValidateRange(1,2000)][int]$PageSize=500
+        [ValidateRange(1,100)][int]$PageSize=100
     )
     if ([string]::IsNullOrWhiteSpace($WorkerName)) { throw 'WORKERS_OBSERVABILITY_WORKER_REQUIRED' }
     $uri = "https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/observability/telemetry/query"

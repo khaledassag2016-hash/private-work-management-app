@@ -71,12 +71,12 @@ async function getCertificates(env, force = false) {
   certificateCache = { certificates, expiresAt: now + ttl * 1000 };
   return { certificates, state: 'miss' };
 }
-async function verifyJwt(token, env) {
+async function verifyJwt(token, env, forceRefresh = false) {
   const parts = token.split('.'); if (parts.length !== 3) throw new Error('JWT_FORMAT');
   const header = b64urlJson(parts[0]); const claims = b64urlJson(parts[1]);
   if (header.alg !== 'RS256' || typeof header.kid !== 'string' || !header.kid) throw new Error('JWT_HEADER');
-  let certSet = await getCertificates(env, false); let pem = certSet.certificates[header.kid];
-  if (!pem && certSet.state === 'hit') { certSet = await getCertificates(env, true); pem = certSet.certificates[header.kid]; }
+  let certSet = await getCertificates(env, forceRefresh); let pem = certSet.certificates[header.kid];
+  if (!pem && !forceRefresh && certSet.state === 'hit') { certSet = await getCertificates(env, true); pem = certSet.certificates[header.kid]; }
   if (!pem) throw new Error('KID_UNKNOWN');
   const spki = extractSpki(pemToDer(pem));
   const key = await crypto.subtle.importKey('spki', spki, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
@@ -827,18 +827,14 @@ async function readAuthorized(request, env, requestId, scenario) {
   const auth = request.headers.get('authorization') || '';
   if (!auth.startsWith('Bearer ')) throw new DomainError('TOKEN_MISSING', 401);
   try {
-    const verified = await verifyJwt(auth.slice(7), env);
+    const forceCertificateRefresh = request.headers.get('x-s3-force-certificate-refresh') === 'true';
+    if (forceCertificateRefresh && (env.TEST_CONTROLS !== 'enabled' || !env.TEST_RESET_NONCE || request.headers.get('x-s3-test-reset') !== env.TEST_RESET_NONCE)) throw new DomainError('TEST_CONTROL_DENIED', 403);
+    const verified = await verifyJwt(auth.slice(7), env, forceCertificateRefresh);
     const user = await allowed(env, verified.claims.sub);
     if (!user) throw new DomainError('UID_NOT_ALLOWED', 403);
     const requestedRunId = request.headers.get('x-s3-run-id') || '';
     const runId = requestedRunId === env.RUN_MARKER ? requestedRunId : '';
-    const forceCertificateRefresh = request.headers.get('x-s3-force-certificate-refresh') === 'true';
-    let cacheState = verified.cacheState;
-    if (forceCertificateRefresh) {
-      if (env.TEST_CONTROLS !== 'enabled' || !env.TEST_RESET_NONCE || request.headers.get('x-s3-test-reset') !== env.TEST_RESET_NONCE) throw new DomainError('TEST_CONTROL_DENIED', 403);
-      await getCertificates(env, true);
-      cacheState = 'miss';
-    }
+    const cacheState = verified.cacheState;
     const s3Correlation = { runId, requestId, scenario };
     console.log({ event: 'auth_result', requestId, code: 'ALLOW', cacheState, allowed: true, runId, scenario, s3Correlation, uidHash: await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.claims.sub)).then(x => Array.from(new Uint8Array(x)).slice(0, 6).map(b => b.toString(16).padStart(2, '0')).join('')) });
     return { user, cacheState };
