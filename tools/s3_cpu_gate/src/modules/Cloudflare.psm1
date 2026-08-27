@@ -134,7 +134,7 @@ function Get-S3CloudflareWorkerRemoteSnapshot {
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][string]$Token)
     [void]$Context
     $base="https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/scripts/$WorkerName"
-    $settings=(Invoke-S3CloudflareRest -Method GET -Uri "$base/settings" -Token $Token).result
+    $settings=(Invoke-S3CloudflareRest -Method GET -Uri "$base/script-settings" -Token $Token).result
     $versions=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions" -Token $Token).result
     $deployments=(Invoke-S3CloudflareRest -Method GET -Uri "$base/deployments" -Token $Token).result
     $bindingRecords=[Collections.Generic.List[object]]::new();$variableRecords=[Collections.Generic.List[object]]::new();$privateVars=[ordered]@{}

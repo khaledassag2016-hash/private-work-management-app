@@ -1613,8 +1613,10 @@ Describe 'S3-R authoritative runtime rehydration' {
    versions=[pscustomobject]@{success=$true;errors=@();result=[ordered]@{items=@([ordered]@{id='v1';metadata=[ordered]@{created_on='2026-08-15T00:00:00Z'}})}}
    deployments=[pscustomobject]@{success=$true;errors=@();result=[ordered]@{deployments=@([ordered]@{id='dep1';created_on='2026-08-15T00:00:00Z';versions=@([ordered]@{percentage=100;version_id='v1'})})}}
   }
-  Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token);[void]$Method;[void]$Token;if($Uri -match '/settings$'){$responses.settings}elseif($Uri -match '/versions$'){$responses.versions}else{$responses.deployments}} -ModuleName Cloudflare
+  $calls=[Collections.Generic.List[string]]::new()
+  Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token);[void]$Method;[void]$Token;$calls.Add($Uri);if($Uri -match '/script-settings$'){$responses.settings}elseif($Uri -match '/versions$'){$responses.versions}else{$responses.deployments}} -ModuleName Cloudflare
   $s=Get-S3CloudflareWorkerRemoteSnapshot -Context $c -AccountId 'account' -WorkerName 'worker' -Token 'token'
+  $calls[0] | Should -Match '/workers/scripts/worker/script-settings$';$calls[0] | Should -Not -Match '/workers/scripts/worker/settings$'
   $s.public.settings.variables[0].valueNonEmpty|Should -BeTrue;$s.privateVars.TEST_RESET_NONCE|Should -Be $nonce
   (ConvertTo-Json $s.public -Depth 30)|Should -Not -Match $nonce
   Test-S3CloudflareWorkerRemoteSnapshot -Before $s -After $s | Should -BeTrue
