@@ -276,12 +276,30 @@ function Test-S3HasOwnedCloudResource {
  return $false
 }
 
+function Get-S3FailureMetadataRecord {
+ [CmdletBinding()] param([AllowNull()][System.Management.Automation.ErrorRecord]$FailureRecord,[Parameter(Mandatory)][string]$Operation,[Parameter(Mandatory)][string]$SafeReason)
+ $exceptionType='System.Exception';$scriptName='UNAVAILABLE';$function='UNAVAILABLE';$lineNumber=0;$position='UNAVAILABLE'
+ if($null -ne $FailureRecord){
+  if($null -ne $FailureRecord.Exception){$exceptionType=$FailureRecord.Exception.GetType().FullName}
+  if($null -ne $FailureRecord.InvocationInfo){
+   if(-not [string]::IsNullOrWhiteSpace([string]$FailureRecord.InvocationInfo.ScriptName)){$scriptName=[IO.Path]::GetFileName([string]$FailureRecord.InvocationInfo.ScriptName)}
+   $command=$FailureRecord.InvocationInfo.MyCommand
+   if($null -ne $command -and -not [string]::IsNullOrWhiteSpace([string]$command.Name)){$function=[string]$command.Name}
+   $lineNumber=[int]$FailureRecord.InvocationInfo.ScriptLineNumber
+   $position=Protect-S3Text ([string]$FailureRecord.InvocationInfo.PositionMessage)
+  }
+ }
+ $fingerprint=Get-S3StableHash ("$exceptionType|$scriptName|$function|$lineNumber|$Operation|$SafeReason")
+ return [ordered]@{exceptionType=$exceptionType;script=$scriptName;function=$function;lineNumber=$lineNumber;operation=$Operation;position=$position;fingerprint=$fingerprint}
+}
+
 function Write-S3FailureEvidence {
- [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$Reason)
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$Reason,[AllowNull()][System.Management.Automation.ErrorRecord]$FailureRecord=$null,[string]$Operation='UNKNOWN')
  $safe=Protect-S3Text $Reason
+ $metadata=Get-S3FailureMetadataRecord -FailureRecord $FailureRecord -Operation $Operation -SafeReason $safe
  $stateSaved=$false
  try {
-  Set-S3MapValue -Map $Context.State -Name 'failure' -Value $safe
+  Set-S3MapValue -Map $Context.State -Name 'failure' -Value ([ordered]@{reason=$safe;metadata=$metadata})
   Write-S3State -Root $Context.Root -State $Context.State
   $stateSaved=$true
  } catch {
@@ -291,11 +309,12 @@ function Write-S3FailureEvidence {
    runId=[string]$Context.RunId
    currentState=[string](Get-S3MapValue -Map $Context.State -Name 'currentState')
    reason=$safe
+   metadata=$metadata
    stateSaveError=Protect-S3Text $_.Exception.Message
-  }|ConvertTo-Json -Depth 8|Set-Content (Join-Path $reports 'failure-fallback.json') -Encoding UTF8
+  }|ConvertTo-Json -Depth 12|Set-Content (Join-Path $reports 'failure-fallback.json') -Encoding UTF8
  }
  try{Write-S3Log -Context $Context -Level ERROR -Message $safe}catch{Write-Verbose ("تعذر كتابة سجل الخطأ: " + $_.Exception.Message)}
- return [ordered]@{reason=$safe;stateSaved=$stateSaved}
+ return [ordered]@{reason=$safe;metadata=$metadata;stateSaved=$stateSaved}
 }
 
 function Clear-S3RuntimeSecret {
