@@ -65,7 +65,7 @@ try{
  $hadFailure=$true
  $failureReason=Protect-S3Text $_.Exception.Message
  if($null -ne $context){
-  [void](Write-S3FailureEvidence -Context $context -Reason $failureReason)
+  [void](Write-S3FailureEvidence -Context $context -Reason $failureReason -FailureRecord $_ -Operation 'orchestrator.main')
   try{New-S3BlockerReport -Context $context -Reason $failureReason|Out-Null}catch{Write-Verbose ("تعذر إنشاء blocker-report.zip: " + $_.Exception.Message)}
  }
  Write-Information -InformationAction Continue ('توقف آمن: '+$failureReason)
@@ -91,7 +91,7 @@ try{
  }catch{
   $hadFailure=$true
   $finalizationReason=Protect-S3Text $_.Exception.Message
-  if($null -ne $context){[void](Write-S3FailureEvidence -Context $context -Reason $finalizationReason)}
+  if($null -ne $context){[void](Write-S3FailureEvidence -Context $context -Reason $finalizationReason -FailureRecord $_ -Operation 'orchestrator.finalization')}
   Write-Information -InformationAction Continue ('توقف آمن أثناء التنظيف أو التقرير: '+$finalizationReason)
  }finally{
   if($null -ne $context -and $context.RuntimeSecrets.Count -ne 0){
@@ -99,7 +99,7 @@ try{
    catch{
     $hadFailure=$true
     $clearReason=Protect-S3Text $_.Exception.Message
-    [void](Write-S3FailureEvidence -Context $context -Reason $clearReason)
+    [void](Write-S3FailureEvidence -Context $context -Reason $clearReason -FailureRecord $_ -Operation 'orchestrator.secret-cleanup')
    }
   }
  }

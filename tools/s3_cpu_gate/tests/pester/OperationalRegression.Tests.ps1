@@ -1622,6 +1622,43 @@ Describe 'S3-R authoritative runtime rehydration' {
 }
 
 
+Describe 'S3-R legacy checkpoint-60 Count root cause' {
+ It 'recovers authoritative UIDs when legacy checkpoint has no persisted Firebase UIDs' {
+  $c=Get-TestContext Live;$c.State.currentState='60_CLOUDFLARE_PROVISIONED'
+  $c.State.resources.firebase=[ordered]@{projectId='preserved-project'};$c.State.resources.cloudflare=[ordered]@{accountId='account';d1Id='d1-id';worker='worker';marker=$c.RunId};$c.RuntimeSecrets.cloudflareToken='management-session'
+  $uid1='uid-authoritative-one';$uid2='uid-authoritative-two';$apiKey='synthetic-api-key';$admin='synthetic-admin-token';$calls=[Collections.Generic.List[object]]::new()
+  Mock Get-S3FirebaseProjectPresence {'EXISTS'} -ModuleName Firebase
+  Mock Get-S3FirebaseUser {@([ordered]@{localId=$uid1;email="$uid1@example.invalid";providerUserInfo=@([ordered]@{providerId='password'})},[ordered]@{localId=$uid2;email="$uid2@example.invalid";providerUserInfo=@([ordered]@{providerId='password'})})} -ModuleName Firebase
+  Mock Get-S3CloudflareD1RunUidSet {@($uid1,$uid2)} -ModuleName Firebase
+  Mock Get-S3FederatedProviderSnapshot {[ordered]@{verified=$true;enabledCount=0}} -ModuleName Firebase
+  Mock Assert-S3FirebaseConfiguration {[ordered]@{verified=$true}} -ModuleName Firebase
+  Mock Invoke-S3GoogleRest {[ordered]@{}} -ModuleName Firebase
+  Mock Update-S3FirebaseAdminUserPassword {} -ModuleName Firebase
+  Mock Get-S3FirebaseIdToken {param($ApiKey,$Email,$Secret);[void]$ApiKey;[void]$Secret;[pscustomobject]@{IdToken=('token-'+($Email -replace '@example.invalid',''));RefreshToken='refresh';LocalId=($Email -replace '@example.invalid','')}} -ModuleName Firebase
+  $provider={param($project,$expected);[void]$project;$normalized=@($expected);$calls.Add($normalized);if($normalized.Count -eq 0){return [ordered]@{adminToken=$admin;apiKey=$apiKey;credentials=@()}};return [ordered]@{adminToken=$admin;apiKey=$apiKey;credentials=@([ordered]@{uid=$uid1;email="$uid1@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey},[ordered]@{uid=$uid2;email="$uid2@example.invalid";password=([guid]::NewGuid().ToString('N'));apiKey=$apiKey})}}
+  { Invoke-S3FirebaseRuntimeRehydration -Context $c -ExpectedUids $null -CredentialProvider $provider } | Should -Not -Throw
+  $calls.Count | Should -Be 2;$calls[0].Count | Should -Be 0;$calls[1].Count | Should -Be 2
+  Should -Invoke Update-S3FirebaseAdminUserPassword -ModuleName Firebase -Times 2 -Exactly
+  $c.RuntimeSecrets.uid1 | Should -Be $uid1;$c.RuntimeSecrets.uid2 | Should -Be $uid2
+  $c.State | ConvertTo-Json -Depth 30 | Should -Not -Match ($apiKey+'|'+$admin)
+ }
+ It 'rejects a one-UID legacy input deterministically instead of dereferencing a scalar Count' {
+  $c=Get-TestContext Live
+  { Invoke-S3FirebaseRuntimeRehydration -Context $c -ExpectedUids @('uid-one') -CredentialProvider { param($ProjectId,$ExpectedUids) [void]$ProjectId;[void]$ExpectedUids } } | Should -Throw '*FIREBASE_REHYDRATION_UID_SET_INVALID*'
+ }
+ It 'records sanitized exception metadata and a stable fingerprint' {
+  $c=Get-TestContext
+  try { throw 'SYNTHETIC_FAILURE' } catch { $record=$_ }
+  $e=Write-S3FailureEvidence -Context $c -Reason 'SYNTHETIC_FAILURE' -FailureRecord $record -Operation 'test.operation'
+  $e.metadata.exceptionType | Should -Be 'System.Management.Automation.RuntimeException'
+  $e.metadata.operation | Should -Be 'test.operation'
+  $e.metadata.fingerprint | Should -Match '^[0-9a-f]{64}$'
+  $state=Get-Content (Join-Path $TestDrive 'state.json') -Raw
+  $state | Should -Match 'SYNTHETIC_FAILURE'
+  $state | Should -Not -Match '(?i)password|accessToken|refreshToken|apiKey'
+ }
+}
+
 Describe 'S3-R D1 failure restoration' {
  It 'restores uid2 authorization in finally when temporary D1 mutation fails' {
   $c=Get-TestContext Live;$c.RuntimeSecrets.uid1='uid-one';$c.RuntimeSecrets.uid2='uid-two';$c.State.resources.cloudflare=[ordered]@{d1Name='synthetic-d1'};$calls=[Collections.Generic.List[string]]::new()

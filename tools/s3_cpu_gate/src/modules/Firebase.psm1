@@ -603,6 +603,16 @@ function New-S3FirebaseCredentialProvider {
     }.GetNewClosure()
 }
 
+function Get-S3FirebaseCredentialArray {
+    param([Parameter(Mandatory)]$Provided)
+    if($Provided -is [Collections.IDictionary] -and $Provided.Contains('credentials')){
+        $payload=$Provided['credentials']
+        if($null -eq $payload){return @()}
+        return @($payload)
+    }
+    return @($Provided)
+}
+
 function Invoke-S3FirebaseRuntimeRehydration {
     [CmdletBinding()]
     param(
@@ -610,6 +620,7 @@ function Invoke-S3FirebaseRuntimeRehydration {
         [string[]]$ExpectedUids=@(),
         [Parameter(Mandatory)][scriptblock]$CredentialProvider
     )
+    $ExpectedUids=@($ExpectedUids | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
     if ($ExpectedUids.Count -ne 0 -and ($ExpectedUids.Count -ne 2 -or @($ExpectedUids | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0)) { throw 'FIREBASE_REHYDRATION_UID_SET_INVALID' }
     if ($Context.Mode -eq 'Simulation') {
         if ($ExpectedUids.Count -ne 2) { throw 'FIREBASE_REHYDRATION_UID_SET_REQUIRED_IN_SIMULATION' }
@@ -628,9 +639,8 @@ function Invoke-S3FirebaseRuntimeRehydration {
     if ($presence -ne 'EXISTS') { throw "FIREBASE_REHYDRATION_PROJECT_$presence" }
     if ($null -eq $CredentialProvider) { throw 'FIREBASE_REHYDRATION_CREDENTIALS_REQUIRED' }
     $provided = & $CredentialProvider $projectId $ExpectedUids
-    $credentialPayload = Get-S3MapValue -Map $provided -Name 'credentials'
-    $credentials = if($null -ne $credentialPayload){@($credentialPayload)}else{@($provided)}
-    if ($credentials.Count -ne 2) { throw 'FIREBASE_REHYDRATION_CREDENTIAL_COUNT_MISMATCH' }
+    if($null -eq $provided){throw 'FIREBASE_REHYDRATION_PROVIDER_RESULT_MISSING'}
+    $credentials=@(Get-S3FirebaseCredentialArray -Provided $provided)
     $adminToken=[string](Get-S3MapValue -Map $provided -Name 'adminToken')
     if([string]::IsNullOrWhiteSpace($adminToken)){throw 'FIREBASE_REHYDRATION_ADMIN_SESSION_REQUIRED'}
     $firebaseUsers=@(Get-S3FirebaseUser -ProjectId $projectId -Token $adminToken)
@@ -645,8 +655,16 @@ function Invoke-S3FirebaseRuntimeRehydration {
     [void](Assert-S3FirebaseUserSet -Users @($firebaseUsers) -ExpectedUids $firebaseUids)
     $d1Normalized=@($d1Uids|ForEach-Object{[string]$_})|Sort-Object
     if($firebaseUids.Count -ne 2 -or $d1Normalized.Count -ne 2 -or (@($firebaseUids)-join '|') -cne (@($d1Normalized)-join '|')){throw 'FIREBASE_REHYDRATION_AUTHORITATIVE_UID_MISMATCH'}
-    $ExpectedUids=@($firebaseUids)
-    $byUid = @{};$apiKey=$null
+    $authoritativeUids=@($firebaseUids)
+    if($credentials.Count -eq 0){
+        $provided = & $CredentialProvider $projectId $authoritativeUids
+        if($null -eq $provided){throw 'FIREBASE_REHYDRATION_PROVIDER_RESULT_MISSING'}
+        $credentials=@(Get-S3FirebaseCredentialArray -Provided $provided)
+        $providedAdmin=[string](Get-S3MapValue -Map $provided -Name 'adminToken')
+        if(-not [string]::IsNullOrWhiteSpace($providedAdmin) -and $providedAdmin -cne $adminToken){throw 'FIREBASE_REHYDRATION_ADMIN_SESSION_CHANGED'}
+    }
+    $ExpectedUids=$authoritativeUids
+    $byUid = @{};$apiKey=Get-S3MapValue -Map $provided -Name 'apiKey'
     foreach ($credential in $credentials) {
         $uid = [string](Get-S3MapValue -Map $credential -Name 'uid')
         $email = [string](Get-S3MapValue -Map $credential -Name 'email')
@@ -656,7 +674,7 @@ function Invoke-S3FirebaseRuntimeRehydration {
         if ($null -eq $apiKey) {$apiKey=$candidateApiKey} elseif ($apiKey -cne $candidateApiKey) { throw 'FIREBASE_REHYDRATION_API_KEY_MISMATCH' }
         $byUid[$uid]=[ordered]@{email=$email;password=$password}
     }
-    if ($ExpectedUids.Count -ne 0 -and (@($ExpectedUids|Sort-Object)-join '|') -cne (@($firebaseUids)-join '|')) { throw 'FIREBASE_REHYDRATION_LEGACY_UID_MISMATCH' }
+    if ($ExpectedUids.Count -ne 2 -or (@($ExpectedUids|Sort-Object)-join '|') -cne (@($firebaseUids)-join '|')) { throw 'FIREBASE_REHYDRATION_LEGACY_UID_MISMATCH' }
     if ($ExpectedUids.Count -ne 2 -or @($ExpectedUids | Where-Object { -not $byUid.ContainsKey($_) }).Count -ne 0) { throw 'FIREBASE_REHYDRATION_UID_MISMATCH' }
     $tokens=@{}
     try {
