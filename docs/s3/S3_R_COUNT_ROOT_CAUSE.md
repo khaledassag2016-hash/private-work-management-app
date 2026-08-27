@@ -57,3 +57,23 @@ PR #98 tested the newer provider contract with `-ExpectedUids @()` and a custom 
 `Write-S3FailureEvidence` now accepts the original `ErrorRecord` and operation name. It records only sanitized `exceptionType`, source script name, function, line number, safe position, operation, and a SHA-256 fingerprint. The existing redaction and state serialization guards remain active; no secret material is included in state, logs, reports, or the fingerprint input.
 
 The reproduction and the post-fix regressions also assert that provisioning is not repeated, runtime secrets are not serialized, and Worker restoration tests continue to pass. 
+
+## Firebase Web App blocker after PR #99
+
+The single authorized post-PR #99 Windows execution proved that the Count failure no longer recurs and advanced into Firebase rehydration. It then stopped at `FIREBASE_REHYDRATION_WEB_CONFIG_UNAVAILABLE`. The merged provider had invoked `apps:sdkconfig WEB --project PROJECT_ID --json` without an app ID. The official Firebase CLI contract is `apps:sdkconfig [platform] [appId]`, and the CLI implementation uses `apps:list` to resolve an app only when it is allowed to select interactively. In the preserved harness, interactive selection is not acceptable.
+
+The source-level cause is therefore **A: missing Firebase app ID in the sdkconfig invocation**. The previous implementation did not deterministically establish whether the project contained zero, one, or multiple Web Apps, and it collapsed every non-zero sdkconfig exit into `FIREBASE_REHYDRATION_WEB_CONFIG_UNAVAILABLE`, discarding the sanitized exit diagnostic. The available Windows evidence cannot independently prove whether the preserved project inventory was zero or multiple, or whether a separate Firebase session issue coexisted; the source defect is nevertheless proven because the invocation was incomplete even with a valid session and any non-empty inventory.
+
+The fixed provider performs a read-only `apps:list WEB --project PROJECT_ID --json --non-interactive` call, selects exactly one Web App by its returned `appId`, and then invokes `apps:sdkconfig WEB APP_ID --project PROJECT_ID --json --non-interactive`. It fails closed with typed blockers for zero Web Apps (`FIREBASE_REHYDRATION_WEB_APP_MISSING`), multiple Web Apps (`FIREBASE_REHYDRATION_WEB_APP_AMBIGUOUS`), invalid Firebase CLI session (`FIREBASE_REHYDRATION_FIREBASE_SESSION_UNAVAILABLE`), inventory API failure, and sdkconfig API failure. Diagnostics are sanitized and bounded, and the failure includes a deterministic SHA-256 fingerprint without tokens or credential values.
+
+The new regressions cover zero, single, and multiple Web App inventories, invalid Firebase session classification, and a valid single-app provider path that asserts the exact app ID is passed to `apps:sdkconfig`. They use injected process/user providers and never invoke gcloud, Firebase, Cloudflare, provisioning, or cleanup.
+
+## References
+
+[1]: https://firebase.google.com/docs/cli "Firebase CLI reference"
+
+[2]: https://raw.githubusercontent.com/firebase/firebase-tools/master/src/commands/apps-list.ts "Firebase CLI apps:list source"
+
+[3]: https://raw.githubusercontent.com/firebase/firebase-tools/master/src/commands/apps-sdkconfig.ts "Firebase CLI apps:sdkconfig source"
+
+The command shape and non-interactive behavior cited above are documented in the official reference and source at [1] [2] [3].
