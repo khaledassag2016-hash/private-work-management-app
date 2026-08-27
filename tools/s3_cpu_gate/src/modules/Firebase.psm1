@@ -1,5 +1,6 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:S3GoogleQuotaProjectId = 'ultra-function-476817-g5'
 
 function Get-S3SyntheticPassword {
     $bytes = [byte[]]::new(32)
@@ -22,7 +23,10 @@ function Get-S3GoogleAccessToken {
 
 function Invoke-S3GoogleRest {
     param([string]$Method,[string]$Uri,[string]$Token,[AllowNull()][object]$Body=$null)
-    $headers = @{Authorization="Bearer $Token"}
+    $headers = @{
+        Authorization = "Bearer $Token"
+        'x-goog-user-project' = $script:S3GoogleQuotaProjectId
+    }
     try {
         if ($null -eq $Body) {
             return Invoke-RestMethod -Method $Method -Uri $Uri -Headers $headers -TimeoutSec 90

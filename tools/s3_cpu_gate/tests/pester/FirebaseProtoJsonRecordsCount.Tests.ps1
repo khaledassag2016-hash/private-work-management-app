@@ -1,6 +1,18 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot 'TestHelper.ps1') }
 
 Describe 'B3 Firebase recordsCount ProtoJSON compatibility' -Tag 'B3' {
+    It 'sends the approved quota project header for accounts:query' {
+        $script:capturedFirebaseRestHeaders = $null
+        Mock Invoke-RestMethod {
+            param($Headers)
+            $script:capturedFirebaseRestHeaders = $Headers
+            [pscustomobject]@{recordsCount='0'}
+        } -ModuleName Firebase
+        @(Get-S3FirebaseUser -ProjectId 's3cpu-test' -Token 'test-token').Count | Should -Be 0
+        $script:capturedFirebaseRestHeaders.Authorization | Should -Be 'Bearer test-token'
+        $script:capturedFirebaseRestHeaders['x-goog-user-project'] | Should -Be 'ultra-function-476817-g5'
+    }
+
     It 'accepts recordsCount string zero with omitted userInfo as zero users' {
         Mock Invoke-S3GoogleRest { [pscustomobject]@{recordsCount='0'} } -ModuleName Firebase
         @(Get-S3FirebaseUser -ProjectId p -Token token).Count | Should -Be 0
