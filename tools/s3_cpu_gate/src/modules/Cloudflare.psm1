@@ -134,11 +134,21 @@ function Get-S3CloudflareWorkerRemoteSnapshot {
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][string]$Token)
     [void]$Context
     $base="https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/scripts/$WorkerName"
-    $settings=(Invoke-S3CloudflareRest -Method GET -Uri "$base/script-settings" -Token $Token).result
+    $scriptSettings=(Invoke-S3CloudflareRest -Method GET -Uri "$base/script-settings" -Token $Token).result
     $versions=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions" -Token $Token).result
     $deployments=(Invoke-S3CloudflareRest -Method GET -Uri "$base/deployments" -Token $Token).result
+    $latestVersion=@($versions.items)|Sort-Object {$_.metadata.created_on} -Descending|Select-Object -First 1
+    $latestDeployment=@($deployments.deployments)|Sort-Object {$_.created_on} -Descending|Select-Object -First 1
+    $activeVersionId=$null
+    if($null -ne $latestDeployment){$activeVersion=@($latestDeployment.versions|Where-Object {[int](Get-S3CloudflareValue -InputObject $_ -Name 'percentage') -eq 100}|Select-Object -First 1);if($activeVersion.Count -gt 0){$activeVersionId=[string](Get-S3CloudflareValue -InputObject $activeVersion[0] -Name 'version_id')}}
+    if([string]::IsNullOrWhiteSpace($activeVersionId)){throw 'REMOTE_WORKER_ACTIVE_VERSION_MISSING'}
+    $activeVersionDetail=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions/$activeVersionId" -Token $Token).result
+    $versionResources=Get-S3CloudflareValue -InputObject $activeVersionDetail -Name @('resources')
+    if($null -eq $versionResources){throw 'REMOTE_WORKER_VERSION_RESOURCES_MISSING'}
+    $runtime=Get-S3CloudflareValue -InputObject $versionResources -Name @('script_runtime','scriptRuntime')
+    if($null -eq $runtime){throw 'REMOTE_WORKER_VERSION_RUNTIME_MISSING'}
     $bindingRecords=[Collections.Generic.List[object]]::new();$variableRecords=[Collections.Generic.List[object]]::new();$privateVars=[ordered]@{}
-    foreach($binding in @((Get-S3CloudflareValue -InputObject $settings -Name @('bindings')))){
+    foreach($binding in @((Get-S3CloudflareValue -InputObject $versionResources -Name @('bindings')))){
         $name=[string](Get-S3CloudflareValue -InputObject $binding -Name @('name'));$type=[string](Get-S3CloudflareValue -InputObject $binding -Name @('type'))
         if([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($type)){throw 'REMOTE_WORKER_BINDING_METADATA_INVALID'}
         $record=[ordered]@{name=$name;type=$type}
@@ -151,18 +161,14 @@ function Get-S3CloudflareWorkerRemoteSnapshot {
             $variableRecords.Add([ordered]@{name=$name;type=$type;valueNonEmpty=(-not [string]::IsNullOrWhiteSpace($text));valueHash=$(if([string]::IsNullOrWhiteSpace($text)){$null}else{Get-S3StableHash $text})})
         }
     }
-    $latestVersion=@($versions.items)|Sort-Object {[datetime]$_.metadata.created_on} -Descending|Select-Object -First 1
-    $latestDeployment=@($deployments.deployments)|Sort-Object {[datetime]$_.created_on} -Descending|Select-Object -First 1
-    $activeVersionId=$null
-    if($null -ne $latestDeployment){$activeVersion=@($latestDeployment.versions|Where-Object {[int](Get-S3CloudflareValue -InputObject $_ -Name 'percentage') -eq 100}|Select-Object -First 1);if($activeVersion.Count -gt 0){$activeVersionId=[string](Get-S3CloudflareValue -InputObject $activeVersion[0] -Name 'version_id')}}
     return [pscustomobject]@{
         public=[ordered]@{
         scriptName=$WorkerName
         settings=[ordered]@{
-            compatibilityDate=[string](Get-S3CloudflareValue -InputObject $settings -Name @('compatibility_date','compatibilityDate'))
-            compatibilityFlags=@(Get-S3CloudflareValue -InputObject $settings -Name @('compatibility_flags','compatibilityFlags'))
-            usageModel=[string](Get-S3CloudflareValue -InputObject $settings -Name @('usage_model','usageModel'))
-            observability=Get-S3CloudflareValue -InputObject $settings -Name @('observability')
+            compatibilityDate=[string](Get-S3CloudflareValue -InputObject $runtime -Name @('compatibility_date','compatibilityDate'))
+            compatibilityFlags=@(Get-S3CloudflareValue -InputObject $runtime -Name @('compatibility_flags','compatibilityFlags'))
+            usageModel=[string](Get-S3CloudflareValue -InputObject $runtime -Name @('usage_model','usageModel'))
+            observability=Get-S3CloudflareValue -InputObject $scriptSettings -Name @('observability')
             bindings=@($bindingRecords|Sort-Object name,type)
             variables=@($variableRecords|Sort-Object name)
         }
