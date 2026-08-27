@@ -1,6 +1,5 @@
 ﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:S3GoogleQuotaProjectId = 'ultra-function-476817-g5'
 
 function Get-S3SyntheticPassword {
     $bytes = [byte[]]::new(32)
@@ -22,10 +21,17 @@ function Get-S3GoogleAccessToken {
 }
 
 function Invoke-S3GoogleRest {
-    param([string]$Method,[string]$Uri,[string]$Token,[AllowNull()][object]$Body=$null)
+    param(
+        [Parameter(Mandatory)][string]$Method,
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Token,
+        [Parameter(Mandatory)][string]$QuotaProjectId,
+        [AllowNull()][object]$Body=$null
+    )
+    if ([string]::IsNullOrWhiteSpace($QuotaProjectId)) { throw 'GOOGLE_QUOTA_PROJECT_REQUIRED' }
     $headers = @{
         Authorization = "Bearer $Token"
-        'x-goog-user-project' = $script:S3GoogleQuotaProjectId
+        'x-goog-user-project' = $QuotaProjectId
     }
     try {
         if ($null -eq $Body) {
@@ -148,7 +154,7 @@ function Get-S3FederatedProviderSnapshot {
     $base = "https://identitytoolkit.googleapis.com/admin/v2/projects/$ProjectId"
     $collections = [ordered]@{}
     foreach ($collection in @('defaultSupportedIdpConfigs','oauthIdpConfigs','inboundSamlConfigs')) {
-        $response = Invoke-S3GoogleRest -Method GET -Uri "$base/${collection}?pageSize=100" -Token $Token
+        $response = Invoke-S3GoogleRest -Method GET -Uri "$base/${collection}?pageSize=100" -Token $Token -QuotaProjectId $ProjectId
         $items = @(Get-S3OptionalRepeatedArrayProperty -InputObject $response -Name $collection)
         $nextPageToken = [string](Get-S3MapValue -Map $response -Name 'nextPageToken')
         if (-not [string]::IsNullOrWhiteSpace($nextPageToken)) { throw "FIREBASE_PROVIDER_PAGINATION_INCOMPLETE:$collection" }
@@ -172,7 +178,7 @@ function Disable-S3FederatedProvider {
     foreach ($collection in $before.Keys) {
         foreach ($config in @($before[$collection])) {
             if ($config.enabled -eq $true) {
-                Invoke-S3GoogleRest -Method PATCH -Uri "https://identitytoolkit.googleapis.com/admin/v2/$($config.name)?updateMask=enabled" -Token $Token -Body @{enabled=$false;name=$config.name} | Out-Null
+                Invoke-S3GoogleRest -Method PATCH -Uri "https://identitytoolkit.googleapis.com/admin/v2/$($config.name)?updateMask=enabled" -Token $Token -QuotaProjectId $ProjectId -Body @{enabled=$false;name=$config.name} | Out-Null
             }
         }
     }
@@ -209,7 +215,7 @@ function Assert-S3FirebaseConfiguration {
 
 function Get-S3FirebaseUser {
     param([string]$ProjectId,[string]$Token)
-    $response = Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:query" -Token $Token -Body @{returnUserInfo=$true;limit=100}
+    $response = Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:query" -Token $Token -QuotaProjectId $ProjectId -Body @{returnUserInfo=$true;limit=100}
     $hasUserInfo = Test-S3PropertyPresent -InputObject $response -Name 'userInfo'
     $users = @()
     if ($hasUserInfo) {
@@ -257,7 +263,7 @@ function New-S3FirebaseAdminUser {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword','',Justification='Synthetic one-run password is required in the Firebase HTTPS JSON body and is never logged or serialized.')]
     param([string]$ProjectId,[string]$ApiKey,[string]$Token,[string]$Uid,[string]$Email,[string]$Password)
     if (-not $PSCmdlet.ShouldProcess(($ProjectId + '/' + $Uid),'Create synthetic Firebase user')) { return }
-    Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts?key=$ApiKey" -Token $Token -Body @{localId=$Uid;email=$Email;password=$Password;emailVerified=$true;displayName='S3 CPU Gate Test User'} | Out-Null
+    Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts?key=$ApiKey" -Token $Token -QuotaProjectId $ProjectId -Body @{localId=$Uid;email=$Email;password=$Password;emailVerified=$true;displayName='S3 CPU Gate Test User'} | Out-Null
 }
 
 function Update-S3FirebaseAdminUserPassword {
@@ -265,7 +271,7 @@ function Update-S3FirebaseAdminUserPassword {
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='Low')]
     param([Parameter(Mandatory)][string]$ProjectId,[Parameter(Mandatory)][string]$ApiKey,[Parameter(Mandatory)][string]$Token,[Parameter(Mandatory)][string]$Uid,[Parameter(Mandatory)][string]$Password)
     if(-not $PSCmdlet.ShouldProcess(($ProjectId + '/' + $Uid),'Rebuild synthetic Firebase password for preserved UID')){return}
-    Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:update?key=$ApiKey" -Token $Token -Body @{localId=$Uid;password=$Password} | Out-Null
+    Invoke-S3GoogleRest -Method POST -Uri "https://identitytoolkit.googleapis.com/v1/projects/$ProjectId/accounts:update?key=$ApiKey" -Token $Token -QuotaProjectId $ProjectId -Body @{localId=$Uid;password=$Password} | Out-Null
 }
 
 function Get-S3FirebaseIdToken {
@@ -392,7 +398,7 @@ function Get-S3FirebaseIamReadiness {
     )
     $required = @(Get-S3FirebaseAddRequiredPermission)
     try {
-        $response = Invoke-S3GoogleRest -Method POST -Uri "https://cloudresourcemanager.googleapis.com/v1/projects/${ProjectId}:testIamPermissions" -Token $Token -Body @{permissions=$required}
+        $response = Invoke-S3GoogleRest -Method POST -Uri "https://cloudresourcemanager.googleapis.com/v1/projects/${ProjectId}:testIamPermissions" -Token $Token -QuotaProjectId $ProjectId -Body @{permissions=$required}
         $granted = @(Get-S3OptionalRepeatedArrayProperty -InputObject $response -Name 'permissions' | ForEach-Object {[string]$_})
         $missing = @($required | Where-Object { $_ -notin $granted })
         return [ordered]@{queryStatus='PASS';ready=($missing.Count -eq 0);missingPermissions=$missing}
@@ -769,7 +775,7 @@ function Invoke-S3FirebaseRuntimeRehydration {
         $Context.RuntimeSecrets.token1=$tokens[$ExpectedUids[0]].IdToken;$Context.RuntimeSecrets.token2=$tokens[$ExpectedUids[1]].IdToken
         $afterUsers=@(Get-S3FirebaseUser -ProjectId $projectId -Token $adminToken)
         [void](Assert-S3FirebaseUserSet -Users $afterUsers -ExpectedUids $ExpectedUids)
-        $configUri="https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config";$configuration=Invoke-S3GoogleRest -Method GET -Uri $configUri -Token $adminToken;$providerProof=Get-S3FederatedProviderSnapshot -ProjectId $projectId -Token $adminToken;[void](Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof $providerProof)
+        $configUri="https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config";$configuration=Invoke-S3GoogleRest -Method GET -Uri $configUri -Token $adminToken -QuotaProjectId $projectId;$providerProof=Get-S3FederatedProviderSnapshot -ProjectId $projectId -Token $adminToken;[void](Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof $providerProof)
         $Context.RuntimeSecrets.refreshToken1=$tokens[$ExpectedUids[0]].RefreshToken;$Context.RuntimeSecrets.refreshToken2=$tokens[$ExpectedUids[1]].RefreshToken
         return [ordered]@{status='PASS';projectId=$projectId;users=2;sameUids=$true;firebaseRevalidated=$true;emailPasswordOnly=$true;secrets='MEMORY_ONLY';provisioningSkipped=$true}
     }
@@ -862,9 +868,9 @@ function Invoke-S3FirebaseProvision {
         $configUri = "https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config"
         $body = @{name="projects/$projectId/config";signIn=@{email=@{enabled=$true;passwordRequired=$true};phoneNumber=@{enabled=$false};anonymous=@{enabled=$false};allowDuplicateEmails=$false};client=@{permissions=@{disabledUserSignup=$true;disabledUserDeletion=$true}}}
         $mask = 'signIn.email.enabled,signIn.email.passwordRequired,signIn.phoneNumber.enabled,signIn.anonymous.enabled,signIn.allowDuplicateEmails,client.permissions.disabledUserSignup,client.permissions.disabledUserDeletion'
-        Invoke-S3GoogleRest -Method PATCH -Uri "${configUri}?updateMask=$mask" -Token $accessToken -Body $body | Out-Null
+        Invoke-S3GoogleRest -Method PATCH -Uri "${configUri}?updateMask=$mask" -Token $accessToken -QuotaProjectId $projectId -Body $body | Out-Null
         $providerProof = Disable-S3FederatedProvider -ProjectId $projectId -Token $accessToken
-        $configuration = Invoke-S3GoogleRest -Method GET -Uri $configUri -Token $accessToken
+        $configuration = Invoke-S3GoogleRest -Method GET -Uri $configUri -Token $accessToken -QuotaProjectId $projectId
         $configProof = Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof $providerProof
         $existing = Get-S3FirebaseUser -ProjectId $projectId -Token $accessToken
         $emptyProof = Assert-S3FirebaseUserSet -Users $existing -ExpectedUids @()
