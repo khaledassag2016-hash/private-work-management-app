@@ -36,12 +36,17 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
         } -ModuleName Firebase
         {Disable-S3FederatedProvider -ProjectId p -Token token} | Should -Throw '*STILL_ENABLED*'
     }
-    It 'treats omitted known provider repeated fields as empty lists' {
-        Mock Invoke-S3GoogleRest {[pscustomobject]@{}} -ModuleName Firebase
+    It 'treats omitted provider enabled as ProtoJSON false while omitted lists remain empty' {
+        Mock Invoke-S3GoogleRest {
+            param($Uri)
+            $collection=((($Uri -split '/')[-1]) -split '\?')[0]
+            if($collection -eq 'defaultSupportedIdpConfigs'){return [pscustomobject]@{defaultSupportedIdpConfigs=@([pscustomobject]@{name='projects/p/defaultSupportedIdpConfigs/google.com'})}}
+            return [pscustomobject]@{}
+        } -ModuleName Firebase
         $proof=Disable-S3FederatedProvider -ProjectId p -Token token
         $proof.verified | Should -BeTrue
         $proof.enabledCount | Should -Be 0
-        $proof.collections.defaultSupportedIdpConfigs | Should -Be 0
+        $proof.collections.defaultSupportedIdpConfigs | Should -Be 1
         $proof.collections.oauthIdpConfigs | Should -Be 0
         $proof.collections.inboundSamlConfigs | Should -Be 0
     }
@@ -64,7 +69,7 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
             $collection=((($Uri -split '/')[-1]) -split '\?')[0]
             return [pscustomobject]@{$collection=@([pscustomobject]@{name='projects/p/configs/x';enabled='false'})}
         } -ModuleName Firebase
-        {Disable-S3FederatedProvider -ProjectId p -Token token} | Should -Throw '*RESPONSE_INVALID*'
+        {Disable-S3FederatedProvider -ProjectId p -Token token} | Should -Throw '*FIREBASE_BOOLEAN_EXPECTED*'
     }
     It 'succeeds only after all provider collections reread disabled' {
         $script:getCounts=@{}
@@ -103,8 +108,8 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
     It 'rejects an incomplete final Firebase configuration' {
         {Assert-S3FirebaseConfiguration -Configuration ([pscustomobject]@{}) -ProviderProof ([ordered]@{verified=$true;enabledCount=0})} | Should -Throw
     }
-    It 'accepts the exact final Firebase configuration and proof' {
-        $configuration=[pscustomobject]@{signIn=[pscustomobject]@{email=[pscustomobject]@{enabled=$true;passwordRequired=$true};phoneNumber=[pscustomobject]@{enabled=$false};anonymous=[pscustomobject]@{enabled=$false};allowDuplicateEmails=$false};client=[pscustomobject]@{permissions=[pscustomobject]@{disabledUserSignup=$true;disabledUserDeletion=$true}}}
+    It 'treats omitted documented false booleans as ProtoJSON false in final configuration' {
+        $configuration=[pscustomobject]@{signIn=[pscustomobject]@{email=[pscustomobject]@{enabled=$true;passwordRequired=$true};phoneNumber=[pscustomobject]@{};anonymous=[pscustomobject]@{}};client=[pscustomobject]@{permissions=[pscustomobject]@{disabledUserSignup=$true;disabledUserDeletion=$true}}}
         $proof=Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof ([ordered]@{verified=$true;enabledCount=0})
         $proof.emailPasswordOnly | Should -BeTrue
         $proof.otherProviders | Should -BeFalse

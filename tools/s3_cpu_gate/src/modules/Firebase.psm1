@@ -131,6 +131,29 @@ function Get-S3RequiredNonNegativeInteger {
     return $integer
 }
 
+function Get-S3ProtoJsonBoolean {
+    param([AllowNull()][object]$InputObject,[Parameter(Mandatory)][string]$Name)
+    if ($null -eq $InputObject) { throw "FIREBASE_RESPONSE_NULL:$Name" }
+    $found = $false
+    $value = $null
+    if ($InputObject -is [Collections.IDictionary]) {
+        if ($InputObject.Contains($Name)) {
+            $found = $true
+            $value = $InputObject[$Name]
+        }
+    }
+    else {
+        $property = $InputObject.PSObject.Properties[$Name]
+        if ($null -ne $property) {
+            $found = $true
+            $value = $property.Value
+        }
+    }
+    if (-not $found) { return $false }
+    if ($value -isnot [bool]) { throw "FIREBASE_BOOLEAN_EXPECTED:$Name" }
+    return [bool]$value
+}
+
 function Assert-S3ExactBoolean {
     param([AllowNull()][object]$Value,[Parameter(Mandatory)][bool]$Expected,[Parameter(Mandatory)][string]$Name)
     if ($Value -isnot [bool] -or [bool]$Value -ne $Expected) {
@@ -161,8 +184,8 @@ function Get-S3FederatedProviderSnapshot {
         $normalized = [Collections.Generic.List[object]]::new()
         foreach ($config in $items) {
             $name = [string](Get-S3RequiredPropertyValue -InputObject $config -Name 'name')
-            $enabled = Get-S3RequiredPropertyValue -InputObject $config -Name 'enabled'
-            if ([string]::IsNullOrWhiteSpace($name) -or $enabled -isnot [bool]) {
+            $enabled = Get-S3ProtoJsonBoolean -InputObject $config -Name 'enabled'
+            if ([string]::IsNullOrWhiteSpace($name)) {
                 throw "FIREBASE_PROVIDER_RESPONSE_INVALID:$collection"
             }
             $normalized.Add([ordered]@{name=$name;enabled=[bool]$enabled})
@@ -200,13 +223,13 @@ function Assert-S3FirebaseConfiguration {
     $anonymous = Get-S3RequiredPropertyValue -InputObject $signIn -Name 'anonymous'
     $client = Get-S3RequiredPropertyValue -InputObject $Configuration -Name 'client'
     $permissions = Get-S3RequiredPropertyValue -InputObject $client -Name 'permissions'
-    Assert-S3ExactBoolean -Value (Get-S3RequiredPropertyValue -InputObject $email -Name 'enabled') -Expected $true -Name 'email.enabled'
-    Assert-S3ExactBoolean -Value (Get-S3RequiredPropertyValue -InputObject $email -Name 'passwordRequired') -Expected $true -Name 'email.passwordRequired'
-    Assert-S3ExactBoolean -Value (Get-S3RequiredPropertyValue -InputObject $phone -Name 'enabled') -Expected $false -Name 'phoneNumber.enabled'
-    Assert-S3ExactBoolean -Value (Get-S3RequiredPropertyValue -InputObject $anonymous -Name 'enabled') -Expected $false -Name 'anonymous.enabled'
-    Assert-S3ExactBoolean -Value (Get-S3RequiredPropertyValue -InputObject $signIn -Name 'allowDuplicateEmails') -Expected $false -Name 'allowDuplicateEmails'
-    Assert-S3ExactBoolean -Value (Get-S3RequiredPropertyValue -InputObject $permissions -Name 'disabledUserSignup') -Expected $true -Name 'disabledUserSignup'
-    Assert-S3ExactBoolean -Value (Get-S3RequiredPropertyValue -InputObject $permissions -Name 'disabledUserDeletion') -Expected $true -Name 'disabledUserDeletion'
+    Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $email -Name 'enabled') -Expected $true -Name 'email.enabled'
+    Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $email -Name 'passwordRequired') -Expected $true -Name 'email.passwordRequired'
+    Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $phone -Name 'enabled') -Expected $false -Name 'phoneNumber.enabled'
+    Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $anonymous -Name 'enabled') -Expected $false -Name 'anonymous.enabled'
+    Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $signIn -Name 'allowDuplicateEmails') -Expected $false -Name 'allowDuplicateEmails'
+    Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $permissions -Name 'disabledUserSignup') -Expected $true -Name 'disabledUserSignup'
+    Assert-S3ExactBoolean -Value (Get-S3ProtoJsonBoolean -InputObject $permissions -Name 'disabledUserDeletion') -Expected $true -Name 'disabledUserDeletion'
     if ($null -eq $ProviderProof -or (Get-S3MapValue -Map $ProviderProof -Name 'verified') -ne $true -or [int](Get-S3MapValue -Map $ProviderProof -Name 'enabledCount') -ne 0) {
         throw 'FIREBASE_PROVIDER_PROOF_MISSING'
     }
