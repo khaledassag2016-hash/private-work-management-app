@@ -119,8 +119,13 @@ Describe 'B3 Firebase fail-closed' -Tag 'B3' {
     It 'does not expose API key or token text when a Google REST call fails' {
         Mock Invoke-RestMethod {throw ('https://example.test?key=SECRET-KEY Author' + 'ization: Bearer SECRET-TOKEN')} -ModuleName Firebase
         $message=''
-        try{Invoke-S3GoogleRest -Method GET -Uri 'https://example.test?key=SECRET-KEY' -Token 'SECRET-TOKEN'}catch{$message=$_.Exception.Message}
+        try{Invoke-S3GoogleRest -Method GET -Uri 'https://example.test?key=SECRET-KEY' -Token 'SECRET-TOKEN' -QuotaProjectId 'test-project'}catch{$message=$_.Exception.Message}
         $message | Should -Not -Match 'SECRET-KEY|SECRET-TOKEN'
+    }
+    It 'fails closed when a Google REST call has no explicit quota project' {
+        Mock Invoke-RestMethod { [pscustomobject]@{} } -ModuleName Firebase
+        { Invoke-S3GoogleRest -Method GET -Uri 'https://example.test' -Token 'test-token' } | Should -Throw
+        Should -Invoke Invoke-RestMethod -ModuleName Firebase -Times 0 -Exactly
     }
 }
 

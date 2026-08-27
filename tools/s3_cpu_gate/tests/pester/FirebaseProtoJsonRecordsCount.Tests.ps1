@@ -10,7 +10,7 @@ Describe 'B3 Firebase recordsCount ProtoJSON compatibility' -Tag 'B3' {
         } -ModuleName Firebase
         @(Get-S3FirebaseUser -ProjectId 's3cpu-test' -Token 'test-token').Count | Should -Be 0
         $script:capturedFirebaseRestHeaders.Authorization | Should -Be 'Bearer test-token'
-        $script:capturedFirebaseRestHeaders['x-goog-user-project'] | Should -Be 'ultra-function-476817-g5'
+        $script:capturedFirebaseRestHeaders['x-goog-user-project'] | Should -Be 's3cpu-test'
     }
 
     It 'sends the REST-compatible string int64 limit for accounts:query' {
