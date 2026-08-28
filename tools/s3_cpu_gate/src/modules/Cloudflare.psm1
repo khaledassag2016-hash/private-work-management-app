@@ -573,15 +573,22 @@ function ConvertTo-S3TelemetryEventPart {
     $record = ConvertTo-S3WorkersTelemetryRecord -Item $Item
     $attributes = Get-S3CloudflareValue -InputObject $Item -Name @('attributes')
     if ($null -eq $attributes) { $attributes = $Item }
+    $metadata = Get-S3CloudflareValue -InputObject $Item -Name @('$metadata','metadata')
+    $metadataType = [string](Get-S3CloudflareValue -InputObject $metadata -Name @('type'))
     $source = Get-S3CloudflareValue -InputObject $Item -Name @('source')
     if ($source -is [string]) { try { $source = $source | ConvertFrom-Json -Depth 20 } catch { $source = $null } }
-    $workers = Get-S3CloudflareValue -InputObject $Item -Name @('$workers','workers')
-    $eventType = [string](Get-S3CloudflareValue -InputObject $workers -Name @('eventType','event_type'))
     $cacheState = Get-S3CloudflareValue -InputObject $source -Name @('cacheState','cache_state')
     if ($null -eq $cacheState) { $cacheState = Get-S3CloudflareValue -InputObject $attributes -Name @('cacheState','cache_state') }
-    $hasCorrelation = -not [string]::IsNullOrWhiteSpace($record.runId) -and -not [string]::IsNullOrWhiteSpace($record.requestId) -and -not [string]::IsNullOrWhiteSpace($record.scenario)
-    $hasInvocation = ($null -ne $record.cpu_ms -or $null -ne $record.wall_ms -or -not [string]::IsNullOrWhiteSpace($record.outcome) -or $eventType -in @('fetch','scheduled','queue','rpc','invocation'))
-    return [pscustomobject]@{record=$record;cloudflareRequestId=[string]$record.cloudflareRequestId;hasCorrelation=$hasCorrelation;hasInvocation=$hasInvocation;cacheState=[string]$cacheState;eventType=$eventType;raw=$Item}
+    $correlationPresent = -not [string]::IsNullOrWhiteSpace($record.runId) -and -not [string]::IsNullOrWhiteSpace($record.requestId) -and -not [string]::IsNullOrWhiteSpace($record.scenario)
+    $isCustomLog = $metadataType -eq 'cf-worker-log'
+    $isInvocation = $metadataType -eq 'cf-worker-event'
+    if ([string]::IsNullOrWhiteSpace($metadataType)) {
+        $isCustomLog = $correlationPresent
+        $isInvocation = ($null -ne $record.cpu_ms -or $null -ne $record.wall_ms -or -not [string]::IsNullOrWhiteSpace($record.outcome))
+    }
+    $hasCorrelation = $isCustomLog -and $correlationPresent
+    $hasInvocation = $isInvocation
+    return [pscustomobject]@{record=$record;cloudflareRequestId=[string]$record.cloudflareRequestId;hasCorrelation=$hasCorrelation;hasInvocation=$hasInvocation;cacheState=[string]$cacheState;metadataType=$metadataType;raw=$Item}
 }
 function Merge-S3WorkerTelemetryEvent {
     param([AllowNull()][object[]]$Items,[Parameter(Mandatory)][string]$RunId,[Parameter(Mandatory)][string]$Scenario)
