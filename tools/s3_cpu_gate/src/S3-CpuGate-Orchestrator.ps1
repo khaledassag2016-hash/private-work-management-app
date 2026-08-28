@@ -6,7 +6,7 @@ $moduleRoot=Join-Path $PSScriptRoot 'modules'
 foreach($module in @('Toolchain','Common','Ui','Prerequisites','Repository','Firebase','Cloudflare','CpuGate','Cleanup','Reporting')){Import-Module (Join-Path $moduleRoot "$module.psm1") -Force}
 Enable-S3LocalToolPath -Root $PSScriptRoot
 if($Mode -eq 'Interactive'){$Mode=Select-S3Mode}
-$context=$null;$cleanupResult=$null;$cpu=[ordered]@{status='NOT_EXECUTED';reasons=@('NOT_REACHED')};$hadFailure=$false
+$context=$null;$cleanupResult=$null;$cpu=[ordered]@{status='NOT_EXECUTED';reasons=@('NOT_REACHED')};$hadFailure=$false;$cpuDecisionFailed=$false
 try{
  $context=New-S3Context -Mode $Mode -Resume:$Resume
  if($AutoRehydrateProviders -and $context.IsResumed -and $context.State.currentState -eq '60_CLOUDFLARE_PROVISIONED'){
@@ -73,7 +73,6 @@ try{
 }finally{
  try{
    $hasOwnedCloudResource=$false;if($null -ne $context){$hasOwnedCloudResource=Test-S3HasOwnedCloudResource -Context $context}
-   $cpuDecisionFailed=($null -ne $context -and $context.State.currentState -eq '60_CLOUDFLARE_PROVISIONED' -and $null -ne $cpu -and [string](Get-S3MapValue -Map $cpu -Name 'status') -ne 'PASS')
    $resumedSuccess=($null -ne $context -and $context.IsResumed -and $context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $null -ne $cpu -and [string](Get-S3MapValue -Map $cpu -Name 'status') -eq 'PASS' -and -not $hadFailure)
    if($null -ne $context -and $Mode -ne 'Plan' -and $hasOwnedCloudResource -and (-not $cpuDecisionFailed) -and (-not $context.IsResumed -or $resumedSuccess)){
    Show-S3Stage 8 9 'التنظيف الإلزامي' 'سيُحذف فقط ما أنشأته الحزمة ويحمل Run ID، وستُحفظ جلسات المستخدم السابقة.'
