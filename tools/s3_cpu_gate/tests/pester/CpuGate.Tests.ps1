@@ -45,9 +45,9 @@ Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
  }
  It 'accepts a complete correlated telemetry response' {$e=Get-B2ExpectedFixture @('a','b');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'),(Get-B2RecordFixture 'b'));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).status|Should -Be 'PASS'}
  It 'merges separate custom and invocation events by Cloudflare request ID' {
-  $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a'};source=[ordered]@{event='auth_result';cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
-  $invocation=[ordered]@{'$metadata'=[ordered]@{id='invoke-a';requestId='cf-a'};'$workers'=[ordered]@{requestId='cf-a';cpuTimeMs=2.5;wallTimeMs=8;outcome='ok';eventType='fetch'}}
-  $records=@(Merge-S3WorkerTelemetryEvent -Items @($invocation,$custom) -RunId 'run-b2' -Scenario 'scenario-a');$records.Count|Should -Be 1;$records[0].cpu_ms|Should -Be 2.5;$records[0].cache_state|Should -Be 'hit';$records[0].hasCorrelation|Should -BeTrue;$records[0].hasInvocation|Should -BeTrue
+  $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a';type='cf-worker-log'};'$workers'=[ordered]@{requestId='cf-a';eventType='fetch';scriptName='s3-worker'};source=[ordered]@{event='auth_result';cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
+  $invocation=[ordered]@{'$metadata'=[ordered]@{id='invoke-a';requestId='cf-a';type='cf-worker-event'};'$workers'=[ordered]@{requestId='cf-a';cpuTimeMs=2.5;wallTimeMs=8;outcome='ok';eventType='fetch'}}
+  $records=@(Merge-S3WorkerTelemetryEvent -Items @($invocation,$custom) -RunId 'run-b2' -Scenario 'scenario-a');$records.Count|Should -Be 1;$records[0].cpu_ms|Should -Be 2.5;$records[0].cache_state|Should -Be 'hit';$records[0].hasCorrelation|Should -BeTrue;$records[0].hasInvocation|Should -BeTrue;$records[0].duplicateInvocation|Should -BeFalse
  }
  It 'ignores unrelated warmup/reset/audit events' {
   $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a'};source=[ordered]@{cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
@@ -99,12 +99,12 @@ Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
   } -ModuleName Cloudflare
   $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'PASS';$q.pageCount|Should -Be 2;$q.records.Count|Should -Be 3;$q.records[0].requestId|Should -Be 'a';$q.records[1].cloudflareRequestId|Should -Be 'cf-b';$q.records[2].scenario|Should -Be 'scenario-a';(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a','b','c')) $q).status|Should -Be 'PASS'
  }
- It 'uses default limit 100 and rejects a limit above the official maximum' {
+ It 'uses local conservative page size 100 and rejects values above the local cap' {
   $body=Get-S3WorkersObservabilityQueryBody -QueryId q -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -ToUtc ([DateTime]'2026-08-05T08:00:00Z');$body.limit|Should -Be 100
   {Get-S3WorkersObservabilityQueryBody -QueryId q -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -ToUtc ([DateTime]'2026-08-05T08:00:00Z') -Limit 101}|Should -Throw
   {Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -PageSize 101}|Should -Throw
  }
- It 'paginates safely when the official response contains more than 100 events' {
+ It 'paginates safely when the response exceeds the local page size' {
   $script:page=0
   Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token,$Body);[void]$Method;[void]$Uri;[void]$Token;[int]$Body.limit|Should -Be 100;$script:page++
    if($script:page -eq 1){[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{count=101;events=@(1..100|ForEach-Object{Get-B2OfficialTelemetryEvent "a$_" "event-$_" 2 8})}}}}
