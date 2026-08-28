@@ -346,6 +346,14 @@ function Assert-S3ResumeCheckpointSafe {
  return $true
 }
 
+function Complete-S3CpuGateDecision {
+ [CmdletBinding()] param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)]$CpuDecision)
+ Set-S3MapValue -Map $Context.State.results -Name 'cpu' -Value $CpuDecision
+ if([string](Get-S3MapValue -Map $CpuDecision -Name 'status') -ne 'PASS'){throw 'CPU_GATE_DECISION_FAILED'}
+ Set-S3Checkpoint $Context '70_CPU_GATE_EXECUTED'
+ return $CpuDecision
+}
+
 function Invoke-S3WithWorkerStateRestore {
  [CmdletBinding()] param(
   [Parameter(Mandatory)]$Context,
@@ -364,7 +372,7 @@ function Invoke-S3WithWorkerStateRestore {
  $actionError=$null;$restoreError=$null;$result=$null
  try{$result=& $Action}catch{$actionError=$_.Exception}
  finally{
-  try{Copy-Item -LiteralPath $snapshotPath -Destination $configPath -Force;& $Restore $snapshotPath;if($null -ne $Verify){$verification=& $Verify $remoteSnapshot;if($verification -ne $true){throw 'REMOTE_WORKER_RESTORE_VERIFICATION_FAILED'}}}catch{$restoreError=$_.Exception}
+  try{Copy-Item -LiteralPath $snapshotPath -Destination $configPath -Force;& $Restore $remoteSnapshot;if($null -ne $Verify){$verification=& $Verify $remoteSnapshot;if($verification -ne $true){throw 'REMOTE_WORKER_RESTORE_VERIFICATION_FAILED'}}}catch{$restoreError=$_.Exception}
  }
  if($null -ne $restoreError){throw ('WORKER_STATE_RESTORE_FAILED:'+ (Protect-S3Text $restoreError.Message))}
  if($null -ne $actionError){throw $actionError}

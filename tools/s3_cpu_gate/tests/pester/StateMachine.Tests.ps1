@@ -16,10 +16,15 @@ Describe 'State machine invariants' {
 
 # S3-R human-triggered final-head CI marker; no test behavior change.
 Describe 'S3-R preserved-run recovery invariants' {
- It 'accepts only closed checkpoints for Resume' {
+ It 'accepts only closed checkpoints for Resume and scopes CPU cleanup suppression to an explicit decision failure' {
   $c=Get-TestContext; $c.State.currentState='60_CLOUDFLARE_PROVISIONED'; $c.State.completed=@('00_PACKAGE_READY','60_CLOUDFLARE_PROVISIONED')
   Assert-S3ResumeCheckpointSafe -State $c.State | Should -BeTrue
   $c.State.currentState='30_BRANCH_AND_DRAFT_PR'; {Assert-S3ResumeCheckpointSafe -State $c.State}|Should -Throw '*RESUME_REQUIRES_CLOSED_CHECKPOINT*'
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
+  $source|Should -Match '\$cpuDecisionFailed=\$false'
+  $source|Should -Match '\$cpuDecisionFailed=\(\$failureReason -eq ''CPU_GATE_DECISION_FAILED''\)'
+  $source|Should -Not -Match '\$cpuDecisionFailed=.*currentState.*status.*-ne ''PASS'''
+  $source|Should -Match '-not \$context\.IsResumed -or \$resumedSuccess'
  }
  It 'rehydrates exactly the preserved two UIDs in Simulation without provisioning' {
   $c=Get-TestContext; $c.Mode='Simulation'; $c.State.resources.firebase=[ordered]@{projectId='preserved';uid1='uid-one';uid2='uid-two'}
@@ -29,12 +34,12 @@ Describe 'S3-R preserved-run recovery invariants' {
  }
  It 'restores the Worker config after a successful action' {
   $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
-  Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';'ok' } -Restore { param($snapshot) [void]$snapshot;$script:restoreCalled=$true } | Should -Be 'ok'
+  Invoke-S3WithWorkerStateRestore -Context $c -Snapshot { [ordered]@{public=[ordered]@{deployment=[ordered]@{activeVersionId='v1'}}} } -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';'ok' } -Restore { param($snapshot) if($snapshot.public.deployment.activeVersionId -ne 'v1'){throw 'REMOTE_OBJECT_NOT_PASSED'};$script:restoreCalled=$true } | Should -Be 'ok'
   (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalled|Should -BeTrue
  }
  It 'restores the Worker config when the action fails' {
   $c=Get-TestContext;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'workspace\worker') -Force|Out-Null;$path=Join-Path $TestDrive 'workspace\worker\wrangler.json';Set-Content $path '{"vars":{"TEST_CONTROLS":"enabled"}}'
-  {Invoke-S3WithWorkerStateRestore -Context $c -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';throw 'CPU_GATE_FAILED' } -Restore { param($snapshot) [void]$snapshot;$script:restoreCalledOnFailure=$true }}|Should -Throw '*CPU_GATE_FAILED*'
+  {Invoke-S3WithWorkerStateRestore -Context $c -Snapshot { [ordered]@{public=[ordered]@{deployment=[ordered]@{activeVersionId='v2'}}} } -Action { Set-Content $path '{"vars":{"TEST_CONTROLS":"changed"}}';throw 'CPU_GATE_FAILED' } -Restore { param($snapshot) if($snapshot.public.deployment.activeVersionId -ne 'v2'){throw 'REMOTE_OBJECT_NOT_PASSED'};$script:restoreCalledOnFailure=$true }}|Should -Throw '*CPU_GATE_FAILED*'
   (Get-Content $path -Raw)|Should -Match 'TEST_CONTROLS';$script:restoreCalledOnFailure|Should -BeTrue
  }
 }

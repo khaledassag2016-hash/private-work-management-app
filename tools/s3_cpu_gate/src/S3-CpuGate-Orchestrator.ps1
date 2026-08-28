@@ -6,7 +6,7 @@ $moduleRoot=Join-Path $PSScriptRoot 'modules'
 foreach($module in @('Toolchain','Common','Ui','Prerequisites','Repository','Firebase','Cloudflare','CpuGate','Cleanup','Reporting')){Import-Module (Join-Path $moduleRoot "$module.psm1") -Force}
 Enable-S3LocalToolPath -Root $PSScriptRoot
 if($Mode -eq 'Interactive'){$Mode=Select-S3Mode}
-$context=$null;$cleanupResult=$null;$cpu=[ordered]@{status='NOT_EXECUTED';reasons=@('NOT_REACHED')};$hadFailure=$false
+$context=$null;$cleanupResult=$null;$cpu=[ordered]@{status='NOT_EXECUTED';reasons=@('NOT_REACHED')};$hadFailure=$false;$cpuDecisionFailed=$false
 try{
  $context=New-S3Context -Mode $Mode -Resume:$Resume
  if($AutoRehydrateProviders -and $context.IsResumed -and $context.State.currentState -eq '60_CLOUDFLARE_PROVISIONED'){
@@ -25,8 +25,8 @@ try{
    if($null -eq $CloudflareObservabilityTokenProvider){throw 'CLOUDFLARE_OBSERVABILITY_PROVIDER_REQUIRED'}
    $cleanupCredential=Restore-S3CloudflareCleanupCredential -Context $context
    if($cleanupCredential.status -notin @('RUNTIME_PRESENT','RECOVERED')){throw 'CLOUDFLARE_REHYDRATION_SESSION_REQUIRED'}
-   $rehydration=Invoke-S3FirebaseRuntimeRehydration -Context $context -ExpectedUids $expectedUids -CredentialProvider $FirebaseCredentialProvider
    $workerRehydration=Invoke-S3CloudflareRuntimeRehydration -Context $context -AccountId ([string](Get-S3MapValue -Map $cloudflareResource -Name 'accountId')) -WorkerName ([string](Get-S3MapValue -Map $cloudflareResource -Name 'worker')) -Token ([string](Get-S3MapValue -Map $context.RuntimeSecrets -Name 'cloudflareToken')) -ObservabilityTokenProvider $CloudflareObservabilityTokenProvider
+   $rehydration=Invoke-S3FirebaseRuntimeRehydration -Context $context -ExpectedUids $expectedUids -CredentialProvider $FirebaseCredentialProvider
    Set-S3MapValue -Map $context.State.results -Name 'firebaseRehydration' -Value ([ordered]@{status=$rehydration.status;sameUids=$rehydration.sameUids;provisioningSkipped=$rehydration.provisioningSkipped;secrets='MEMORY_ONLY'})
    Set-S3MapValue -Map $context.State.results -Name 'cloudflareRehydration' -Value ([ordered]@{status=$workerRehydration.status;nonce=$workerRehydration.nonce;nonceType=$workerRehydration.nonceType;observability=$workerRehydration.observability;secrets='MEMORY_ONLY'})
    Write-S3State -Root $context.Root -State $context.State
@@ -55,25 +55,26 @@ try{
   Show-S3Stage 7 9 'بوابة CPU' '20 warm-up، جولتان hit، و20 miss، مع قياس CPU رسمي.'
   if($context.Mode -eq 'Live'){
    $cloudflareResource=Get-S3MapValue -Map $context.State.resources -Name 'cloudflare';$workerName=[string](Get-S3MapValue -Map $cloudflareResource -Name 'worker');$accountId=[string](Get-S3MapValue -Map $cloudflareResource -Name 'accountId');$workerToken=[string](Get-S3MapValue -Map $context.RuntimeSecrets -Name 'cloudflareToken')
-   $cpu=Invoke-S3WithWorkerStateRestore -Context $context -Snapshot { Get-S3CloudflareWorkerRemoteSnapshot -Context $context -AccountId $accountId -WorkerName $workerName -Token $workerToken } -Action { Invoke-S3CpuGate -Context $context } -Restore { param($snapshot) $versionId=[string](Get-S3CloudflareValue -InputObject $snapshot.public.deployment -Name 'activeVersionId');if([string]::IsNullOrWhiteSpace($versionId)){throw 'REMOTE_WORKER_ACTIVE_VERSION_MISSING'};$restore=Invoke-S3Process -Context $context -FilePath 'wrangler' -ArgumentList @('versions','deploy',$versionId,'--name',$workerName) -WorkingDirectory (Join-Path $context.Root 'workspace\worker') -TimeoutSeconds 600;if($restore.ExitCode -ne 0){throw 'REMOTE_WORKER_VERSION_RESTORE_FAILED'} } -Verify { param($snapshot) $after=Get-S3CloudflareWorkerRemoteSnapshot -Context $context -AccountId $accountId -WorkerName $workerName -Token $workerToken;Test-S3CloudflareWorkerRemoteSnapshot -Before $snapshot -After $after }
+   $cpu=Invoke-S3WithWorkerStateRestore -Context $context -Snapshot { Get-S3CloudflareWorkerRemoteSnapshot -Context $context -AccountId $accountId -WorkerName $workerName -Token $workerToken } -Action { Invoke-S3CpuGate -Context $context } -Restore { param($snapshot) $versionId=[string](Get-S3CloudflareValue -InputObject $snapshot.public.deployment -Name 'activeVersionId');if([string]::IsNullOrWhiteSpace($versionId)){throw 'REMOTE_WORKER_ACTIVE_VERSION_MISSING'};$restore=Invoke-S3Process -Context $context -FilePath 'wrangler' -ArgumentList @('versions','deploy',$versionId,'--name',$workerName,'--yes') -WorkingDirectory (Join-Path $context.Root 'workspace\worker') -TimeoutSeconds 600;if($restore.ExitCode -ne 0){throw 'REMOTE_WORKER_VERSION_RESTORE_FAILED'} } -Verify { param($snapshot) $after=Get-S3CloudflareWorkerRemoteSnapshot -Context $context -AccountId $accountId -WorkerName $workerName -Token $workerToken;Test-S3CloudflareWorkerRemoteSnapshot -Before $snapshot -After $after }
    Set-S3MapValue -Map $cpu -Name 'REMOTE_WORKER_RESTORE_VERIFIED' -Value $true;Set-S3MapValue -Map $cpu -Name 'REMOTE_WORKER_EFFECTIVE_STATE_RESTORED' -Value $true
   }else{$cpu=Invoke-S3CpuGate -Context $context}
-  Set-S3MapValue -Map $context.State.results -Name 'cpu' -Value $cpu;Set-S3Checkpoint $context '70_CPU_GATE_EXECUTED'
+  Complete-S3CpuGateDecision -Context $context -CpuDecision $cpu | Out-Null
  }
  if($context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $context.IsResumed){$cpu=Get-S3MapValue -Map $context.State.results -Name 'cpu'}
 }catch{
  $hadFailure=$true
  $failureReason=Protect-S3Text $_.Exception.Message
+ $cpuDecisionFailed=($failureReason -eq 'CPU_GATE_DECISION_FAILED')
  if($null -ne $context){
   [void](Write-S3FailureEvidence -Context $context -Reason $failureReason -FailureRecord $_ -Operation 'orchestrator.main')
-  try{New-S3BlockerReport -Context $context -Reason $failureReason|Out-Null}catch{Write-Verbose ("تعذر إنشاء blocker-report.zip: " + $_.Exception.Message)}
+  if(-not $cpuDecisionFailed){try{New-S3BlockerReport -Context $context -Reason $failureReason|Out-Null}catch{Write-Verbose ("تعذر إنشاء blocker-report.zip: " + $_.Exception.Message)}}
  }
  Write-Information -InformationAction Continue ('توقف آمن: '+$failureReason)
 }finally{
  try{
    $hasOwnedCloudResource=$false;if($null -ne $context){$hasOwnedCloudResource=Test-S3HasOwnedCloudResource -Context $context}
    $resumedSuccess=($null -ne $context -and $context.IsResumed -and $context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $null -ne $cpu -and [string](Get-S3MapValue -Map $cpu -Name 'status') -eq 'PASS' -and -not $hadFailure)
-   if($null -ne $context -and $Mode -ne 'Plan' -and $hasOwnedCloudResource -and (-not $context.IsResumed -or $resumedSuccess)){
+   if($null -ne $context -and $Mode -ne 'Plan' -and $hasOwnedCloudResource -and (-not $cpuDecisionFailed) -and (-not $context.IsResumed -or $resumedSuccess)){
    Show-S3Stage 8 9 'التنظيف الإلزامي' 'سيُحذف فقط ما أنشأته الحزمة ويحمل Run ID، وستُحفظ جلسات المستخدم السابقة.'
    $cleanupResult=Invoke-S3Cleanup -Context $context
    if($context.State.currentState -eq '70_CPU_GATE_EXECUTED' -and $cleanupResult.status -eq 'PASS'){Set-S3Checkpoint $context '80_RESOURCES_DESTROYED'}

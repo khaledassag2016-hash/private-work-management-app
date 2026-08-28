@@ -83,10 +83,14 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
  It 'blocks AwaitingPayment' {{Test-S3CloudflareSubscriptions -Subscriptions @([ordered]@{status='AwaitingPayment'})}|Should -Throw '*AWAITING_PAYMENT*'}
  It 'blocks an inconclusive Alpha PayGo result' {{Test-S3CloudflarePayGo -PayGoResult ([ordered]@{alpha=$true;status='alpha'})}|Should -Throw '*PAYGO_UNKNOWN*'}
  It 'blocks unknown Workers settings' {{Test-S3WorkersAccountSettings -Settings ([ordered]@{})}|Should -Throw '*WORKERS_SETTINGS_UNKNOWN*'}
- It 'uses the current schema and blocks unauthorized Workers Observability' {Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token,$Body);[void]$Uri;[void]$Token;$Method|Should -Be POST;$Body.queryId|Should -Be 's3cpu-preflight';$Body.timeframe.from|Should -BeOfType [long];$Body.timeframe.to|Should -BeGreaterThan $Body.timeframe.from;$Body.dry|Should -BeTrue;$Body.parameters.filterCombination|Should -Be 'and';$Body.PSObject.Properties.Name|Should -Not -Contain 'fields';$Body.PSObject.Properties.Name|Should -Not -Contain 'filters';throw '403 forbidden'} -ModuleName Cloudflare;{Test-S3WorkersObservabilityAuthorization -AccountId account -Token token}|Should -Throw}
+ It 'uses the current schema and blocks unauthorized Workers Observability' {Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token,$Body);[void]$Uri;[void]$Token;$Method|Should -Be POST;$Body.queryId|Should -Be 's3cpu-preflight';$Body.timeframe.from|Should -BeOfType [long];$Body.timeframe.to|Should -BeGreaterThan $Body.timeframe.from;$Body.dry|Should -BeTrue;$Body.parameters.filterCombination|Should -Be 'and';$Body.parameters.filters.Count|Should -Be 1;$Body.parameters.filters[0].key|Should -Be '$metadata.service';$Body.parameters.filters[0].operation|Should -Be 'eq';$Body.parameters.filters[0].type|Should -Be 'string';$Body.parameters.filters[0].value|Should -Be 'worker-s3';$Body.PSObject.Properties.Name|Should -Not -Contain 'fields';throw '403 forbidden'} -ModuleName Cloudflare;{Test-S3WorkersObservabilityAuthorization -AccountId account -Token token -WorkerName worker-s3}|Should -Throw}
  It 'blocks a missing workers.dev subdomain' {{Test-S3WorkersDevSubdomain -SubdomainResult ([ordered]@{subdomain='';enabled=$false})}|Should -Throw '*WORKERS_DEV_SUBDOMAIN_UNAVAILABLE*'}
  It 'stops when the user cancels the Arabic attestation' {$r=Confirm-S3CloudflareBillingAttestation -ReadChoice {'2'};$r.status|Should -Be CANCELLED;$r.accepted|Should -BeFalse}
  It 'accepts only the affirmative Arabic attestation' {$r=Confirm-S3CloudflareBillingAttestation -ReadChoice {'1'};$r.status|Should -Be YES;$r.accepted|Should -BeTrue}
+ It 'uses exact non-interactive restore and cleanup flags' {
+  $orchestrator=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$cloudflare=Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw;$cpu=Get-Content (Join-Path $SourceRoot 'src\modules\CpuGate.psm1') -Raw
+  $orchestrator.Contains("@('versions','deploy',`$versionId,'--name',`$workerName,'--yes')")|Should -BeTrue;$cloudflare.Contains("'d1','delete',`$owned.d1Name,'--skip-confirmation'")|Should -BeTrue;$cloudflare.Contains("'delete','--name',`$owned.worker")|Should -BeTrue;$cloudflare.Contains("'delete',`$owned.worker,'--force'")|Should -BeFalse;$cpu.Contains('x-s3-force-certificate-refresh')|Should -BeTrue;$cpu.Contains('__test/reset-cache')|Should -BeFalse
+ }
  It 'places the preflight before Firebase and stops failures before it' {$source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$preflight=$source.IndexOf('Invoke-S3CloudflareReadOnlyPreflight');$firebase=$source.IndexOf('Invoke-S3FirebaseProvision');$preflight|Should -BeGreaterThan -1;$firebase|Should -BeGreaterThan $preflight;$source|Should -Match "if\(\`$preflight.status -ne 'PASS'\)"}
  It 'rejects every Cloudflare write API call' {Mock Invoke-RestMethod {throw 'must not run'} -ModuleName Cloudflare;{Invoke-S3CloudflareRest -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/a/workers/scripts' -Token token -Body @{}}|Should -Throw '*CLOUDFLARE_WRITE_API_FORBIDDEN*';Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0 -Exactly}
  It 'does not use the deprecated Billing Profile API' {$source=Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw;$source|Should -Not -Match '(?i)billing/profile|billing profile api'}
@@ -929,6 +933,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $c.RuntimeSecrets.uid2 = 'uid-two'
         $c.State.resources.cloudflare = [ordered]@{d1Name='synthetic-d1'}
         Mock Invoke-S3HttpRequest {
+            $requestId = [string]$Headers['x-s3-request-id']
             $value = ($Body | ConvertFrom-Json).value
             if ($value -eq 'synthetic-denied') { return [pscustomobject]@{status=403;body='{"ok":false}'} }
             $isBefore = $value -eq 'synthetic-before'
@@ -939,8 +944,9 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
                 before=if($isBefore){$null}else{[ordered]@{value='synthetic-before'}}
                 after=[ordered]@{value=$value}
                 runId=$c.RunId
+                requestId=$RequestId
             }
-            [pscustomobject]@{status=200;body=([ordered]@{ok=$true;audit=$audit}|ConvertTo-Json -Depth 8 -Compress)}
+            [pscustomobject]@{status=200;body=([ordered]@{ok=$true;requestId=$requestId;audit=$audit}|ConvertTo-Json -Depth 8 -Compress)}
         } -ModuleName CpuGate
         Mock Invoke-S3D1Sql {
             param($Context,$Sql,[switch]$AllowFailure,[switch]$PassThru)
@@ -954,7 +960,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $result.updateRejected | Should -BeTrue
         $result.deleteRejected | Should -BeTrue
         Should -Invoke Invoke-S3HttpRequest -ModuleName CpuGate -Times 3 -Exactly
-        Should -Invoke Invoke-S3D1Sql -ModuleName CpuGate -Times 6 -Exactly
+        Should -Invoke Invoke-S3D1Sql -ModuleName CpuGate -Times 7 -Exactly
     }
 
     It 'persists the D1 pending intent before invoking d1 create' {
@@ -1569,6 +1575,17 @@ Describe 'S3-R Harness secure rehydration regressions' {
   $source|Should -Match 'currentState -eq ''50_FIREBASE_PROVISIONED'' -and -not \$context\.IsResumed'
   $source|Should -Match 'Invoke-S3FirebaseRuntimeRehydration'
  }
+ It 'enforces checkpoint-60 rehydration ordering before mutation' {
+  $orchestrator=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$firebase=Get-Content (Join-Path $SourceRoot 'src\modules\Firebase.psm1') -Raw
+  $cloudflareIndex=$orchestrator.IndexOf('Invoke-S3CloudflareRuntimeRehydration');$firebaseIndex=$orchestrator.IndexOf('Invoke-S3FirebaseRuntimeRehydration');$cloudflareIndex|Should -BeGreaterThan -1;$firebaseIndex|Should -BeGreaterThan $cloudflareIndex
+  $rehydrationStart=$firebase.IndexOf('function Invoke-S3FirebaseRuntimeRehydration');$firebaseBlock=$firebase.Substring($rehydrationStart);$configIndex=$firebaseBlock.IndexOf('Invoke-S3GoogleRest -Method GET -Uri $configurationUri');$passwordIndex=$firebaseBlock.IndexOf('Update-S3FirebaseAdminUserPassword');$tokenIndex=$firebaseBlock.IndexOf('Get-S3FirebaseIdToken');$rehydrationStart|Should -BeGreaterThan -1;$configIndex|Should -BeGreaterThan -1;$passwordIndex|Should -BeGreaterThan $configIndex;$tokenIndex|Should -BeGreaterThan $passwordIndex
+ }
+ It 'keeps checkpoint 60 and blocks cleanup/report after CPU decision FAIL' {
+  $c=Get-TestContext Live;$c.State.currentState='60_CLOUDFLARE_PROVISIONED';$c.State.completed=@('00_PACKAGE_READY','60_CLOUDFLARE_PROVISIONED');$decision=[ordered]@{status='FAIL';reasons=@('CPU_REJECTED')}
+  {Complete-S3CpuGateDecision -Context $c -CpuDecision $decision}|Should -Throw '*CPU_GATE_DECISION_FAILED*'
+  (Get-S3MapValue -Map $c.State.results -Name 'cpu').status|Should -Be 'FAIL';$c.State.currentState|Should -Be '60_CLOUDFLARE_PROVISIONED'
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$source|Should -Match 'Complete-S3CpuGateDecision';$source|Should -Match '-not \$cpuDecisionFailed';$source|Should -Match 'currentState -eq ''80_RESOURCES_DESTROYED'''
+ }
  It 'does not run cleanup automatically for a resumed preserved run' {
   $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
   $source|Should -Match 'resumedSuccess'
@@ -1706,8 +1723,8 @@ Describe 'S3-R Firebase Web App discovery' {
 Describe 'S3-R D1 failure restoration' {
  It 'restores uid2 authorization in finally when temporary D1 mutation fails' {
   $c=Get-TestContext Live;$c.RuntimeSecrets.uid1='uid-one';$c.RuntimeSecrets.uid2='uid-two';$c.State.resources.cloudflare=[ordered]@{d1Name='synthetic-d1'};$calls=[Collections.Generic.List[string]]::new()
-  Mock Invoke-S3HttpRequest { $value=($Body|ConvertFrom-Json).value;$isFirst=$value -eq 'synthetic-before';$action=if($isFirst){'CREATE'}else{'UPDATE'};$actor=if($isFirst){'uid-one'}else{'uid-two'};[pscustomobject]@{status=200;body=([ordered]@{ok=$true;audit=[ordered]@{action=$action;actorUid=$actor;createdAt='2026-08-26T12:00:00.000Z';runId=$c.RunId;before=$(if($isFirst){$null}else{[ordered]@{value='synthetic-before'}});after=[ordered]@{value=$value}}}|ConvertTo-Json -Compress)} } -ModuleName CpuGate
-  Mock Invoke-S3D1Sql { param($Context,$Sql,[switch]$AllowFailure,[switch]$PassThru);[void]$Context;[void]$AllowFailure;[void]$PassThru;$calls.Add($Sql);if($calls.Count -eq 1){throw 'TEMP_D1_MUTATION_FAILED'}} -ModuleName CpuGate
+  Mock Invoke-S3HttpRequest { $requestId=[string]$Headers['x-s3-request-id'];$value=($Body|ConvertFrom-Json).value;$isFirst=$value -eq 'synthetic-before';$action=if($isFirst){'CREATE'}else{'UPDATE'};$actor=if($isFirst){'uid-one'}else{'uid-two'};[pscustomobject]@{status=200;body=([ordered]@{ok=$true;requestId=$RequestId;audit=[ordered]@{action=$action;actorUid=$actor;createdAt='2026-08-26T12:00:00.000Z';runId=$c.RunId;requestId=$RequestId;before=$(if($isFirst){$null}else{[ordered]@{value='synthetic-before'}});after=[ordered]@{value=$value}}}|ConvertTo-Json -Compress)} } -ModuleName CpuGate
+  Mock Invoke-S3D1Sql { param($Context,$Sql,[switch]$AllowFailure,[switch]$PassThru);[void]$Context;[void]$AllowFailure;if($Sql -match 'DELETE FROM s3_audit_probe'){if($PassThru){return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}};return};$calls.Add($Sql);if($calls.Count -eq 1){throw 'TEMP_D1_MUTATION_FAILED'}} -ModuleName CpuGate
   {Invoke-S3AuditAcceptance -Context $c -BaseUri 'https://synthetic.workers.dev' -Token1 'a' -Token2 'b' -Nonce 'n'}|Should -Throw '*TEMP_D1_MUTATION_FAILED*'
   $calls.Count|Should -Be 2;$calls[1]|Should -Match 'active=1'
  }

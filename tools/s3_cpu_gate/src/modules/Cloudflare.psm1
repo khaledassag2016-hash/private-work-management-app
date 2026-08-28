@@ -215,7 +215,7 @@ function Invoke-S3CloudflareRuntimeRehydration {
     if($null -eq $nonce -or [string]$nonce.type -ne 'plain_text' -or $nonce.valueNonEmpty -ne $true){throw 'WORKER_TEST_RESET_NONCE_INVALID'}
     $newObservabilityToken=[string](& $ObservabilityTokenProvider $AccountId $WorkerName)
     if([string]::IsNullOrWhiteSpace($newObservabilityToken)){throw 'WORKERS_OBSERVABILITY_CREDENTIAL_REQUIRED'}
-    [void](Test-S3WorkersObservabilityAuthorization -AccountId $AccountId -Token $newObservabilityToken)
+    [void](Test-S3WorkersObservabilityAuthorization -AccountId $AccountId -Token $newObservabilityToken -WorkerName $WorkerName)
     $Context.RuntimeSecrets.testResetNonce=[string](Get-S3CloudflareValue -InputObject $snapshot.privateVars -Name @('TEST_RESET_NONCE'))
     $Context.RuntimeSecrets.cloudflareObservabilityToken=$newObservabilityToken
     if([string]::IsNullOrWhiteSpace([string]$Context.RuntimeSecrets.testResetNonce)){throw 'WORKER_TEST_RESET_NONCE_READ_FAILED'}
@@ -435,9 +435,9 @@ function Test-S3WorkersAccountSettings {
 }
 
 function Test-S3WorkersObservabilityAuthorization {
-    param([Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$Token)
+    param([Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$Token,[string]$WorkerName)
     $uri = "https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/observability/telemetry/query"
-    $body = Get-S3WorkersObservabilityQueryBody -QueryId 's3cpu-preflight' -FromUtc ([DateTime]::UtcNow.AddMinutes(-5)) -ToUtc ([DateTime]::UtcNow) -Limit 1
+    $body = Get-S3WorkersObservabilityQueryBody -QueryId 's3cpu-preflight' -FromUtc ([DateTime]::UtcNow.AddMinutes(-5)) -ToUtc ([DateTime]::UtcNow) -Limit 1 -WorkerName $WorkerName
     $response = Invoke-S3CloudflareRest -Method POST -Uri $uri -Token $Token -Body $body
     if ($response.success -eq $false -or @($response.errors).Count -gt 0) { throw 'WORKERS_OBSERVABILITY_NOT_AUTHORIZED' }
     return [ordered]@{status='PASS';authorized=$true}
@@ -475,7 +475,8 @@ function Get-S3WorkersObservabilityQueryBody {
         [Parameter(Mandatory)][string]$QueryId,
         [Parameter(Mandatory)][datetime]$FromUtc,
         [Parameter(Mandatory)][datetime]$ToUtc,
-        [ValidateRange(1,2000)][int]$Limit = 500,
+        [string]$WorkerName,
+        [ValidateRange(1,100)][int]$Limit = 100,
         [object[]]$Filters = @(),
         [string]$Offset
     )
@@ -494,6 +495,9 @@ function Get-S3WorkersObservabilityQueryBody {
             filterCombination = 'and'
             filters = @($Filters)
         }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($WorkerName)) {
+        $body.parameters.filters = @([ordered]@{kind='filter';key='$metadata.service';operation='eq';type='string';value=$WorkerName}) + @($Filters)
     }
     if (-not [string]::IsNullOrWhiteSpace($Offset)) { $body.offset = $Offset }
     return $body
@@ -564,59 +568,127 @@ function ConvertTo-S3WorkersTelemetryRecord {
     }
 }
 
+function ConvertTo-S3TelemetryEventPart {
+    param([Parameter(Mandatory)][object]$Item)
+    $record = ConvertTo-S3WorkersTelemetryRecord -Item $Item
+    $attributes = Get-S3CloudflareValue -InputObject $Item -Name @('attributes')
+    if ($null -eq $attributes) { $attributes = $Item }
+    $metadata = Get-S3CloudflareValue -InputObject $Item -Name @('$metadata','metadata')
+    $metadataType = [string](Get-S3CloudflareValue -InputObject $metadata -Name @('type'))
+    $source = Get-S3CloudflareValue -InputObject $Item -Name @('source')
+    if ($source -is [string]) { try { $source = $source | ConvertFrom-Json -Depth 20 } catch { $source = $null } }
+    $cacheState = Get-S3CloudflareValue -InputObject $source -Name @('cacheState','cache_state')
+    if ($null -eq $cacheState) { $cacheState = Get-S3CloudflareValue -InputObject $attributes -Name @('cacheState','cache_state') }
+    $correlationPresent = -not [string]::IsNullOrWhiteSpace($record.runId) -and -not [string]::IsNullOrWhiteSpace($record.requestId) -and -not [string]::IsNullOrWhiteSpace($record.scenario)
+    $isCustomLog = $metadataType -eq 'cf-worker-log'
+    $isInvocation = $metadataType -eq 'cf-worker-event'
+    if ([string]::IsNullOrWhiteSpace($metadataType)) {
+        $isCustomLog = $correlationPresent
+        $isInvocation = ($null -ne $record.cpu_ms -or $null -ne $record.wall_ms -or -not [string]::IsNullOrWhiteSpace($record.outcome))
+    }
+    $hasCorrelation = $isCustomLog -and $correlationPresent
+    $hasInvocation = $isInvocation
+    return [pscustomobject]@{record=$record;cloudflareRequestId=[string]$record.cloudflareRequestId;hasCorrelation=$hasCorrelation;hasInvocation=$hasInvocation;cacheState=[string]$cacheState;metadataType=$metadataType;raw=$Item}
+}
+function Merge-S3WorkerTelemetryEvent {
+    param([AllowNull()][object[]]$Items,[Parameter(Mandatory)][string]$RunId,[Parameter(Mandatory)][string]$Scenario)
+    $groups = [ordered]@{}
+    $index = 0
+    foreach ($item in @($Items)) {
+        $part = ConvertTo-S3TelemetryEventPart -Item $item
+        $isCurrentCorrelation = $part.hasCorrelation -and [string]$part.record.runId -eq $RunId -and [string]$part.record.scenario -eq $Scenario
+        $key = $part.cloudflareRequestId
+        if ([string]::IsNullOrWhiteSpace($key)) { $key = "__missing_cf_request_$index" }
+        if (-not $groups.Contains($key)) { $groups[$key] = [ordered]@{parts=@();custom=@();invocation=@()} }
+        $groups[$key].parts += [pscustomobject]@{part=$part;isCurrentCorrelation=$isCurrentCorrelation}
+        $index++
+    }
+    $normalized = [Collections.Generic.List[object]]::new()
+    foreach ($key in $groups.Keys) {
+        $group = $groups[$key]
+        foreach ($entry in @($group.parts)) {
+            if ($entry.isCurrentCorrelation) { $group.custom += $entry.part }
+            if ($entry.part.hasInvocation) { $group.invocation += $entry.part }
+        }
+        if ($group.custom.Count -eq 0) { continue }
+        $custom = $group.custom[0]
+        $invocation = if ($group.invocation.Count -gt 0) { $group.invocation[0] } else { $null }
+        $record = [ordered]@{} + $custom.record
+        if ($null -ne $invocation) {
+            $record.cpu_ms = $invocation.record.cpu_ms
+            $record.wall_ms = $invocation.record.wall_ms
+            $record.outcome = $invocation.record.outcome
+        }
+        if (-not [string]::IsNullOrWhiteSpace($custom.cacheState)) { $record.cache_state = $custom.cacheState }
+        $record.hasCorrelation = $true
+        $record.hasInvocation = ($null -ne $invocation)
+        $record.duplicateCorrelation = ($group.custom.Count -gt 1)
+        $record.duplicateInvocation = ($group.invocation.Count -gt 1)
+        $record.cloudflareRequestId = [string]$key
+        $normalized.Add($record)
+    }
+    return @($normalized)
+}
 function Invoke-S3WorkersTelemetryQuery {
     param(
         [Parameter(Mandatory)][string]$AccountId,
         [Parameter(Mandatory)][string]$Token,
         [Parameter(Mandatory)][string]$RunId,
         [Parameter(Mandatory)][string]$Scenario,
-        [ValidateRange(1,2000)][int]$PageSize=500
+        [Parameter(Mandatory)][string]$WorkerName,
+        [Parameter(Mandatory)][datetime]$FromUtc,
+        [ValidateRange(1,100)][int]$PageSize=100
     )
+    if ([string]::IsNullOrWhiteSpace($WorkerName)) { throw 'WORKERS_OBSERVABILITY_WORKER_REQUIRED' }
     $uri = "https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/observability/telemetry/query"
-    $records = [Collections.Generic.List[object]]::new()
+    $rawItems = [Collections.Generic.List[object]]::new()
     $errors = [Collections.Generic.List[string]]::new()
     $seenOffsets = [Collections.Generic.HashSet[string]]::new()
     $page = 1; $offset = $null; $truncated = $false; $samplingDetected = $false; $paginationComplete = $true
-    $fromUtc = [DateTime]::UtcNow.AddMinutes(-15)
-    $toUtc = [DateTime]::UtcNow
+    $fromUtc = $FromUtc.ToUniversalTime(); $toUtc = [DateTime]::UtcNow
+    if ($toUtc -le $fromUtc) { throw 'WORKERS_OBSERVABILITY_TIMEFRAME_INVALID' }
     $queryId = "s3cpu-$RunId-$Scenario"
     while ($true) {
-        $body = Get-S3WorkersObservabilityQueryBody -QueryId $queryId -FromUtc $fromUtc -ToUtc $toUtc -Limit $PageSize -Offset $offset
+        $body = Get-S3WorkersObservabilityQueryBody -QueryId $queryId -FromUtc $fromUtc -ToUtc $toUtc -Limit $PageSize -Offset $offset -WorkerName $WorkerName
         try { $response = Invoke-S3CloudflareRest -Method POST -Uri $uri -Token $Token -Body $body }
         catch {
             $errors.Add("API_ERROR:$($_.Exception.Message)")
-            return [ordered]@{status='FAIL';records=@($records);pageCount=$page;paginationComplete=$false;truncated=$truncated;samplingDetected=$samplingDetected;apiSuccess=$false;errors=@($errors)}
+            return [ordered]@{status='FAIL';records=@();rawCount=$rawItems.Count;pageCount=$page;paginationComplete=$false;truncated=$truncated;samplingDetected=$samplingDetected;apiSuccess=$false;errors=@($errors)}
         }
         if ($response.success -eq $false -or @($response.errors).Count -gt 0) {
             $errors.Add('API_ERROR')
-            return [ordered]@{status='FAIL';records=@($records);pageCount=$page;paginationComplete=$false;truncated=$truncated;samplingDetected=$samplingDetected;apiSuccess=$false;errors=@($errors)}
-        }
-        $responseJson = $response | ConvertTo-Json -Depth 40 -Compress
-        if ($responseJson -match '"truncated"\s*:\s*true') { $truncated = $true }
-        if ($responseJson -match '"sampling"\s*:\s*(true|"[^"]+"|[2-9][0-9.]*)' -or $responseJson -match '"abr_level"\s*:\s*"(?!none|full|0)[^"]+"') { $samplingDetected = $true }
-        $pageItems = @(Get-S3TelemetryPageItems -Response $response)
-        foreach ($item in $pageItems) {
-            $record = ConvertTo-S3WorkersTelemetryRecord -Item $item
-            if ($record.truncated -eq $true) { $truncated = $true }
-            if ((Test-S3TelemetrySamplingValue -Value $record.sampling) -or (Test-S3TelemetrySamplingValue -Value $record.abrLevel)) { $samplingDetected = $true }
-            $records.Add($record)
+            return [ordered]@{status='FAIL';records=@();rawCount=$rawItems.Count;pageCount=$page;paginationComplete=$false;truncated=$truncated;samplingDetected=$samplingDetected;apiSuccess=$false;errors=@($errors)}
         }
         $result = Get-S3CloudflareValue -InputObject $response -Name @('result')
+        $statistics = Get-S3CloudflareValue -InputObject $result -Name @('statistics')
+        $abrLevel = Get-S3CloudflareValue -InputObject $statistics -Name @('abr_level','abrLevel')
+        if ($null -eq $abrLevel) { $abrLevel = 1 }
+        $abrNumber = 0.0
+        if (-not [double]::TryParse([string]$abrLevel,[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$abrNumber)) { $samplingDetected = $true }
+        elseif ($abrNumber -gt 1) { $samplingDetected = $true }
+        $responseJson = $response | ConvertTo-Json -Depth 40 -Compress
+        if ($responseJson -match '"truncated"\s*:\s*true') { $truncated = $true }
+        $pageItems = @(Get-S3TelemetryPageItems -Response $response)
+        foreach ($item in $pageItems) {
+            $rawItems.Add($item)
+            $itemTruncated = Get-S3CloudflareValue -InputObject $item -Name @('truncated','isTruncated')
+            if ($itemTruncated -eq $true) { $truncated = $true }
+        }
         $eventsEnvelope = Get-S3CloudflareValue -InputObject $result -Name @('events')
         $totalCount = Get-S3CloudflareValue -InputObject $eventsEnvelope -Name @('count')
         $totalCountKnown = $null -ne $totalCount
-        if ($totalCountKnown -and [int]$totalCount -lt $records.Count) { $paginationComplete=$false;$errors.Add('PAGINATION_METADATA_INCOMPLETE');break }
-        if (($totalCountKnown -and $records.Count -ge [int]$totalCount) -or (-not $totalCountKnown -and $pageItems.Count -lt $PageSize)) { break }
+        if ($totalCountKnown -and [int]$totalCount -lt $rawItems.Count) { $paginationComplete=$false;$errors.Add('PAGINATION_METADATA_INCOMPLETE');break }
+        if (($totalCountKnown -and $rawItems.Count -ge [int]$totalCount) -or (-not $totalCountKnown -and $pageItems.Count -lt $PageSize)) { break }
         if ($pageItems.Count -eq 0) { $paginationComplete=$false;$errors.Add('PAGINATION_NEXT_PAGE_MISSING');break }
         $lastMetadata = Get-S3CloudflareValue -InputObject $pageItems[$pageItems.Count - 1] -Name @('$metadata','metadata')
         $nextOffset = [string](Get-S3CloudflareValue -InputObject $lastMetadata -Name @('id'))
         if ([string]::IsNullOrWhiteSpace($nextOffset)) { $paginationComplete=$false;$errors.Add('PAGINATION_NEXT_PAGE_MISSING');break }
         if (-not $seenOffsets.Add($nextOffset)) { $paginationComplete=$false;$errors.Add('PAGINATION_CURSOR_REPEATED');break }
-        $offset = $nextOffset
-        $page++
+        $offset = $nextOffset; $page++
     }
+    $records = @(Merge-S3WorkerTelemetryEvent -Items @($rawItems) -RunId $RunId -Scenario $Scenario)
     $status = if ($paginationComplete -and -not $truncated -and -not $samplingDetected -and $errors.Count -eq 0) {'PASS'} else {'FAIL'}
-    return [ordered]@{status=$status;records=@($records);pageCount=$page;paginationComplete=$paginationComplete;truncated=$truncated;samplingDetected=$samplingDetected;apiSuccess=$true;errors=@($errors)}
+    return [ordered]@{status=$status;records=$records;rawCount=$rawItems.Count;pageCount=$page;paginationComplete=$paginationComplete;truncated=$truncated;samplingDetected=$samplingDetected;abrLevel=$abrNumber;apiSuccess=$true;errors=@($errors)}
 }
 
 function Show-S3CloudflarePreflightRecord {
@@ -699,8 +771,15 @@ function Invoke-S3CloudflareReadOnlyPreflight {
             }
         }
         if ([string]::IsNullOrWhiteSpace($resolvedObservabilityToken)) { throw 'MANUAL_ACTION_REQUIRED_OBSERVABILITY_WRITE_TOKEN' }
-        [void](Test-S3WorkersObservabilityAuthorization -AccountId $accountId -Token $resolvedObservabilityToken); $automated.observability='PASS'
         $workers = Invoke-S3CloudflarePagedGet -Uri "$base/workers/scripts" -Token $Token; $automated.workers="PASS:$(@($workers.items).Count)"
+        $workerForObservability = [string](@($workers.items | ForEach-Object { Get-S3CloudflareValue -InputObject $_ -Name @('id','name') } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1))
+        if ([string]::IsNullOrWhiteSpace($workerForObservability)) {
+            [void](Test-S3WorkersObservabilityAuthorization -AccountId $accountId -Token $resolvedObservabilityToken)
+        }
+        else {
+            [void](Test-S3WorkersObservabilityAuthorization -AccountId $accountId -Token $resolvedObservabilityToken -WorkerName $workerForObservability)
+        }
+        $automated.observability='PASS'
         $d1 = Invoke-S3CloudflarePagedGet -Uri "$base/d1/database" -Token $Token; $automated.d1="PASS:$(@($d1.items).Count)"
         $subdomainResponse = Invoke-S3CloudflareRest -Method GET -Uri "$base/workers/subdomain" -Token $Token
         [void](Test-S3WorkersDevSubdomain -SubdomainResult $subdomainResponse.result); $automated.workersDev='PASS'
@@ -943,7 +1022,7 @@ function Remove-S3CloudflareResource {
     }
     else {
         try {
-            $workerCommand = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('delete',$owned.worker,'--force') -TimeoutSeconds 300 -AllowFailure
+            $workerCommand = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('delete','--name',$owned.worker) -TimeoutSeconds 300 -AllowFailure
             $workerDelete.status = if ($workerCommand.ExitCode -eq 0) {'REQUESTED'} else {'FAILED'}
             $workerDelete.exitCode = $workerCommand.ExitCode
         }
@@ -954,7 +1033,7 @@ function Remove-S3CloudflareResource {
     }
     else {
         try {
-            $d1Command = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','delete',$owned.d1Name,'--yes') -TimeoutSeconds 300 -AllowFailure
+            $d1Command = Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','delete',$owned.d1Name,'--skip-confirmation') -TimeoutSeconds 300 -AllowFailure
             $d1Delete.status = if ($d1Command.ExitCode -eq 0) {'REQUESTED'} else {'FAILED'}
             $d1Delete.exitCode = $d1Command.ExitCode
         }
