@@ -16,10 +16,15 @@ Describe 'State machine invariants' {
 
 # S3-R human-triggered final-head CI marker; no test behavior change.
 Describe 'S3-R preserved-run recovery invariants' {
- It 'accepts only closed checkpoints for Resume' {
+ It 'accepts only closed checkpoints for Resume and scopes CPU cleanup suppression to an explicit decision failure' {
   $c=Get-TestContext; $c.State.currentState='60_CLOUDFLARE_PROVISIONED'; $c.State.completed=@('00_PACKAGE_READY','60_CLOUDFLARE_PROVISIONED')
   Assert-S3ResumeCheckpointSafe -State $c.State | Should -BeTrue
   $c.State.currentState='30_BRANCH_AND_DRAFT_PR'; {Assert-S3ResumeCheckpointSafe -State $c.State}|Should -Throw '*RESUME_REQUIRES_CLOSED_CHECKPOINT*'
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
+  $source|Should -Match '\$cpuDecisionFailed=\$false'
+  $source|Should -Match '\$cpuDecisionFailed=\(\$failureReason -eq ''CPU_GATE_DECISION_FAILED''\)'
+  $source|Should -Not -Match '\$cpuDecisionFailed=.*currentState.*status.*-ne ''PASS'''
+  $source|Should -Match '-not \$context\.IsResumed -or \$resumedSuccess'
  }
  It 'rehydrates exactly the preserved two UIDs in Simulation without provisioning' {
   $c=Get-TestContext; $c.Mode='Simulation'; $c.State.resources.firebase=[ordered]@{projectId='preserved';uid1='uid-one';uid2='uid-two'}
