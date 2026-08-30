@@ -129,6 +129,39 @@ function Invoke-S3CloudflareRest {
     return $response
 }
 
+function Assert-S3CloudflareCustomDomainBinding {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$AccountId,
+        [Parameter(Mandatory)][string]$Token,
+        [Parameter(Mandatory)][string]$WorkerName,
+        [Parameter(Mandatory)][string]$PublicBaseUri
+    )
+    if ([string]::IsNullOrWhiteSpace($AccountId) -or [string]::IsNullOrWhiteSpace($Token) -or [string]::IsNullOrWhiteSpace($WorkerName)) {
+        throw 'CUSTOM_DOMAIN_BINDING_CONTEXT_MISSING'
+    }
+    $parsed=$null
+    if (-not [Uri]::TryCreate($PublicBaseUri,[UriKind]::Absolute,[ref]$parsed)) { throw 'PUBLIC_BASE_URI_INVALID' }
+    $hostname=$parsed.IdnHost.ToLowerInvariant()
+    $encodedHostname=[Uri]::EscapeDataString($hostname)
+    $encodedService=[Uri]::EscapeDataString($WorkerName)
+    $uri="https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/domains?hostname=$encodedHostname&service=$encodedService"
+    $response=Invoke-S3CloudflareRest -Method GET -Uri $uri -Token $Token
+    $bindingMatches=@(@(Get-S3CloudflareValue -InputObject $response -Name @('result'))|Where-Object {
+        ([string](Get-S3CloudflareValue -InputObject $_ -Name @('hostname'))).ToLowerInvariant() -eq $hostname -and
+        [string](Get-S3CloudflareValue -InputObject $_ -Name @('service')) -ceq $WorkerName
+    })
+    if ($bindingMatches.Count -eq 0) { throw 'CUSTOM_DOMAIN_NOT_BOUND_TO_EXPECTED_WORKER' }
+    if ($bindingMatches.Count -ne 1) { throw 'CUSTOM_DOMAIN_BINDING_AMBIGUOUS' }
+    $binding=$bindingMatches[0]
+    $certificateId=[string](Get-S3CloudflareValue -InputObject $binding -Name @('cert_id','certificate_id'))
+    $zoneId=[string](Get-S3CloudflareValue -InputObject $binding -Name @('zone_id'))
+    $zoneName=[string](Get-S3CloudflareValue -InputObject $binding -Name @('zone_name'))
+    if ([string]::IsNullOrWhiteSpace($certificateId)) { throw 'CUSTOM_DOMAIN_CERTIFICATE_NOT_ISSUED' }
+    if ([string]::IsNullOrWhiteSpace($zoneId) -or [string]::IsNullOrWhiteSpace($zoneName)) { throw 'CUSTOM_DOMAIN_ZONE_IDENTITY_MISSING' }
+    return [ordered]@{status='PASS';hostname=$hostname;worker=$WorkerName;zone=$zoneName;certificateIssued=$true}
+}
+
 function Get-S3CloudflareWorkerRemoteSnapshot {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][string]$Token)
