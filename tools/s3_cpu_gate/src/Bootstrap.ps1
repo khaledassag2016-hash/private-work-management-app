@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]param([ValidateSet('Interactive','Plan','Simulation','Live')][string]$Mode='Interactive',[switch]$Resume,[switch]$SkipToolchain,[switch]$SyncRuntime,[string]$SourceRoot='',[string]$ExpectedSourceCommit='')
+﻿[CmdletBinding()]param([ValidateSet('Interactive','Plan','Simulation','Live')][string]$Mode='Interactive',[switch]$Resume,[switch]$SkipToolchain,[switch]$SyncRuntime,[string]$SourceRoot='',[string]$ExpectedSourceCommit='',[string]$PublicBaseUri='')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $root='C:\Users\MC\Desktop\1'
@@ -44,5 +44,6 @@ if(-not $pwsh){
 if(-not $SkipToolchain){& $pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'Initialize-Toolchain.ps1');if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}}
 $arguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'S3-CpuGate-Orchestrator.ps1'),'-Mode',$Mode)
 if($Resume){$arguments+='-Resume';$arguments+='-AutoRehydrateProviders'}
+if(-not [string]::IsNullOrWhiteSpace($PublicBaseUri)){$arguments+='-PublicBaseUri';$arguments+=$PublicBaseUri}
 & $pwsh @arguments
 exit $LASTEXITCODE

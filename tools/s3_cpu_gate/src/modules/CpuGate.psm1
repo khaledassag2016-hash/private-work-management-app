@@ -160,7 +160,10 @@ function Invoke-S3AuditAcceptance {
   try{$payload=$Response.body|ConvertFrom-Json}catch{throw 'AUDIT_RESPONSE_INVALID'}
   if($payload.ok -ne $true -or [string]$payload.requestId -ne $ExpectedRequestId){throw 'AUDIT_HTTP_CONTRACT_MISMATCH'}
   if([string]$payload.audit.actorUid -ne $ExpectedActor -or [string]$payload.audit.action -ne $ExpectedAction){throw 'AUDIT_ACTOR_OR_ACTION_MISMATCH'}
-  $timestamp=[DateTimeOffset]::MinValue;if(-not[DateTimeOffset]::TryParse([string]$payload.audit.createdAt,[ref]$timestamp)){throw 'AUDIT_TIMESTAMP_INVALID'}
+  $createdAt=$payload.audit.createdAt;$timestamp=[DateTimeOffset]::MinValue
+  if($createdAt -is [DateTimeOffset]){$timestamp=[DateTimeOffset]$createdAt}
+  elseif($createdAt -is [DateTime]){$timestamp=[DateTimeOffset]([DateTime]$createdAt)}
+  elseif(-not[DateTimeOffset]::TryParse([string]$createdAt,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal,[ref]$timestamp)){throw 'AUDIT_TIMESTAMP_INVALID'}
   if([string]::IsNullOrEmpty($ExpectedBefore)){if($null -ne $payload.audit.before){throw 'AUDIT_BEFORE_MISMATCH'}}elseif([string]$payload.audit.before.value -ne $ExpectedBefore){throw 'AUDIT_BEFORE_MISMATCH'}
   if([string]$payload.audit.after.value -ne $ExpectedAfter -or [string]$payload.audit.runId -ne $Context.RunId){throw 'AUDIT_AFTER_OR_RUN_MISMATCH'}
  }
@@ -200,22 +203,55 @@ function Invoke-S3NegativeTest {
  try{Invoke-S3D1Sql -Context $Context -Sql "UPDATE app_users SET active=0 WHERE uid='$uid2' AND run_marker='$($Context.RunId)';";ExpectReject 'uid_not_allowed' $Token2 $Uri}finally{Invoke-S3D1Sql -Context $Context -Sql "UPDATE app_users SET active=1 WHERE uid='$uid2' AND run_marker='$($Context.RunId)';"}
  return $results
 }
+function Resolve-S3PublicBaseUri {
+ param([Parameter(Mandatory)]$Context,[string]$PublicBaseUri='')
+ $cloudflare=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare'
+ $stored=([string](Get-S3MapValue -Map $cloudflare -Name 'url')).TrimEnd('/')
+ if([string]::IsNullOrWhiteSpace($PublicBaseUri)){return $stored}
+ if($Context.Mode -ne 'Live'){throw 'PUBLIC_BASE_URI_LIVE_ONLY'}
+ if($Context.IsResumed -ne $true){throw 'PUBLIC_BASE_URI_RESUME_ONLY'}
+ if([string]$Context.State.currentState -ne '60_CLOUDFLARE_PROVISIONED'){throw 'PUBLIC_BASE_URI_CHECKPOINT_60_REQUIRED'}
+ $parsed=$null
+ if(-not[Uri]::TryCreate($PublicBaseUri,[UriKind]::Absolute,[ref]$parsed)){throw 'PUBLIC_BASE_URI_INVALID'}
+ if($parsed.Scheme -cne 'https'){throw 'PUBLIC_BASE_URI_HTTPS_REQUIRED'}
+ if(-not $parsed.IsDefaultPort){throw 'PUBLIC_BASE_URI_DEFAULT_HTTPS_PORT_REQUIRED'}
+ if(-not[string]::IsNullOrWhiteSpace($parsed.UserInfo)){throw 'PUBLIC_BASE_URI_USERINFO_FORBIDDEN'}
+ if($parsed.AbsolutePath -ne '/' -or -not[string]::IsNullOrWhiteSpace($parsed.Query) -or -not[string]::IsNullOrWhiteSpace($parsed.Fragment)){throw 'PUBLIC_BASE_URI_ORIGIN_ONLY'}
+ $hostname=$parsed.IdnHost.ToLowerInvariant()
+ if([Uri]::CheckHostName($hostname) -ne [UriHostNameType]::Dns -or $hostname -eq 'localhost' -or $hostname.EndsWith('.localhost') -or $hostname.EndsWith('.local') -or $hostname.EndsWith('.invalid')){throw 'PUBLIC_BASE_URI_PUBLIC_DNS_HOST_REQUIRED'}
+ return "https://$hostname"
+}
+function Assert-S3PublicEndpointIdentity {
+ param([Parameter(Mandatory)][string]$BaseUri)
+ $requestId='public-endpoint-'+[guid]::NewGuid().ToString('N')
+ $response=Invoke-S3HttpRequest -Uri "$BaseUri/private/ping" -Headers @{'x-s3-request-id'=$requestId;'x-s3-scenario'='public_endpoint_identity'}
+ if($response.status -ne 401){throw "PUBLIC_ENDPOINT_UNAUTHENTICATED_STATUS_MISMATCH:$($response.status)"}
+ try{$payload=$response.body|ConvertFrom-Json -Depth 10}catch{throw 'PUBLIC_ENDPOINT_IDENTITY_RESPONSE_INVALID'}
+ if($payload.ok -ne $false -or [string]$payload.code -ne 'TOKEN_MISSING' -or [string]$payload.requestId -ne $requestId){throw 'PUBLIC_ENDPOINT_IDENTITY_CONTRACT_MISMATCH'}
+ return [ordered]@{status='PASS';baseUri=$BaseUri;unauthenticatedContract='TOKEN_MISSING';httpsVerified=$true}
+}
 function Invoke-S3CpuGate {
- param([Parameter(Mandatory)]$Context)
+ param([Parameter(Mandatory)]$Context,[string]$PublicBaseUri='')
+ $baseUri=Resolve-S3PublicBaseUri -Context $Context -PublicBaseUri $PublicBaseUri
  if($Context.Mode -eq 'Simulation'){
   function MakeRows([int]$Count,[double]$Base,[string]$Cache){$rows=@();for($index=0;$index -lt $Count;$index++){$rows+=[ordered]@{cpu_ms=$Base+(($index%7)*0.07);wall_ms=20+(($index%5)*0.4);outcome='ok';cache_state=$Cache}};return $rows}
   $payload=[ordered]@{groups=[ordered]@{cache_hit_round_1=MakeRows 100 2.1 'hit';cache_hit_round_2=MakeRows 100 2.2 'hit';cache_miss=MakeRows 20 4.5 'miss'};plan_free=$true;billing_absent=$true;security_reduced=$false;telemetry_official=$true;stable=$true;independent_reproducible_cpu_terminations=0;audit=[ordered]@{status='PASS';dbSide=$true};negativeTests=[ordered]@{uid_not_allowed='PASS';unknown_kid='PASS';modified_signature='PASS';expired='PASS';audience='PASS';issuer='PASS';certificate_fetch='PASS';invalid_cache_metadata='PASS'}}
   $decision=Test-S3CpuDecision -Payload $payload;$payload.decision=$decision;if([string](Get-S3MapValue -Map $decision -Name 'status') -eq 'PASS'){$payload|ConvertTo-Json -Depth 20|Set-Content (Join-Path $Context.Root 'reports\cpu-gate-results.json') -Encoding UTF8};return $decision
  }
  if($Context.Mode -ne 'Live'){return [ordered]@{status='NOT_EXECUTED';reasons=@('PLAN_MODE')}}
- $cloudflare=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';$uri="$((Get-S3MapValue -Map $cloudflare -Name 'url'))/private/ping";$token1=[string]$Context.RuntimeSecrets.token1;$token2=[string]$Context.RuntimeSecrets.token2;$nonce=[string]$Context.RuntimeSecrets.testResetNonce
+ $cloudflare=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';$uri="$baseUri/private/ping";$token1=[string]$Context.RuntimeSecrets.token1;$token2=[string]$Context.RuntimeSecrets.token2;$nonce=[string]$Context.RuntimeSecrets.testResetNonce
  if(-not $token1 -or -not $token2 -or -not $nonce){throw 'الأسرار المؤقتة غير موجودة في الذاكرة؛ يجب التنظيف وإعادة تشغيل Live.'}
- $accountId=[string](Get-S3MapValue -Map $cloudflare -Name 'accountId');$cloudflareObservabilityToken=[string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareObservabilityToken')
+ $accountId=[string](Get-S3MapValue -Map $cloudflare -Name 'accountId');$workerName=[string](Get-S3MapValue -Map $cloudflare -Name 'worker');$cloudflareObservabilityToken=[string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareObservabilityToken')
  if(-not $cloudflareObservabilityToken -or -not $accountId){throw 'Cloudflare Observability preflight context غير موجود في الذاكرة.'}
  try{
-  $audit=Invoke-S3AuditAcceptance -Context $Context -BaseUri ([string](Get-S3MapValue -Map $cloudflare -Name 'url')) -Token1 $token1 -Token2 $token2 -Nonce $nonce
+  if(-not[string]::IsNullOrWhiteSpace($PublicBaseUri)){
+   $managementToken=[string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken')
+   if([string]::IsNullOrWhiteSpace($managementToken)){throw 'CUSTOM_DOMAIN_BINDING_VERIFICATION_TOKEN_MISSING'}
+   [void](Assert-S3CloudflareCustomDomainBinding -AccountId $accountId -Token $managementToken -WorkerName $workerName -PublicBaseUri $baseUri)
+   [void](Assert-S3PublicEndpointIdentity -BaseUri $baseUri)
+  }
+  $audit=Invoke-S3AuditAcceptance -Context $Context -BaseUri $baseUri -Token1 $token1 -Token2 $token2 -Nonce $nonce
   for($index=0;$index -lt 20;$index++){ $warmup=Invoke-S3HttpRequest -Uri $uri -Token $token1;[void](Assert-S3HttpPositiveResponse -Response $warmup -Name 'warmup') }
-  $workerName=[string](Get-S3MapValue -Map $cloudflare -Name 'worker')
   $from1=[DateTime]::UtcNow;$expected1=Invoke-S3TrackedRequestGroup -Uri $uri -Token $token1 -RunId $Context.RunId -Scenario 'cache_hit_round_1' -Count 100
   $telemetry1=Wait-S3WorkersTelemetry -AccountId $accountId -Token $cloudflareObservabilityToken -RunId $Context.RunId -Scenario 'cache_hit_round_1' -ExpectedRequests $expected1 -WorkerName $workerName -FromUtc $from1 -ExpectedCacheState 'hit'
   if($telemetry1.status -ne 'PASS'){throw "B2_TELEMETRY_FAIL:$($telemetry1.reasons -join ',')"}

@@ -27,6 +27,70 @@ Describe 'CPU statistics' {
  It 'simulation produces PASS' { $c=Get-TestContext;(Invoke-S3CpuGate $c).status|Should -Be 'PASS' }
 }
 
+Describe 'Custom public base URI safety gate' {
+ It 'accepts only a public HTTPS origin during Live resume at checkpoint 60' {
+  $c=Get-TestContext Live;$c.IsResumed=$true;$c.State.currentState='60_CLOUDFLARE_PROVISIONED';$c.State.resources.cloudflare=[ordered]@{url='https://stored.workers.dev'}
+  (Resolve-S3PublicBaseUri -Context $c -PublicBaseUri 'https://APP.ASSAGWORK.COM/')|Should -Be 'https://app.assagwork.com'
+  (Resolve-S3PublicBaseUri -Context $c)|Should -Be 'https://stored.workers.dev'
+  foreach($invalid in @('http://app.assagwork.com','https://app.assagwork.com:8443','https://user@app.assagwork.com','https://app.assagwork.com/path','https://app.assagwork.com/?q=1','https://app.assagwork.com/#fragment','https://127.0.0.1','https://localhost','https://app.invalid')){
+   {Resolve-S3PublicBaseUri -Context $c -PublicBaseUri $invalid}|Should -Throw
+  }
+  $c.Mode='Simulation';{Resolve-S3PublicBaseUri -Context $c -PublicBaseUri 'https://app.assagwork.com'}|Should -Throw '*LIVE_ONLY*'
+  $c.Mode='Live';$c.IsResumed=$false;{Resolve-S3PublicBaseUri -Context $c -PublicBaseUri 'https://app.assagwork.com'}|Should -Throw '*RESUME_ONLY*'
+  $c.IsResumed=$true;$c.State.currentState='50_FIREBASE_PROVISIONED';{Resolve-S3PublicBaseUri -Context $c -PublicBaseUri 'https://app.assagwork.com'}|Should -Throw '*CHECKPOINT_60_REQUIRED*'
+ }
+ It 'proves the unauthenticated Worker identity contract without sending a token' {
+  Mock Invoke-S3HttpRequest {param($Uri,$Token,$Headers);$Token|Should -BeNullOrEmpty;$Uri|Should -Be 'https://app.assagwork.com/private/ping';[pscustomobject]@{status=401;body=(@{ok=$false;code='TOKEN_MISSING';requestId=$Headers['x-s3-request-id']}|ConvertTo-Json -Compress)}} -ModuleName CpuGate
+  (Assert-S3PublicEndpointIdentity -BaseUri 'https://app.assagwork.com').status|Should -Be 'PASS'
+  Should -Invoke Invoke-S3HttpRequest -ModuleName CpuGate -Times 1 -Exactly
+  Mock Invoke-S3HttpRequest {[pscustomobject]@{status=200;body='{"ok":true}'}} -ModuleName CpuGate
+  {Assert-S3PublicEndpointIdentity -BaseUri 'https://app.assagwork.com'}|Should -Throw '*STATUS_MISMATCH*'
+ }
+ It 'routes the CPU gate to the verified override while keeping state unchanged' {
+  $c=Get-TestContext Live;$c.IsResumed=$true;$c.State.currentState='60_CLOUDFLARE_PROVISIONED';$c.State.resources.cloudflare=[ordered]@{url='https://broken.workers.dev';accountId='account-a';worker='worker-a'};$c.RuntimeSecrets.token1='token-one';$c.RuntimeSecrets.token2='token-two';$c.RuntimeSecrets.testResetNonce='nonce';$c.RuntimeSecrets.cloudflareObservabilityToken='observability';$c.RuntimeSecrets.cloudflareToken='management'
+  $before=$c.State|ConvertTo-Json -Depth 30 -Compress
+  Mock Assert-S3CloudflareCustomDomainBinding {[ordered]@{status='PASS'}} -ModuleName CpuGate
+  Mock Assert-S3PublicEndpointIdentity {[ordered]@{status='PASS'}} -ModuleName CpuGate
+  Mock Invoke-S3AuditAcceptance {throw 'AUDIT_SENTINEL'} -ModuleName CpuGate
+  {Invoke-S3CpuGate -Context $c -PublicBaseUri 'https://app.assagwork.com'}|Should -Throw '*AUDIT_SENTINEL*'
+  Should -Invoke Assert-S3CloudflareCustomDomainBinding -ModuleName CpuGate -ParameterFilter {$AccountId -eq 'account-a' -and $WorkerName -eq 'worker-a' -and $PublicBaseUri -eq 'https://app.assagwork.com'} -Times 1 -Exactly
+  Should -Invoke Assert-S3PublicEndpointIdentity -ModuleName CpuGate -ParameterFilter {$BaseUri -eq 'https://app.assagwork.com'} -Times 1 -Exactly
+  Should -Invoke Invoke-S3AuditAcceptance -ModuleName CpuGate -ParameterFilter {$BaseUri -eq 'https://app.assagwork.com'} -Times 1 -Exactly
+  ($c.State|ConvertTo-Json -Depth 30 -Compress)|Should -BeExactly $before
+ }
+ It 'routes every application request through the override and never calls the stored workers.dev origin' {
+  $c=Get-TestContext Live;$c.IsResumed=$true;$c.State.currentState='60_CLOUDFLARE_PROVISIONED';$c.State.resources.cloudflare=[ordered]@{url='https://must-not-run.workers.dev';accountId='account-a';worker='worker-a';freePlan=$true;billingAbsent=$true};$c.RuntimeSecrets.token1='token-one';$c.RuntimeSecrets.token2='token-two';$c.RuntimeSecrets.testResetNonce='nonce';$c.RuntimeSecrets.cloudflareObservabilityToken='observability';$c.RuntimeSecrets.cloudflareToken='management'
+  $script:applicationUris=[Collections.Generic.List[string]]::new()
+  Mock Assert-S3CloudflareCustomDomainBinding {[ordered]@{status='PASS'}} -ModuleName CpuGate
+  Mock Assert-S3PublicEndpointIdentity {[ordered]@{status='PASS'}} -ModuleName CpuGate
+  Mock Invoke-S3AuditAcceptance {param($Context,$BaseUri,$Token1,$Token2,$Nonce);[void]$Context;[void]$Token1;[void]$Token2;[void]$Nonce;$script:applicationUris.Add($BaseUri);[ordered]@{status='PASS';dbSide=$true}} -ModuleName CpuGate
+  Mock Invoke-S3HttpRequest {param($Uri);$script:applicationUris.Add([string]$Uri);[pscustomobject]@{status=200;body='{"ok":true}'}} -ModuleName CpuGate
+  Mock Invoke-S3TrackedRequestGroup {param($Uri);$script:applicationUris.Add([string]$Uri);@()} -ModuleName CpuGate
+  Mock Wait-S3WorkersTelemetry {[ordered]@{status='PASS';records=@()}} -ModuleName CpuGate
+  Mock Invoke-S3NegativeTest {param($Context,$Uri,$Token1,$Token2);[void]$Context;[void]$Token1;[void]$Token2;$script:applicationUris.Add([string]$Uri);[ordered]@{uid_not_allowed='PASS';unknown_kid='PASS';modified_signature='PASS';expired='PASS';audience='PASS';issuer='PASS';certificate_fetch='PASS';invalid_cache_metadata='PASS'}} -ModuleName CpuGate
+  Mock Set-S3WorkerTestVariable {} -ModuleName CpuGate
+  $result=Invoke-S3CpuGate -Context $c -PublicBaseUri 'https://app.assagwork.com'
+  $result.status|Should -Be 'FAIL'
+  $script:applicationUris.Count|Should -Be 25
+  @($script:applicationUris|Where-Object{$_ -notin @('https://app.assagwork.com','https://app.assagwork.com/private/ping')}).Count|Should -Be 0
+  @($script:applicationUris|Where-Object{$_ -match '(?i)workers\.dev'}).Count|Should -Be 0
+  Should -Invoke Invoke-S3HttpRequest -ModuleName CpuGate -ParameterFilter {$Uri -eq 'https://app.assagwork.com/private/ping'} -Times 20 -Exactly
+  Should -Invoke Invoke-S3TrackedRequestGroup -ModuleName CpuGate -ParameterFilter {$Uri -eq 'https://app.assagwork.com/private/ping'} -Times 3 -Exactly
+  Should -Invoke Invoke-S3NegativeTest -ModuleName CpuGate -ParameterFilter {$Uri -eq 'https://app.assagwork.com/private/ping'} -Times 1 -Exactly
+ }
+ It 'blocks every authenticated request when custom-domain binding proof fails' {
+  $c=Get-TestContext Live;$c.IsResumed=$true;$c.State.currentState='60_CLOUDFLARE_PROVISIONED';$c.State.resources.cloudflare=[ordered]@{url='https://broken.workers.dev';accountId='account-a';worker='worker-a'};$c.RuntimeSecrets.token1='token-one';$c.RuntimeSecrets.token2='token-two';$c.RuntimeSecrets.testResetNonce='nonce';$c.RuntimeSecrets.cloudflareObservabilityToken='observability';$c.RuntimeSecrets.cloudflareToken='management'
+  Mock Assert-S3CloudflareCustomDomainBinding {throw 'CUSTOM_DOMAIN_NOT_BOUND_TO_EXPECTED_WORKER'} -ModuleName CpuGate
+  Mock Assert-S3PublicEndpointIdentity {throw 'MUST_NOT_RUN'} -ModuleName CpuGate
+  Mock Invoke-S3AuditAcceptance {throw 'MUST_NOT_RUN'} -ModuleName CpuGate
+  Mock Invoke-S3HttpRequest {throw 'MUST_NOT_RUN'} -ModuleName CpuGate
+  {Invoke-S3CpuGate -Context $c -PublicBaseUri 'https://app.assagwork.com'}|Should -Throw '*CUSTOM_DOMAIN_NOT_BOUND_TO_EXPECTED_WORKER*'
+  Should -Invoke Assert-S3PublicEndpointIdentity -ModuleName CpuGate -Times 0 -Exactly
+  Should -Invoke Invoke-S3AuditAcceptance -ModuleName CpuGate -Times 0 -Exactly
+  Should -Invoke Invoke-S3HttpRequest -ModuleName CpuGate -Times 0 -Exactly
+ }
+}
+
 Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
  BeforeAll {
   function Get-B2ExpectedFixture([string[]]$Ids,[string]$Scenario='scenario-a'){@($Ids|ForEach-Object{[ordered]@{runId='run-b2';requestId=$_;scenario=$Scenario}})}

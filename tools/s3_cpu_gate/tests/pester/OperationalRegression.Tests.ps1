@@ -74,6 +74,13 @@ Describe 'Operational regression coverage' {
  }
 }
 Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
+ It 'proves an exact custom-domain Worker binding with an issued certificate' {
+  Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token);$Method|Should -Be 'GET';$Token|Should -Be 'token';$Uri|Should -Be 'https://api.cloudflare.com/client/v4/accounts/account-a/workers/domains?hostname=app.assagwork.com&service=worker-a';[pscustomobject]@{success=$true;errors=@();result=@([ordered]@{hostname='app.assagwork.com';service='worker-a';zone_id='zone-a';zone_name='assagwork.com';cert_id='cert-a'})}} -ModuleName Cloudflare
+  $result=Assert-S3CloudflareCustomDomainBinding -AccountId account-a -Token token -WorkerName worker-a -PublicBaseUri 'https://app.assagwork.com'
+  $result.status|Should -Be 'PASS';$result.hostname|Should -Be 'app.assagwork.com';$result.certificateIssued|Should -BeTrue
+  Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=@([ordered]@{hostname='app.assagwork.com';service='worker-a';zone_id='zone-a';zone_name='assagwork.com';cert_id=''})}} -ModuleName Cloudflare
+  {Assert-S3CloudflareCustomDomainBinding -AccountId account-a -Token token -WorkerName worker-a -PublicBaseUri 'https://app.assagwork.com'}|Should -Throw '*CERTIFICATE_NOT_ISSUED*'
+ }
  It 'selects one correct account only when the ID is explicit' {$a=Select-S3CloudflareAccount -Accounts @([ordered]@{id='account-a'}) -SelectedAccountId account-a;$a.id|Should -Be account-a}
  It 'refuses multiple accounts without selection' {{Select-S3CloudflareAccount -Accounts @([ordered]@{id='a'},[ordered]@{id='b'})}|Should -Throw '*MULTIPLE_CLOUDFLARE_ACCOUNTS*'}
  It 'refuses an Account ID that is not listed' {{Select-S3CloudflareAccount -Accounts @([ordered]@{id='a'}) -SelectedAccountId missing}|Should -Throw '*NOT_FOUND*'}
@@ -1570,10 +1577,14 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
 
 Describe 'S3-R Harness secure rehydration regressions' {
  It 'never provisions Firebase or Cloudflare on a resumed preserved run' {
-  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw
+  $source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$bootstrap=Get-Content (Join-Path $SourceRoot 'src\Bootstrap.ps1') -Raw
   $source|Should -Match 'currentState -eq ''40_PRE_CLOUD_GATE'' -and -not \$context\.IsResumed'
   $source|Should -Match 'currentState -eq ''50_FIREBASE_PROVISIONED'' -and -not \$context\.IsResumed'
   $source|Should -Match 'Invoke-S3FirebaseRuntimeRehydration'
+  $source|Should -Match '\[string\]\$PublicBaseUri'
+  $source|Should -Match 'Invoke-S3CpuGate -Context \$context -PublicBaseUri \$PublicBaseUri'
+  $bootstrap|Should -Match '\[string\]\$PublicBaseUri'
+  $bootstrap|Should -Match "\`$arguments\+='-PublicBaseUri'"
  }
  It 'enforces checkpoint-60 rehydration ordering before mutation' {
   $orchestrator=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$firebase=Get-Content (Join-Path $SourceRoot 'src\modules\Firebase.psm1') -Raw
