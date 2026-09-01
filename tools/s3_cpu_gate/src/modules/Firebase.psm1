@@ -195,6 +195,18 @@ function Get-S3FederatedProviderSnapshot {
     return $collections
 }
 
+function Convert-S3FederatedProviderSnapshotToProof {
+    param([Parameter(Mandatory)][Collections.IDictionary]$Snapshot)
+    $counts = [ordered]@{}
+    $enabledCount = 0
+    foreach ($collection in $Snapshot.Keys) {
+        $items = @($Snapshot[$collection])
+        $counts[$collection] = $items.Count
+        $enabledCount += @($items | Where-Object { $_.enabled -eq $true }).Count
+    }
+    return [ordered]@{verified=$true;enabledCount=$enabledCount;collections=$counts}
+}
+
 function Disable-S3FederatedProvider {
     param([string]$ProjectId,[string]$Token)
     $before = Get-S3FederatedProviderSnapshot -ProjectId $ProjectId -Token $Token
@@ -786,7 +798,8 @@ function Invoke-S3FirebaseRuntimeRehydration {
     if ($ExpectedUids.Count -ne 2 -or @($ExpectedUids | Where-Object { -not $byUid.ContainsKey($_) }).Count -ne 0) { throw 'FIREBASE_REHYDRATION_UID_MISMATCH' }
     $configurationUri="https://identitytoolkit.googleapis.com/admin/v2/projects/$projectId/config"
     $configuration=Invoke-S3GoogleRest -Method GET -Uri $configurationUri -Token $adminToken -QuotaProjectId $projectId
-    $providerProof=Get-S3FederatedProviderSnapshot -ProjectId $projectId -Token $adminToken
+    $providerSnapshot=Get-S3FederatedProviderSnapshot -ProjectId $projectId -Token $adminToken
+    $providerProof=Convert-S3FederatedProviderSnapshotToProof -Snapshot $providerSnapshot
     [void](Assert-S3FirebaseConfiguration -Configuration $configuration -ProviderProof $providerProof)
     $tokens=@{}
     try {
