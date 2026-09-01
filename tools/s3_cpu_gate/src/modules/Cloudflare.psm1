@@ -711,7 +711,7 @@ function Invoke-S3WorkersTelemetryQuery {
         $totalCount = Get-S3CloudflareValue -InputObject $eventsEnvelope -Name @('count')
         $totalCountKnown = $null -ne $totalCount
         if ($totalCountKnown -and [int]$totalCount -lt $rawItems.Count) { $paginationComplete=$false;$errors.Add('PAGINATION_METADATA_INCOMPLETE');break }
-        if (($totalCountKnown -and $rawItems.Count -ge [int]$totalCount) -or (-not $totalCountKnown -and $pageItems.Count -lt $PageSize)) { break }
+        if (($totalCountKnown -and $pageItems.Count -lt [int]$totalCount) -or (-not $totalCountKnown -and $pageItems.Count -lt $PageSize)) { break }
         if ($pageItems.Count -eq 0) { $paginationComplete=$false;$errors.Add('PAGINATION_NEXT_PAGE_MISSING');break }
         $lastMetadata = Get-S3CloudflareValue -InputObject $pageItems[$pageItems.Count - 1] -Name @('$metadata','metadata')
         $nextOffset = [string](Get-S3CloudflareValue -InputObject $lastMetadata -Name @('id'))
