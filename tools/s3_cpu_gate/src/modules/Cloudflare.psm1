@@ -31,7 +31,7 @@ function Invoke-S3CloudflareBillingRead {
         TimeoutSec = $TimeoutSeconds
     }
     $response = Invoke-RestMethod @parameters
-    if ($response.success -eq $false -or @($response.errors).Count -gt 0) {
+    if ($response.success -eq $false -or @($response.errors | Where-Object { $null -ne $_ }).Count -gt 0) {
         $safeErrors = Protect-S3Text (@($response.errors) | ConvertTo-Json -Depth 10 -Compress)
         throw "CLOUDFLARE_API_ERROR: $safeErrors"
     }
@@ -51,7 +51,7 @@ function Invoke-S3CloudflareBillingPagedGet {
     while ($true) {
         $separator = if ($Uri.Contains('?')) {'&'} else {'?'}
         $response = Invoke-S3CloudflareBillingRead -Method GET -Uri "$Uri${separator}page=$page&per_page=$PerPage" -Token $Token -ExpectedAccountId $ExpectedAccountId
-        if ($response.success -eq $false -or @($response.errors).Count -gt 0) { throw "CLOUDFLARE_PAGED_API_ERROR: page=$page" }
+        if ($response.success -eq $false -or @($response.errors | Where-Object { $null -ne $_ }).Count -gt 0) { throw "CLOUDFLARE_PAGED_API_ERROR: page=$page" }
         $pagesRead.Add($page)
         foreach ($item in @($response.result)) { $items.Add($item) }
         $resultInfo = Get-S3CloudflareValue -InputObject $response -Name @('result_info')
@@ -122,7 +122,7 @@ function Invoke-S3CloudflareRest {
         $parameters.Body = $Body | ConvertTo-Json -Depth 30 -Compress
     }
     $response = Invoke-RestMethod @parameters
-    if ($response.success -eq $false -or @($response.errors).Count -gt 0) {
+    if ($response.success -eq $false -or @($response.errors | Where-Object { $null -ne $_ }).Count -gt 0) {
         $safeErrors = Protect-S3Text (@($response.errors) | ConvertTo-Json -Depth 10 -Compress)
         throw "CLOUDFLARE_API_ERROR: $safeErrors"
     }
@@ -281,7 +281,7 @@ function Invoke-S3CloudflarePagedGet {
         if ($pagesRead.Contains($page)) { throw "PAGINATION_PAGE_REPEATED: page=$page" }
         $separator = if ($Uri.Contains('?')) {'&'} else {'?'}
         $response = Invoke-S3CloudflareRest -Method GET -Uri "$Uri${separator}page=$page&per_page=$PerPage" -Token $Token
-        if ($response.success -eq $false -or @($response.errors).Count -gt 0) { throw "CLOUDFLARE_PAGED_API_ERROR: page=$page" }
+        if ($response.success -eq $false -or @($response.errors | Where-Object { $null -ne $_ }).Count -gt 0) { throw "CLOUDFLARE_PAGED_API_ERROR: page=$page" }
         $pagesRead.Add($page)
         $currentResult = @($response.result)
         $pageCount = $currentResult.Count
@@ -472,7 +472,7 @@ function Test-S3WorkersObservabilityAuthorization {
     $uri = "https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/observability/telemetry/query"
     $body = Get-S3WorkersObservabilityQueryBody -QueryId 's3cpu-preflight' -FromUtc ([DateTime]::UtcNow.AddMinutes(-5)) -ToUtc ([DateTime]::UtcNow) -Limit 1 -WorkerName $WorkerName
     $response = Invoke-S3CloudflareRest -Method POST -Uri $uri -Token $Token -Body $body
-    if ($response.success -eq $false -or @($response.errors).Count -gt 0) { throw 'WORKERS_OBSERVABILITY_NOT_AUTHORIZED' }
+    if ($response.success -eq $false -or @($response.errors | Where-Object { $null -ne $_ }).Count -gt 0) { throw 'WORKERS_OBSERVABILITY_NOT_AUTHORIZED' }
     return [ordered]@{status='PASS';authorized=$true}
 }
 
@@ -688,7 +688,7 @@ function Invoke-S3WorkersTelemetryQuery {
             $errors.Add("API_ERROR:$($_.Exception.Message)")
             return [ordered]@{status='FAIL';records=@();rawCount=$rawItems.Count;pageCount=$page;paginationComplete=$false;truncated=$truncated;samplingDetected=$samplingDetected;apiSuccess=$false;errors=@($errors)}
         }
-        if ($response.success -eq $false -or @($response.errors).Count -gt 0) {
+        if ($response.success -eq $false -or @($response.errors | Where-Object { $null -ne $_ }).Count -gt 0) {
             $errors.Add('API_ERROR')
             return [ordered]@{status='FAIL';records=@();rawCount=$rawItems.Count;pageCount=$page;paginationComplete=$false;truncated=$truncated;samplingDetected=$samplingDetected;apiSuccess=$false;errors=@($errors)}
         }
