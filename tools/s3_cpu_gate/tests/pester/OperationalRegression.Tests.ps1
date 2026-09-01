@@ -1624,6 +1624,22 @@ Describe 'S3-R Harness secure rehydration regressions' {
 
 
 Describe 'S3-R authoritative runtime rehydration' {
+ It 'preserves a sanitized Cloudflare HTTP failure with the snapshot operation and request ID' {
+  $response=[pscustomobject]@{StatusCode=403;Headers=@{'cf-ray'='ray-403'};Body='{"errors":[{"code":10000,"message":"permission denied"}],"access_token":"SECRET-TOKEN"}'}
+  $exception=[Exception]::new('Authorization: Bearer SECRET-TOKEN forbidden')
+  $exception | Add-Member -NotePropertyName Response -NotePropertyValue $response
+  Mock Invoke-RestMethod { throw $exception } -ModuleName Cloudflare
+  $diagnostic=''
+  try { Invoke-S3CloudflareRest -Method GET -Uri 'https://api.cloudflare.com/client/v4/accounts/account/workers/scripts/worker/versions/v1' -Token 'token' -Operation 'worker_snapshot.active_version' | Out-Null }
+  catch { $diagnostic=$_.Exception.Message }
+  $diagnostic | Should -Match 'CLOUDFLARE_HTTP_FAILURE'
+  $diagnostic | Should -Match 'operation=worker_snapshot.active_version'
+  $diagnostic | Should -Match 'endpoint=/client/v4/accounts/account/workers/scripts/worker/versions/v1'
+  $diagnostic | Should -Match 'status=403'
+  $diagnostic | Should -Match 'request_id=ray-403'
+  $diagnostic | Should -Match '10000:permission denied'
+  $diagnostic | Should -Not -Match 'SECRET-TOKEN'
+ }
  It 'rehydrates same UIDs from Firebase and D1 evidence without provisioning' {
   $c=Get-TestContext Live;$c.State.resources.firebase=[ordered]@{projectId='preserved-project'};$c.State.resources.cloudflare=[ordered]@{accountId='account';d1Id='d1-id';marker=$c.RunId};$c.RuntimeSecrets.cloudflareToken='management-session'
   $uid1=[guid]::NewGuid().ToString('N');$uid2=[guid]::NewGuid().ToString('N');$apiKey=[guid]::NewGuid().ToString('N');$admin=[guid]::NewGuid().ToString('N')
