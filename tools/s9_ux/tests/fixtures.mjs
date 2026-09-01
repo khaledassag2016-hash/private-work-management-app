@@ -49,7 +49,7 @@ function dataFor(path, method) {
   if (path === '/api/transfers' || path === '/api/subscriptions' || path === '/api/expenses') return [];
   if (path === '/api/settlements/preview') return preview;
   if (path === '/api/settlements') return [];
-  if (path === '/api/settlements/2026-08/reopen-requests') return reopenRequests;
+  if (path.startsWith('/api/settlements/') && path.endsWith('/reopen-requests')) return reopenRequests;
   if (path === '/api/search/works') return { items: [searchWork], page: 1, page_size: 25, has_more: false };
   if (path === '/api/analytics') return { groups: { WORK_TYPE: group, SPECIALTY: group, COUNTRY: group, UNIVERSITY: group, PERIOD: group }, totals: group[0] };
   if (path === '/api/alerts') return { alerts: ['NO_PRICE', 'NO_REPLY', 'NO_PAYMENT'].map(alert_type => ({ alert_type, state: 'CONFIGURED', threshold_days: 7, items: [{ work_id: work.id, title: work.title, age_days: 8 }] })) };

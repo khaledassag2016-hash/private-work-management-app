@@ -99,7 +99,15 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
   $orchestrator.Contains("@('versions','deploy',`$versionId,'--name',`$workerName,'--yes')")|Should -BeTrue;$cloudflare.Contains("'d1','delete',`$owned.d1Name,'--skip-confirmation'")|Should -BeTrue;$cloudflare.Contains("'delete','--name',`$owned.worker")|Should -BeTrue;$cloudflare.Contains("'delete',`$owned.worker,'--force'")|Should -BeFalse;$cpu.Contains('x-s3-force-certificate-refresh')|Should -BeTrue;$cpu.Contains('__test/reset-cache')|Should -BeFalse
  }
  It 'places the preflight before Firebase and stops failures before it' {$source=Get-Content (Join-Path $SourceRoot 'src\S3-CpuGate-Orchestrator.ps1') -Raw;$preflight=$source.IndexOf('Invoke-S3CloudflareReadOnlyPreflight');$firebase=$source.IndexOf('Invoke-S3FirebaseProvision');$preflight|Should -BeGreaterThan -1;$firebase|Should -BeGreaterThan $preflight;$source|Should -Match "if\(\`$preflight.status -ne 'PASS'\)"}
- It 'rejects every Cloudflare write API call' {Mock Invoke-RestMethod {throw 'must not run'} -ModuleName Cloudflare;{Invoke-S3CloudflareRest -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/a/workers/scripts' -Token token -Body @{}}|Should -Throw '*CLOUDFLARE_WRITE_API_FORBIDDEN*';Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0 -Exactly}
+ It 'accepts null errors on successful reads without weakening Cloudflare write rejection' {
+  $source=Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw
+  $guard='@($response.errors | Where-Object { $null -ne $_ }).Count -gt 0'
+  ([regex]::Matches($source,[regex]::Escape($guard))).Count|Should -Be 6
+  Mock Invoke-RestMethod {param($Uri);if($Uri -match '/user/tokens/verify$'){return [pscustomobject]@{success=$true;errors=$null;result=[ordered]@{}}};throw 'must not run'} -ModuleName Cloudflare
+  {Invoke-S3CloudflareRest -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/a/workers/scripts' -Token token -Body @{}}|Should -Throw '*CLOUDFLARE_WRITE_API_FORBIDDEN*'
+  Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0 -Exactly
+  (Invoke-S3CloudflareRest -Method GET -Uri 'https://api.cloudflare.com/client/v4/user/tokens/verify' -Token token).success|Should -BeTrue
+ }
  It 'does not use the deprecated Billing Profile API' {$source=Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw;$source|Should -Not -Match '(?i)billing/profile|billing profile api'}
  It 'uses accounts rather than token verify for OAuth and requires the selected account' {
   Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=@([ordered]@{id='account-a'});result_info=[ordered]@{page=1;total_pages=1}}} -ModuleName Cloudflare

@@ -1621,7 +1621,7 @@ export async function listRatioHistory(env, workId) {
 export async function createRatioChangeRequest(env, actorUid, requestId, workId, input) {
   await ensureActor(env, actorUid);
   const beforeWork = await getWorkRaw(env, workId);
-  await prbEnsurePeriodOpen(env, beforeWork.created_at);
+  await prbEnsureWorkAffectedPeriods(env, null, beforeWork.confirmed_at);
   const version = positiveVersion(input.version);
   if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
   const nextRatio = validateRatioBps(input.person_1_bps, input.person_2_bps);
@@ -1647,7 +1647,7 @@ export async function approveRatioChangeRequest(env, actorUid, requestId, workId
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const beforeWork = await getWorkRaw(env, workId);
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
-  await prbEnsurePeriodOpen(env, beforeWork.created_at);
+  await prbEnsureWorkAffectedPeriods(env, null, beforeWork.confirmed_at);
   const oldRatio = await currentRatio(env, workId);
   const approvedAt = nowIso();
   const historyId = newId('ratio_hist');
