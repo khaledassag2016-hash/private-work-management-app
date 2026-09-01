@@ -109,7 +109,7 @@ Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
  }
  It 'accepts a complete correlated telemetry response' {$e=Get-B2ExpectedFixture @('a','b');$q=Get-B2QueryResultFixture @((Get-B2RecordFixture 'a'),(Get-B2RecordFixture 'b'));(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' $e $q).status|Should -Be 'PASS'}
  It 'merges separate custom and invocation events by Cloudflare request ID' {
-  $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a';type='cf-worker-log'};'$workers'=[ordered]@{requestId='cf-a';eventType='fetch';scriptName='s3-worker'};source=[ordered]@{event='auth_result';cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
+  $custom=[ordered]@{'$metadata'=[ordered]@{id='custom-a';requestId='cf-a';type='cf-worker'};'$workers'=[ordered]@{requestId='cf-a';eventType='fetch';scriptName='s3-worker'};source=[ordered]@{event='auth_result';cacheState='hit';s3Correlation=[ordered]@{runId='run-b2';requestId='a';scenario='scenario-a'}}}
   $invocation=[ordered]@{'$metadata'=[ordered]@{id='invoke-a';requestId='cf-a';type='cf-worker-event'};'$workers'=[ordered]@{requestId='cf-a';cpuTimeMs=2.5;wallTimeMs=8;outcome='ok';eventType='fetch'}}
   $records=@(Merge-S3WorkerTelemetryEvent -Items @($invocation,$custom) -RunId 'run-b2' -Scenario 'scenario-a');$records.Count|Should -Be 1;$records[0].cpu_ms|Should -Be 2.5;$records[0].cache_state|Should -Be 'hit';$records[0].hasCorrelation|Should -BeTrue;$records[0].hasInvocation|Should -BeTrue;$records[0].duplicateInvocation|Should -BeFalse
  }
