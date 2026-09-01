@@ -113,7 +113,8 @@ function Invoke-S3CloudflareRest {
         [Parameter(Mandatory)][string]$Token,
         [AllowNull()][object]$Body = $null,
         [int]$TimeoutSeconds = 90,
-        [switch]$AllowReadOnlyD1Query
+        [switch]$AllowReadOnlyD1Query,
+        [string]$Operation = ''
     )
     [void](Test-S3CloudflareReadOnlyMethod -Method $Method -Uri $Uri -AllowReadOnlyD1Query:$AllowReadOnlyD1Query)
     $parameters = @{Method=$Method;Uri=$Uri;Headers=@{Authorization="Bearer $Token"};TimeoutSec=$TimeoutSeconds}
@@ -121,7 +122,63 @@ function Invoke-S3CloudflareRest {
         $parameters.ContentType = 'application/json'
         $parameters.Body = $Body | ConvertTo-Json -Depth 30 -Compress
     }
-    $response = Invoke-RestMethod @parameters
+    try {
+        $response = Invoke-RestMethod @parameters
+    }
+    catch {
+        $requestFailure = $_
+        $endpoint = $Uri
+        try { $endpoint = ([Uri]$Uri).AbsolutePath } catch { $endpoint = $Uri }
+        $operationName = if ([string]::IsNullOrWhiteSpace($Operation)) {'unspecified'} else {$Operation}
+        $status = 'UNKNOWN'; $requestId = 'UNKNOWN'; $responseObject = $null; $rawProviderBody = ''
+        try { $responseObject = $requestFailure.Exception.Response } catch { $responseObject = $null }
+        if ($null -ne $responseObject) {
+            try { $status = [string][int]$responseObject.StatusCode } catch { $status = 'UNKNOWN' }
+            foreach ($headerName in @('cf-ray','x-request-id','request-id')) {
+                if ($requestId -ne 'UNKNOWN') { break }
+                try {
+                    $values = @($responseObject.Headers.GetValues($headerName))
+                    if ($values.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$values[0])) { $requestId = [string]$values[0] }
+                }
+                catch {
+                    try {
+                        $value = $responseObject.Headers[$headerName]
+                        if (-not [string]::IsNullOrWhiteSpace([string]$value)) { $requestId = [string]$value }
+                    }
+                    catch { continue }
+                }
+            }
+            try {
+                $content = $responseObject.Content
+                if ($null -ne $content) { $rawProviderBody = [string]$content.ReadAsStringAsync().GetAwaiter().GetResult() }
+            }
+            catch { $rawProviderBody = '' }
+            if ([string]::IsNullOrWhiteSpace($rawProviderBody)) {
+                try { $rawProviderBody = [string]$responseObject.Body } catch { $rawProviderBody = '' }
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($rawProviderBody)) {
+            try { $rawProviderBody = [string]$requestFailure.ErrorDetails.Message } catch { $rawProviderBody = '' }
+        }
+        $providerErrors = ''
+        if (-not [string]::IsNullOrWhiteSpace($rawProviderBody)) {
+            try {
+                $providerPayload = $rawProviderBody | ConvertFrom-Json -Depth 10
+                $errorEntries = @(Get-S3CloudflareValue -InputObject $providerPayload -Name @('errors'))
+                $messageEntries = @(Get-S3CloudflareValue -InputObject $providerPayload -Name @('messages'))
+                $entries = @($errorEntries + $messageEntries | Where-Object { $null -ne $_ })
+                $providerErrors = @($entries | ForEach-Object {
+                    $code = [string](Get-S3CloudflareValue -InputObject $_ -Name @('code'))
+                    $message = [string](Get-S3CloudflareValue -InputObject $_ -Name @('message'))
+                    if ([string]::IsNullOrWhiteSpace($code)) { $message } elseif ([string]::IsNullOrWhiteSpace($message)) { $code } else { "$($code):$message" }
+                } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join '|'
+            }
+            catch { $providerErrors = '' }
+        }
+        $safeMessage = Protect-S3Text $requestFailure.Exception.Message
+        $safeProviderErrors = Protect-S3Text $providerErrors
+        throw "CLOUDFLARE_HTTP_FAILURE: operation=$operationName method=$Method endpoint=$endpoint status=$status request_id=$requestId provider_errors=$safeProviderErrors message=$safeMessage"
+    }
     if ($response.success -eq $false -or @($response.errors | Where-Object { $null -ne $_ }).Count -gt 0) {
         $safeErrors = Protect-S3Text (@($response.errors) | ConvertTo-Json -Depth 10 -Compress)
         throw "CLOUDFLARE_API_ERROR: $safeErrors"
@@ -167,15 +224,15 @@ function Get-S3CloudflareWorkerRemoteSnapshot {
     param([Parameter(Mandatory)]$Context,[Parameter(Mandatory)][string]$AccountId,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][string]$Token)
     [void]$Context
     $base="https://api.cloudflare.com/client/v4/accounts/$AccountId/workers/scripts/$WorkerName"
-    $scriptSettings=(Invoke-S3CloudflareRest -Method GET -Uri "$base/script-settings" -Token $Token).result
-    $versions=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions" -Token $Token).result
-    $deployments=(Invoke-S3CloudflareRest -Method GET -Uri "$base/deployments" -Token $Token).result
+    $scriptSettings=(Invoke-S3CloudflareRest -Method GET -Uri "$base/script-settings" -Token $Token -Operation 'worker_snapshot.script_settings').result
+    $versions=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions" -Token $Token -Operation 'worker_snapshot.versions').result
+    $deployments=(Invoke-S3CloudflareRest -Method GET -Uri "$base/deployments" -Token $Token -Operation 'worker_snapshot.deployments').result
     $latestVersion=@($versions.items)|Sort-Object {$_.metadata.created_on} -Descending|Select-Object -First 1
     $latestDeployment=@($deployments.deployments)|Sort-Object {$_.created_on} -Descending|Select-Object -First 1
     $activeVersionId=$null
     if($null -ne $latestDeployment){$activeVersion=@($latestDeployment.versions|Where-Object {[int](Get-S3CloudflareValue -InputObject $_ -Name 'percentage') -eq 100}|Select-Object -First 1);if($activeVersion.Count -gt 0){$activeVersionId=[string](Get-S3CloudflareValue -InputObject $activeVersion[0] -Name 'version_id')}}
     if([string]::IsNullOrWhiteSpace($activeVersionId)){throw 'REMOTE_WORKER_ACTIVE_VERSION_MISSING'}
-    $activeVersionDetail=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions/$activeVersionId" -Token $Token).result
+    $activeVersionDetail=(Invoke-S3CloudflareRest -Method GET -Uri "$base/versions/$activeVersionId" -Token $Token -Operation 'worker_snapshot.active_version').result
     $versionResources=Get-S3CloudflareValue -InputObject $activeVersionDetail -Name @('resources')
     if($null -eq $versionResources){throw 'REMOTE_WORKER_VERSION_RESOURCES_MISSING'}
     $runtime=Get-S3CloudflareValue -InputObject $versionResources -Name @('script_runtime','scriptRuntime')
