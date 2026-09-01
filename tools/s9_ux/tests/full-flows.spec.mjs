@@ -78,6 +78,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await submitConfirmed(page, '#payment-reversal-form', `/api/works/${work.id}/payment-reversal-requests`);
 
   await page.locator('[data-nav="financial"]').click();
+  const settlementPeriod = await page.locator('#s7-settlement-period-form input[name="period_key"]').inputValue();
   await page.locator('#s7-transfer-form input[name="amount_riyals"]').fill('20.00');
   await page.locator('#s7-transfer-form input[name="effective_at"]').fill('2026-08-13T12:00');
   await submitConfirmed(page, '#s7-transfer-form', '/api/transfers');
@@ -87,10 +88,10 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await page.locator('#s7-expense-form input[name="category"]').fill('مصروف اصطناعي');
   await page.locator('#s7-expense-form input[name="effective_at"]').fill('2026-08-13T12:00');
   await submitConfirmed(page, '#s7-expense-form', '/api/expenses');
-  await submitConfirmed(page, '#s7-settlement-close-form', '/api/settlements/2026-08/close');
+  await submitConfirmed(page, '#s7-settlement-close-form', `/api/settlements/${settlementPeriod}/close`);
   await page.locator('#s7-reopen-form input[name="reason"]').fill('إعادة فتح اصطناعية');
-  await submitConfirmed(page, '#s7-reopen-form', '/api/settlements/2026-08/reopen-requests');
-  const reopenApprove = '/api/settlements/2026-08/reopen-requests/reopen-1/approve';
+  await submitConfirmed(page, '#s7-reopen-form', `/api/settlements/${settlementPeriod}/reopen-requests`);
+  const reopenApprove = `/api/settlements/${settlementPeriod}/reopen-requests/reopen-1/approve`;
   const beforeApprove = api.count('POST', reopenApprove); handleNextDialog(page, 'accept'); await page.locator('[data-action="approve-settlement-reopen"]').click(); await expect.poll(() => api.count('POST', reopenApprove)).toBe(beforeApprove + 1);
 });
 
