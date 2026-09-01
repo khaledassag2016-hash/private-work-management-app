@@ -613,7 +613,7 @@ function ConvertTo-S3TelemetryEventPart {
     $cacheState = Get-S3CloudflareValue -InputObject $source -Name @('cacheState','cache_state')
     if ($null -eq $cacheState) { $cacheState = Get-S3CloudflareValue -InputObject $attributes -Name @('cacheState','cache_state') }
     $correlationPresent = -not [string]::IsNullOrWhiteSpace($record.runId) -and -not [string]::IsNullOrWhiteSpace($record.requestId) -and -not [string]::IsNullOrWhiteSpace($record.scenario)
-    $isCustomLog = $metadataType -eq 'cf-worker-log'
+    $isCustomLog = $metadataType -in @('cf-worker-log','cf-worker')
     $isInvocation = $metadataType -eq 'cf-worker-event'
     if ([string]::IsNullOrWhiteSpace($metadataType)) {
         $isCustomLog = $correlationPresent
