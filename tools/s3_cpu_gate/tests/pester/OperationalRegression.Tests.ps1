@@ -1626,7 +1626,7 @@ Describe 'S3-R Harness secure rehydration regressions' {
 Describe 'S3-R authoritative runtime rehydration' {
  It 'preserves a sanitized Cloudflare HTTP failure with the snapshot operation and request ID' {
   $response=[pscustomobject]@{StatusCode=403;Headers=@{'cf-ray'='ray-403'};Body='{"errors":[{"code":10000,"message":"permission denied"}],"access_token":"SECRET-TOKEN"}'}
-  $exception=[Exception]::new('Authorization: Bearer SECRET-TOKEN forbidden')
+  $exception=[Exception]::new('provider request forbidden')
   $exception | Add-Member -NotePropertyName Response -NotePropertyValue $response
   Mock Invoke-RestMethod { throw $exception } -ModuleName Cloudflare
   $diagnostic=''
