@@ -710,9 +710,13 @@ function Invoke-S3WorkersTelemetryQuery {
         $eventsEnvelope = Get-S3CloudflareValue -InputObject $result -Name @('events')
         $totalCount = Get-S3CloudflareValue -InputObject $eventsEnvelope -Name @('count')
         $totalCountKnown = $null -ne $totalCount
-        if ($totalCountKnown -and [int]$totalCount -lt $rawItems.Count) { $paginationComplete=$false;$errors.Add('PAGINATION_METADATA_INCOMPLETE');break }
-        if (($totalCountKnown -and $rawItems.Count -ge [int]$totalCount) -or (-not $totalCountKnown -and $pageItems.Count -lt $PageSize)) { break }
-        if ($pageItems.Count -eq 0) { $paginationComplete=$false;$errors.Add('PAGINATION_NEXT_PAGE_MISSING');break }
+        if ($pageItems.Count -eq 0) {
+            if (-not $totalCountKnown -or [int]$totalCount -eq 0) { break }
+            $paginationComplete=$false;$errors.Add('PAGINATION_NEXT_PAGE_MISSING');break
+        }
+        $hasNextPage = $pageItems.Count -ge $PageSize
+        if (-not $hasNextPage -and $totalCountKnown -and [int]$totalCount -gt $rawItems.Count) { $hasNextPage = $true }
+        if (-not $hasNextPage) { break }
         $lastMetadata = Get-S3CloudflareValue -InputObject $pageItems[$pageItems.Count - 1] -Name @('$metadata','metadata')
         $nextOffset = [string](Get-S3CloudflareValue -InputObject $lastMetadata -Name @('id'))
         if ([string]::IsNullOrWhiteSpace($nextOffset)) { $paginationComplete=$false;$errors.Add('PAGINATION_NEXT_PAGE_MISSING');break }

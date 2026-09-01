@@ -163,6 +163,14 @@ Describe 'B2 Workers Observability telemetry query' -Tag 'B2' {
   } -ModuleName Cloudflare
   $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z');$q.status|Should -Be 'PASS';$q.pageCount|Should -Be 2;$q.records.Count|Should -Be 3;$q.records[0].requestId|Should -Be 'a';$q.records[1].cloudflareRequestId|Should -Be 'cf-b';$q.records[2].scenario|Should -Be 'scenario-a';(Test-S3WorkersTelemetryBatch 'run-b2' 'scenario-a' (Get-B2ExpectedFixture @('a','b','c')) $q).status|Should -Be 'PASS'
  }
+ It 'treats events count as the current page count when paginating full pages' {
+  $script:page=0
+  Mock Invoke-S3CloudflareRest {param($Method,$Uri,$Token,$Body);[void]$Method;[void]$Uri;[void]$Token;$Body.limit|Should -Be 2;$script:page++
+   if($script:page -eq 1){[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{count=2;events=@((Get-B2OfficialTelemetryEvent 'a' 'event-a' 2 8),(Get-B2OfficialTelemetryEvent 'b' 'event-b' 3 9))}}}}
+   elseif($script:page -eq 2){$Body.offset|Should -Be 'event-b';[pscustomobject]@{success=$true;errors=@();result=[pscustomobject]@{events=[pscustomobject]@{count=1;events=@((Get-B2OfficialTelemetryEvent 'c' 'event-c' 4 10))}}}}
+  } -ModuleName Cloudflare
+  $q=Invoke-S3WorkersTelemetryQuery -AccountId account -Token token -RunId run-b2 -Scenario scenario-a -WorkerName s3-worker -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -PageSize 2;$q.status|Should -Be 'PASS';$q.pageCount|Should -Be 2;$q.rawCount|Should -Be 3;$q.records.Count|Should -Be 3
+ }
  It 'uses local conservative page size 100 and rejects values above the local cap' {
   $body=Get-S3WorkersObservabilityQueryBody -QueryId q -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -ToUtc ([DateTime]'2026-08-05T08:00:00Z');$body.limit|Should -Be 100
   {Get-S3WorkersObservabilityQueryBody -QueryId q -FromUtc ([DateTime]'2026-08-05T07:59:00Z') -ToUtc ([DateTime]'2026-08-05T08:00:00Z') -Limit 101}|Should -Throw
