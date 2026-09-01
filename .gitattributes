@@ -1,0 +1,2 @@
+tools/s3_cpu_gate/src/worker/assets/vendor/xlsx-0.20.3.mjs -text
+tools/s3_cpu_gate/worker/assets/vendor/xlsx-0.20.3.mjs -text

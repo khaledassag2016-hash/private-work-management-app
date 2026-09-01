@@ -20,7 +20,7 @@ const migration8Path = fileURLToPath(new URL('../../src/worker/migrations/0008_s
 const migration9Path = fileURLToPath(new URL('../../src/worker/migrations/0009_s7_d014_d016_authoritative_settlement.sql', import.meta.url));
 const fullSchema = readFileSync(schemaPath, 'utf8');
 const s7Marker = '\n-- S7 PR-A Payments / Collections / Reversal Core.';
-const s6Schema = fullSchema.slice(0, fullSchema.indexOf(s7Marker)).replace('  confirmed_at TEXT,\n', '');
+const s6Schema = fullSchema.slice(0, fullSchema.indexOf(s7Marker)).replace(/  confirmed_at TEXT,\r?\n/, '');
 
 class D1Statement {
   constructor(database, sql) { this.database = database; this.parameterMap = []; this.sql = sql.replace(/\?(\d+)/g, (_, i) => { this.parameterMap.push(Number(i)); return '?'; }); this.values = []; }

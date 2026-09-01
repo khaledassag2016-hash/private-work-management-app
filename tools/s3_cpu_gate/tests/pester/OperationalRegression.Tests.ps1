@@ -1630,7 +1630,7 @@ Describe 'S3-R authoritative runtime rehydration' {
   Mock Get-S3FirebaseProjectPresence {'EXISTS'} -ModuleName Firebase
   Mock Get-S3FirebaseUser {@([ordered]@{localId=$uid1;providerUserInfo=@([ordered]@{providerId='password'})},[ordered]@{localId=$uid2;providerUserInfo=@([ordered]@{providerId='password'})})} -ModuleName Firebase
   Mock Get-S3CloudflareD1RunUidSet {@($uid1,$uid2)} -ModuleName Firebase
-  Mock Get-S3FederatedProviderSnapshot {[ordered]@{verified=$true;enabledCount=0}} -ModuleName Firebase
+  Mock Get-S3FederatedProviderSnapshot {[ordered]@{defaultSupportedIdpConfigs=@();oauthIdpConfigs=@();inboundSamlConfigs=@()}} -ModuleName Firebase
   Mock Assert-S3FirebaseConfiguration {[ordered]@{verified=$true}} -ModuleName Firebase
   Mock Invoke-S3GoogleRest {[ordered]@{}} -ModuleName Firebase
   Mock New-S3FirebaseAdminUser {throw 'PROVISIONING_MUST_NOT_RUN'} -ModuleName Firebase
@@ -1641,6 +1641,7 @@ Describe 'S3-R authoritative runtime rehydration' {
   $r.status|Should -Be 'PASS';$r.sameUids|Should -BeTrue;$r.provisioningSkipped|Should -BeTrue;$r.secrets|Should -Be 'MEMORY_ONLY'
   Should -Invoke New-S3FirebaseAdminUser -ModuleName Firebase -Times 0 -Exactly;Should -Invoke Update-S3FirebaseAdminUserPassword -ModuleName Firebase -Times 2 -Exactly
   Should -Invoke Get-S3CloudflareD1RunUidSet -ModuleName Firebase -Times 1 -Exactly
+  Should -Invoke Assert-S3FirebaseConfiguration -ModuleName Firebase -Times 1 -Exactly -ParameterFilter {$ProviderProof.verified -eq $true -and $ProviderProof.enabledCount -eq 0 -and $ProviderProof.collections.Count -eq 3}
   $c.State|ConvertTo-Json -Depth 30|Should -Not -Match ($apiKey+'|'+$admin)
  }
  It 'reads remote Worker settings and compares effective state without returning values' {
@@ -1670,7 +1671,7 @@ Describe 'S3-R legacy checkpoint-60 Count root cause' {
   Mock Get-S3FirebaseProjectPresence {'EXISTS'} -ModuleName Firebase
   Mock Get-S3FirebaseUser {@([ordered]@{localId=$uid1;email="$uid1@example.invalid";providerUserInfo=@([ordered]@{providerId='password'})},[ordered]@{localId=$uid2;email="$uid2@example.invalid";providerUserInfo=@([ordered]@{providerId='password'})})} -ModuleName Firebase
   Mock Get-S3CloudflareD1RunUidSet {@($uid1,$uid2)} -ModuleName Firebase
-  Mock Get-S3FederatedProviderSnapshot {[ordered]@{verified=$true;enabledCount=0}} -ModuleName Firebase
+  Mock Get-S3FederatedProviderSnapshot {[ordered]@{defaultSupportedIdpConfigs=@();oauthIdpConfigs=@();inboundSamlConfigs=@()}} -ModuleName Firebase
   Mock Assert-S3FirebaseConfiguration {[ordered]@{verified=$true}} -ModuleName Firebase
   Mock Invoke-S3GoogleRest {[ordered]@{}} -ModuleName Firebase
   Mock Update-S3FirebaseAdminUserPassword {} -ModuleName Firebase
