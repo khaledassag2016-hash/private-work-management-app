@@ -106,8 +106,16 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
   Mock Invoke-RestMethod {param($Uri);if($Uri -match '/user/tokens/verify$'){return [pscustomobject]@{success=$true;errors=$null;result=[ordered]@{}}};throw 'must not run'} -ModuleName Cloudflare
   {Invoke-S3CloudflareRest -Method POST -Uri 'https://api.cloudflare.com/client/v4/accounts/a/workers/scripts' -Token token -Body @{}}|Should -Throw '*CLOUDFLARE_WRITE_API_FORBIDDEN*'
   Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0 -Exactly
-  (Invoke-S3CloudflareRest -Method GET -Uri 'https://api.cloudflare.com/client/v4/user/tokens/verify' -Token token).success|Should -BeTrue
- }
+   (Invoke-S3CloudflareRest -Method GET -Uri 'https://api.cloudflare.com/client/v4/user/tokens/verify' -Token token).success|Should -BeTrue
+  }
+  It 'keeps D1 mutation blocked unless the owned-mutation switch is explicit' {
+   Mock Invoke-RestMethod {[pscustomobject]@{success=$true;errors=@();result=@([pscustomobject]@{success=$true;results=@()})}} -ModuleName Cloudflare
+   $uri='https://api.cloudflare.com/client/v4/accounts/account-a/d1/database/database-a/query'
+   {Invoke-S3CloudflareRest -Method POST -Uri $uri -Token token -Body @{sql='DELETE FROM t'}|Out-Null}|Should -Throw '*CLOUDFLARE_WRITE_API_FORBIDDEN*'
+   $response=Invoke-S3CloudflareRest -Method POST -Uri $uri -Token token -Body @{sql='DELETE FROM t'} -AllowOwnedD1Mutation
+   $response.success|Should -BeTrue
+   Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 1 -Exactly
+  }
  It 'does not use the deprecated Billing Profile API' {$source=Get-Content (Join-Path $SourceRoot 'src\modules\Cloudflare.psm1') -Raw;$source|Should -Not -Match '(?i)billing/profile|billing profile api'}
  It 'uses accounts rather than token verify for OAuth and requires the selected account' {
   Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=@([ordered]@{id='account-a'});result_info=[ordered]@{page=1;total_pages=1}}} -ModuleName Cloudflare
@@ -168,6 +176,53 @@ Describe 'B5 Cloudflare read-only preflight' -Tag 'B5' {
   Should -Invoke Test-S3WorkersObservabilityAuthorization -ModuleName Cloudflare -Times 1 -Exactly
   Should -Invoke Get-S3CloudflareAccounts -ModuleName Cloudflare -Times 0 -Exactly
   Should -Invoke Invoke-RestMethod -ModuleName Cloudflare -Times 0 -Exactly
+ }
+}
+
+Describe 'S3 owned D1 mutation transport' {
+ BeforeEach {
+  $script:d1Context=Get-TestContext Live
+  $script:d1Context.State.currentState='60_CLOUDFLARE_PROVISIONED'
+  $script:d1Context.RuntimeSecrets.cloudflareToken='management-token'
+  $script:d1Context.State.resources.cloudflare=[ordered]@{
+   accountId='account-a';d1Id='database-a';d1Name="s3cpu-$($script:d1Context.RunId)-d1";marker=$script:d1Context.RunId
+  }
+ }
+ It 'executes a run-owned mutation through the D1 REST query endpoint' {
+  Mock Invoke-S3CloudflareRest {
+   param($Method,$Uri,$Token,$Body,$TimeoutSeconds,[switch]$AllowOwnedD1Mutation,$Operation)
+   $Method|Should -Be POST;$Uri|Should -Be 'https://api.cloudflare.com/client/v4/accounts/account-a/d1/database/database-a/query';$Token|Should -Be management-token
+   $Body.sql|Should -Match ([regex]::Escape($script:d1Context.RunId));$TimeoutSeconds|Should -Be 60;$AllowOwnedD1Mutation|Should -BeTrue;$Operation|Should -Be 'cpu_gate.d1_mutation'
+   [pscustomobject]@{success=$true;errors=@();result=@([pscustomobject]@{success=$true;results=@()})}
+  } -ModuleName Cloudflare
+  $result=Invoke-S3CloudflareOwnedD1Mutation -Context $script:d1Context -Sql "DELETE FROM s3_audit_probe WHERE run_marker='$($script:d1Context.RunId)'"
+  $result.ExitCode|Should -Be 0
+  Should -Invoke Invoke-S3CloudflareRest -ModuleName Cloudflare -Times 1 -Exactly
+ }
+ It 'accepts only the exact expected SQLite rejection' {
+  Mock Invoke-S3CloudflareRest {[pscustomobject]@{success=$true;errors=@();result=@([pscustomobject]@{success=$false;error='D1_ERROR: actor not authorized'})}} -ModuleName Cloudflare
+  $result=Invoke-S3CloudflareOwnedD1Mutation -Context $script:d1Context -Sql "INSERT INTO s3_audit_probe(run_marker) VALUES ('$($script:d1Context.RunId)')" -ExpectedFailure 'actor not authorized'
+  $result.ExitCode|Should -Be 1;$result.ExpectedFailure|Should -Be 'actor not authorized'
+ }
+ It 'does not misclassify authentication or transport failures as an expected rejection' {
+  Mock Invoke-S3CloudflareRest {throw 'CLOUDFLARE_HTTP_FAILURE: status=403 provider_errors=Authentication error'} -ModuleName Cloudflare
+  {Invoke-S3CloudflareOwnedD1Mutation -Context $script:d1Context -Sql "INSERT INTO s3_audit_probe(run_marker) VALUES ('$($script:d1Context.RunId)')" -ExpectedFailure 'actor not authorized'}|Should -Throw '*status=403*'
+ }
+ It 'rejects a mutation outside the run-owned database or without its marker' {
+  Mock Invoke-S3CloudflareRest {throw 'must not run'} -ModuleName Cloudflare
+  $script:d1Context.State.resources.cloudflare.marker='different-run'
+  {Invoke-S3CloudflareOwnedD1Mutation -Context $script:d1Context -Sql "DELETE FROM s3_audit_probe WHERE run_marker='$($script:d1Context.RunId)'"}|Should -Throw '*D1_MUTATION_OWNERSHIP_MISMATCH*'
+  $script:d1Context.State.resources.cloudflare.marker=$script:d1Context.RunId
+  {Invoke-S3CloudflareOwnedD1Mutation -Context $script:d1Context -Sql 'DELETE FROM s3_audit_probe'}|Should -Throw '*D1_MUTATION_RUN_MARKER_MISSING*'
+  Should -Invoke Invoke-S3CloudflareRest -ModuleName Cloudflare -Times 0 -Exactly
+ }
+ It 'routes CpuGate D1 SQL through REST without Wrangler or a temporary SQL file' {
+  Mock Invoke-S3CloudflareOwnedD1Mutation {[pscustomobject]@{ExitCode=0;StdOut='';StdErr='';ExpectedFailure=$null}} -ModuleName CpuGate
+  Mock Invoke-S3Process {throw 'wrangler must not run'} -ModuleName CpuGate
+  $result=Invoke-S3D1Sql -Context $script:d1Context -Sql "DELETE FROM s3_audit_probe WHERE run_marker='$($script:d1Context.RunId)'" -PassThru
+  $result.ExitCode|Should -Be 0
+  Should -Invoke Invoke-S3CloudflareOwnedD1Mutation -ModuleName CpuGate -Times 1 -Exactly
+  Should -Invoke Invoke-S3Process -ModuleName CpuGate -Times 0 -Exactly
  }
 }
 
@@ -940,6 +995,7 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
         $cpu | Should -Match 'AUDIT_DB_AUTHORIZATION_BYPASSED'
         $cpu | Should -Match 'AUDIT_UPDATE_TAMPER_ACCEPTED'
         $cpu | Should -Match 'AUDIT_DELETE_TAMPER_ACCEPTED'
+        $cpu | Should -Not -Match "'d1','execute'"
     }
 
     It 'executes the live audit harness for both actors and fail-closed D1 probes' {
@@ -964,9 +1020,9 @@ Describe 'S3 recovery safety hardening' -Tag 'RecoverySafety' {
             [pscustomobject]@{status=200;body=([ordered]@{ok=$true;requestId=$requestId;audit=$audit}|ConvertTo-Json -Depth 8 -Compress)}
         } -ModuleName CpuGate
         Mock Invoke-S3D1Sql {
-            param($Context,$Sql,[switch]$AllowFailure,[switch]$PassThru)
-            [void]$Context;[void]$Sql;[void]$AllowFailure
-            if ($PassThru) { return [pscustomobject]@{ExitCode=1;StdOut='';StdErr='expected rejection'} }
+            param($Context,$Sql,[string]$ExpectedFailure,[switch]$PassThru)
+            [void]$Context;[void]$Sql
+            if ($PassThru) { return [pscustomobject]@{ExitCode=1;StdOut='';StdErr='expected rejection';ExpectedFailure=$ExpectedFailure} }
         } -ModuleName CpuGate
         $result = Invoke-S3AuditAcceptance -Context $c -BaseUri 'https://synthetic.workers.dev' -Token1 'token-one' -Token2 'token-two' -Nonce 'synthetic-nonce'
         $result.status | Should -Be 'PASS'
@@ -1760,7 +1816,7 @@ Describe 'S3-R D1 failure restoration' {
  It 'restores uid2 authorization in finally when temporary D1 mutation fails' {
   $c=Get-TestContext Live;$c.RuntimeSecrets.uid1='uid-one';$c.RuntimeSecrets.uid2='uid-two';$c.State.resources.cloudflare=[ordered]@{d1Name='synthetic-d1'};$calls=[Collections.Generic.List[string]]::new()
   Mock Invoke-S3HttpRequest { $requestId=[string]$Headers['x-s3-request-id'];$value=($Body|ConvertFrom-Json).value;$isFirst=$value -eq 'synthetic-before';$action=if($isFirst){'CREATE'}else{'UPDATE'};$actor=if($isFirst){'uid-one'}else{'uid-two'};[pscustomobject]@{status=200;body=([ordered]@{ok=$true;requestId=$RequestId;audit=[ordered]@{action=$action;actorUid=$actor;createdAt='2026-08-26T12:00:00.000Z';runId=$c.RunId;requestId=$RequestId;before=$(if($isFirst){$null}else{[ordered]@{value='synthetic-before'}});after=[ordered]@{value=$value}}}|ConvertTo-Json -Compress)} } -ModuleName CpuGate
-  Mock Invoke-S3D1Sql { param($Context,$Sql,[switch]$AllowFailure,[switch]$PassThru);[void]$Context;[void]$AllowFailure;if($Sql -match 'DELETE FROM s3_audit_probe'){if($PassThru){return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}};return};$calls.Add($Sql);if($calls.Count -eq 1){throw 'TEMP_D1_MUTATION_FAILED'}} -ModuleName CpuGate
+  Mock Invoke-S3D1Sql { param($Context,$Sql,[string]$ExpectedFailure,[switch]$PassThru);[void]$Context;[void]$ExpectedFailure;if($Sql -match 'DELETE FROM s3_audit_probe'){if($PassThru){return [pscustomobject]@{ExitCode=0;StdOut='';StdErr=''}};return};$calls.Add($Sql);if($calls.Count -eq 1){throw 'TEMP_D1_MUTATION_FAILED'}} -ModuleName CpuGate
   {Invoke-S3AuditAcceptance -Context $c -BaseUri 'https://synthetic.workers.dev' -Token1 'a' -Token2 'b' -Nonce 'n'}|Should -Throw '*TEMP_D1_MUTATION_FAILED*'
   $calls.Count|Should -Be 2;$calls[1]|Should -Match 'active=1'
  }

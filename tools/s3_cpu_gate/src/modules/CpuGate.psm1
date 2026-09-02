@@ -143,9 +143,9 @@ function Set-S3WorkerTestVariable {
  $config|ConvertTo-Json -Depth 20|Set-Content $configPath -Encoding UTF8;Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('deploy','--config',$configPath) -WorkingDirectory (Split-Path $configPath) -TimeoutSeconds 600|Out-Null
 }
 function Invoke-S3D1Sql {
- param($Context,[string]$Sql,[switch]$AllowFailure,[switch]$PassThru)
- $sqlFile=Join-Path $Context.Root ('temp\negative-'+[guid]::NewGuid().ToString('N')+'.sql')
- try{Set-Content $sqlFile $Sql -Encoding UTF8;$cloudflareResource=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare';$database=[string](Get-S3MapValue -Map $cloudflareResource -Name 'd1Name');$config=Join-Path $Context.Root 'workspace\worker\wrangler.json';$result=Invoke-S3Process -Context $Context -FilePath 'wrangler' -ArgumentList @('d1','execute',$database,'--remote','--file',$sqlFile,'--config',$config,'--yes') -TimeoutSeconds 180 -AllowFailure:$AllowFailure;if($PassThru){return $result}}finally{Remove-Item $sqlFile -Force -ErrorAction SilentlyContinue}
+ param($Context,[string]$Sql,[ValidateSet('','actor not authorized','maximum two active users','audit log is append only')][string]$ExpectedFailure='',[switch]$PassThru)
+ $result=Invoke-S3CloudflareOwnedD1Mutation -Context $Context -Sql $Sql -ExpectedFailure $ExpectedFailure
+ if($PassThru){return $result}
 }
 function Invoke-S3AuditAcceptance {
  param($Context,[string]$BaseUri,[string]$Token1,[string]$Token2,[string]$Nonce)
@@ -168,7 +168,7 @@ function Invoke-S3AuditAcceptance {
   if([string]$payload.audit.after.value -ne $ExpectedAfter -or [string]$payload.audit.runId -ne $Context.RunId){throw 'AUDIT_AFTER_OR_RUN_MISMATCH'}
  }
  $probeEntity="acceptance-probe-$($Context.RunId)"
- [void](Invoke-S3D1Sql -Context $Context -Sql "DELETE FROM s3_audit_probe WHERE entity_id='$probeEntity';" -AllowFailure -PassThru)
+ Invoke-S3D1Sql -Context $Context -Sql "DELETE FROM s3_audit_probe WHERE entity_id='$probeEntity';"
  $firstRequest=[guid]::NewGuid().ToString('N');$secondRequest=[guid]::NewGuid().ToString('N')
  ReadAudit (InvokeAudit $Token1 $firstRequest 'synthetic-before') $firstRequest $uid1 'CREATE' $null 'synthetic-before'
  ReadAudit (InvokeAudit $Token2 $secondRequest 'synthetic-after') $secondRequest $uid2 'UPDATE' 'synthetic-before' 'synthetic-after'
@@ -176,14 +176,14 @@ function Invoke-S3AuditAcceptance {
  try{Invoke-S3D1Sql -Context $Context -Sql "UPDATE app_users SET active=0 WHERE uid='$uid2' AND run_marker='$($Context.RunId)';";$denied=InvokeAudit $Token2 $deniedRequest 'synthetic-denied';if($denied.status -lt 400){throw 'AUDIT_UNAUTHORIZED_MUTATION_ACCEPTED'}}finally{Invoke-S3D1Sql -Context $Context -Sql "UPDATE app_users SET active=1 WHERE uid='$uid2' AND run_marker='$($Context.RunId)';"}
  $dbDeniedRequest='db-denied-'+[guid]::NewGuid().ToString('N')
  $dbDeniedSql="INSERT INTO s3_audit_probe(entity_id,value_json,version,updated_by,changed_at,run_marker,request_id) VALUES ('unauthorized-$($Context.RunId)',json_object('value','synthetic-denied'),1,'uid-unregistered',strftime('%Y-%m-%dT%H:%M:%fZ','now'),'$($Context.RunId)','$dbDeniedRequest');"
- $dbDenied=Invoke-S3D1Sql -Context $Context -Sql $dbDeniedSql -AllowFailure -PassThru
+ $dbDenied=Invoke-S3D1Sql -Context $Context -Sql $dbDeniedSql -ExpectedFailure 'actor not authorized' -PassThru
  if($dbDenied.ExitCode -eq 0){throw 'AUDIT_DB_AUTHORIZATION_BYPASSED'}
  $thirdUid='uid-third-'+[guid]::NewGuid().ToString('N')
- $thirdUser=Invoke-S3D1Sql -Context $Context -Sql "INSERT INTO app_users(uid,role,active,run_marker) VALUES ('$thirdUid','person_1',1,'$($Context.RunId)');" -AllowFailure -PassThru
+ $thirdUser=Invoke-S3D1Sql -Context $Context -Sql "INSERT INTO app_users(uid,role,active,run_marker) VALUES ('$thirdUid','person_1',1,'$($Context.RunId)');" -ExpectedFailure 'maximum two active users' -PassThru
  if($thirdUser.ExitCode -eq 0){throw 'D1_MAX_TWO_BYPASSED'}
- $updateTamper=Invoke-S3D1Sql -Context $Context -Sql "UPDATE audit_log SET action='UPDATE' WHERE run_marker='$($Context.RunId)';" -AllowFailure -PassThru
+ $updateTamper=Invoke-S3D1Sql -Context $Context -Sql "UPDATE audit_log SET action='UPDATE' WHERE run_marker='$($Context.RunId)';" -ExpectedFailure 'audit log is append only' -PassThru
  if($updateTamper.ExitCode -eq 0){throw 'AUDIT_UPDATE_TAMPER_ACCEPTED'}
- $deleteTamper=Invoke-S3D1Sql -Context $Context -Sql "DELETE FROM audit_log WHERE run_marker='$($Context.RunId)';" -AllowFailure -PassThru
+ $deleteTamper=Invoke-S3D1Sql -Context $Context -Sql "DELETE FROM audit_log WHERE run_marker='$($Context.RunId)';" -ExpectedFailure 'audit log is append only' -PassThru
  if($deleteTamper.ExitCode -eq 0){throw 'AUDIT_DELETE_TAMPER_ACCEPTED'}
  return [ordered]@{status='PASS';authorizedActors=2;who=$true;when=$true;before=$true;after=$true;unauthorizedRejected=$true;thirdUserRejected=$true;maxTwo=$true;updateRejected=$true;deleteRejected=$true;dbSide=$true}
 }
