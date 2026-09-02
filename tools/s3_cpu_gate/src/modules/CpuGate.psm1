@@ -107,18 +107,16 @@ function Test-S3WorkersTelemetryBatch {
 }
 function Wait-S3WorkersTelemetry {
  param([string]$AccountId,[string]$Token,[string]$RunId,[string]$Scenario,[object[]]$ExpectedRequests,[Parameter(Mandatory)][string]$WorkerName,[Parameter(Mandatory)][datetime]$FromUtc,[string]$ExpectedCacheState='',[ValidateRange(0,900)][int]$TimeoutSeconds=120,[ValidateRange(0,30)][int]$RetryDelaySeconds=5,[scriptblock]$Now={[DateTime]::UtcNow},[scriptblock]$Sleep={param($Seconds)Start-Sleep -Seconds $Seconds})
- $deadline=(& $Now).AddSeconds($TimeoutSeconds);$lastValidation=$null;$lastFingerprint=$null;$sameFingerprint=0
+ $deadline=(& $Now).AddSeconds($TimeoutSeconds);$lastValidation=$null
  do{
   $query=Invoke-S3WorkersTelemetryQuery -AccountId $AccountId -Token $Token -RunId $RunId -Scenario $Scenario -WorkerName $WorkerName -FromUtc $FromUtc
   $lastValidation=Test-S3WorkersTelemetryBatch -RunId $RunId -Scenario $Scenario -ExpectedRequests $ExpectedRequests -ExpectedCacheState $ExpectedCacheState -QueryResult $query
   if($lastValidation.status -eq 'PASS'){return $lastValidation}
-  $batchComplete=([int]$lastValidation.invocationCount -eq @($ExpectedRequests).Count)
-  $cacheStateMismatch=@($lastValidation.reasons|Where-Object{$_ -match '^CACHE_STATE_MISMATCH:'})
-  $deterministic=@($lastValidation.reasons|Where-Object{$_ -match '^(API_ERROR|PAGINATION_INCOMPLETE|TELEMETRY_TRUNCATED|TELEMETRY_SAMPLING_DETECTED|EXPECTED_REQUEST_ID_DUPLICATE|RUN_ID_MISMATCH|SCENARIO_MISMATCH|EXTRA_REQUEST_ID|DUPLICATE_REQUEST_ID|CORRELATION_MISSING|CACHE_STATE_MISSING|DUPLICATE_CORRELATION|DUPLICATE_INVOCATION|CPU_TIME_INVALID|WALL_TIME_INVALID|OUTCOME_|INVOCATION_TERMINATED|CLOUDFLARE_REQUEST_ID_MISSING)'})
-  if($deterministic.Count -gt 0){$lastValidation.reasons=@($lastValidation.reasons);return $lastValidation}
-  if($batchComplete -and $cacheStateMismatch.Count -gt 0){$lastValidation.reasons=@($lastValidation.reasons);return $lastValidation}
-  if(-not $batchComplete -and $cacheStateMismatch.Count -gt 0){$lastFingerprint=$null;$sameFingerprint=0}
-  else{$fingerprint=((@($lastValidation.reasons)|Sort-Object)-join '|');if($fingerprint -eq $lastFingerprint){$sameFingerprint++}else{$lastFingerprint=$fingerprint;$sameFingerprint=1};if($sameFingerprint -ge 3){$lastValidation.reasons=@($lastValidation.reasons)+'TELEMETRY_CIRCUIT_BREAKER';return $lastValidation}}
+  $providerFailure=@($lastValidation.reasons|Where-Object{$_ -match '^(API_ERROR|PAGINATION_INCOMPLETE|TELEMETRY_TRUNCATED|TELEMETRY_SAMPLING_DETECTED|EXPECTED_REQUEST_ID_DUPLICATE|RUN_ID_MISMATCH|SCENARIO_MISMATCH|EXTRA_REQUEST_ID|DUPLICATE_REQUEST_ID|DUPLICATE_CORRELATION|DUPLICATE_INVOCATION)'})
+  if($providerFailure.Count -gt 0){$lastValidation.reasons=@($lastValidation.reasons);return $lastValidation}
+  $pairingPending=@($lastValidation.reasons|Where-Object{$_ -match '^(MISSING_REQUEST_ID|INVOCATION_COUNT_MISMATCH|CORRELATION_MISSING|INVOCATION_RECORD_MISSING):?'})
+  $batchComplete=([int]$lastValidation.invocationCount -eq @($ExpectedRequests).Count -and $pairingPending.Count -eq 0)
+  if($batchComplete){$lastValidation.reasons=@($lastValidation.reasons);return $lastValidation}
   if((& $Now) -ge $deadline){break}
   & $Sleep $RetryDelaySeconds
  }while((& $Now) -lt $deadline)
