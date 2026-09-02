@@ -98,11 +98,12 @@ function Get-S3CloudflareToken {
 }
 
 function Test-S3CloudflareReadOnlyMethod {
-    param([Parameter(Mandatory)][string]$Method,[Parameter(Mandatory)][string]$Uri,[switch]$AllowReadOnlyD1Query)
+    param([Parameter(Mandatory)][string]$Method,[Parameter(Mandatory)][string]$Uri,[switch]$AllowReadOnlyD1Query,[switch]$AllowOwnedD1Mutation)
     $normalizedMethod = $Method.ToUpperInvariant()
     if ($normalizedMethod -eq 'GET') { return $true }
     if ($normalizedMethod -eq 'POST' -and $Uri -match '/accounts/[^/]+/workers/observability/telemetry/query$') { return $true }
     if ($normalizedMethod -eq 'POST' -and $AllowReadOnlyD1Query -and $Uri -match '/accounts/[^/]+/d1/database/[^/]+/query$') { return $true }
+    if ($normalizedMethod -eq 'POST' -and $AllowOwnedD1Mutation -and $Uri -match '/accounts/[^/]+/d1/database/[^/]+/query$') { return $true }
     throw "CLOUDFLARE_WRITE_API_FORBIDDEN: $normalizedMethod $Uri"
 }
 
@@ -114,9 +115,10 @@ function Invoke-S3CloudflareRest {
         [AllowNull()][object]$Body = $null,
         [int]$TimeoutSeconds = 90,
         [switch]$AllowReadOnlyD1Query,
+        [switch]$AllowOwnedD1Mutation,
         [string]$Operation = ''
     )
-    [void](Test-S3CloudflareReadOnlyMethod -Method $Method -Uri $Uri -AllowReadOnlyD1Query:$AllowReadOnlyD1Query)
+    [void](Test-S3CloudflareReadOnlyMethod -Method $Method -Uri $Uri -AllowReadOnlyD1Query:$AllowReadOnlyD1Query -AllowOwnedD1Mutation:$AllowOwnedD1Mutation)
     $parameters = @{Method=$Method;Uri=$Uri;Headers=@{Authorization="Bearer $Token"};TimeoutSec=$TimeoutSeconds}
     if ($null -ne $Body) {
         $parameters.ContentType = 'application/json'
@@ -184,6 +186,46 @@ function Invoke-S3CloudflareRest {
         throw "CLOUDFLARE_API_ERROR: $safeErrors"
     }
     return $response
+}
+
+function Invoke-S3CloudflareOwnedD1Mutation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Sql,
+        [ValidateSet('','actor not authorized','maximum two active users','audit log is append only')][string]$ExpectedFailure = ''
+    )
+    if ($Context.Mode -ne 'Live' -or [string]$Context.State.currentState -ne '60_CLOUDFLARE_PROVISIONED') { throw 'D1_MUTATION_CHECKPOINT_60_LIVE_REQUIRED' }
+    if ([string]::IsNullOrWhiteSpace($Sql)) { throw 'D1_MUTATION_SQL_MISSING' }
+    $runId=[string]$Context.RunId
+    $resource=Get-S3MapValue -Map $Context.State.resources -Name 'cloudflare'
+    $marker=[string](Get-S3MapValue -Map $resource -Name 'marker')
+    $databaseName=[string](Get-S3MapValue -Map $resource -Name 'd1Name')
+    $databaseId=[string](Get-S3MapValue -Map $resource -Name 'd1Id')
+    $accountId=[string](Get-S3MapValue -Map $resource -Name 'accountId')
+    $token=[string](Get-S3MapValue -Map $Context.RuntimeSecrets -Name 'cloudflareToken')
+    if ([string]::IsNullOrWhiteSpace($runId) -or $marker -cne $runId -or $databaseName -cne "s3cpu-$runId-d1") { throw 'D1_MUTATION_OWNERSHIP_MISMATCH' }
+    if ([string]::IsNullOrWhiteSpace($databaseId) -or [string]::IsNullOrWhiteSpace($accountId) -or [string]::IsNullOrWhiteSpace($token)) { throw 'D1_MUTATION_RUNTIME_CONTEXT_MISSING' }
+    if ($Sql.IndexOf($runId,[StringComparison]::Ordinal) -lt 0) { throw 'D1_MUTATION_RUN_MARKER_MISSING' }
+    $uri="https://api.cloudflare.com/client/v4/accounts/$accountId/d1/database/$databaseId/query"
+    try {
+        $response=Invoke-S3CloudflareRest -Method POST -Uri $uri -Token $token -Body @{sql=$Sql} -TimeoutSeconds 60 -AllowOwnedD1Mutation -Operation 'cpu_gate.d1_mutation'
+        $results=@($response.result)
+        if ($results.Count -eq 0) { throw 'D1_MUTATION_RESULT_MISSING' }
+        $failed=@($results|Where-Object{(Get-S3CloudflareValue -InputObject $_ -Name 'success') -ne $true})
+        if ($failed.Count -gt 0) {
+            $failureText=Protect-S3Text ($failed|ConvertTo-Json -Depth 10 -Compress)
+            throw "D1_MUTATION_RESULT_FAILED: $failureText"
+        }
+    }
+    catch {
+        $safeFailure=Protect-S3Text $_.Exception.Message
+        if (-not[string]::IsNullOrWhiteSpace($ExpectedFailure) -and $safeFailure -match [regex]::Escape($ExpectedFailure)) {
+            return [pscustomobject]@{ExitCode=1;StdOut='';StdErr=$safeFailure;ExpectedFailure=$ExpectedFailure}
+        }
+        throw
+    }
+    return [pscustomobject]@{ExitCode=0;StdOut='';StdErr='';ExpectedFailure=$null}
 }
 
 function Assert-S3CloudflareCustomDomainBinding {
