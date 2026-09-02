@@ -16,7 +16,7 @@ Never substitute conversation memory, an agent report or `docs/REQUIREMENTS.md` 
 
 - `S1 = CLOSED_COMPLETE`.
 - `S2 = CLOSED_COMPLETE`.
-- `S3 = CLOSED_BLOCKED_DEFERRED` under D-008; not S3 COMPLETE.
+- `S3 = CLOSED_COMPLETE_PENDING_MERGE` pending PR #116 final-head CI, Squash merge, post-merge verification and Issue #2 closure; after those conditions it becomes `CLOSED_COMPLETE`.
 - `S4 = CLOSED_COMPLETE`.
 - `S5 = CLOSED_COMPLETE`.
 - `S6 = CLOSED_COMPLETE`.
@@ -24,7 +24,16 @@ Never substitute conversation memory, an agent report or `docs/REQUIREMENTS.md` 
 - `S8 = CLOSED_COMPLETE` after PR #78/#79/#80 plus PR #81 administrative closure, final-head CI, Squash merge, post-merge verification and Issue #7 closure.
 - `S9 = CLOSED_COMPLETE` after PR #82 plus PR #83 administrative closure, applicable final-head CI, Squash merge, post-merge verification and Issue #8 closure.
 - `S10 = CLOSED_COMPLETE` after PR #86 plus this administrative closure PR complete final-head CI, Squash merge, post-merge verification and Issue #9 closure.
-- `S11 = AUTHORIZED_NOT_STARTED` only after the S10 closure condition is effective and a `FINAL_ACTIVATED` S11 package is tied to the exact final S10 main SHA.
+- `S11 = CLOSED_COMPLETE` according to the current `PROJECT_STATE.md` state.
+
+Current S3 closure facts:
+
+- PR #115 final head: `5606eb0425bfedb529f30f41372a89beecd3c1a1`.
+- PR #115 Squash/main: `0cb6980bb320ea1beb785f36129ed64cc1dbc49e`.
+- `FR-026 = PASS`.
+- `AC-11 = PASS`.
+- `CPU/Telemetry = DEFERRED_NON_BLOCKING_BY-D-022 — NOT PASS`.
+- `RESOURCE_DISPOSITION = RETAINED_OPERATIONAL`.
 
 ## 3. S5/S6 evidence retained
 
