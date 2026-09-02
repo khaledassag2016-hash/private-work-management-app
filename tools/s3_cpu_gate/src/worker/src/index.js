@@ -1,5 +1,4 @@
 const DEFAULT_CERT_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
-let certificateCache = { expiresAt: 0, certificates: null };
 
 class DomainError extends Error {
   constructor(code, status = 400) {
@@ -59,17 +58,40 @@ function maxAge(headers) {
   const value = headers.get('cache-control') || ''; const match = /(?:^|,)\s*max-age=(\d+)/i.exec(value);
   if (!match) throw new Error('CACHE_CONTROL_MISSING'); return Number(match[1]);
 }
-async function getCertificates(env, force = false) {
-  const now = Date.now();
-  if (!force && certificateCache.certificates && now < certificateCache.expiresAt) return { certificates: certificateCache.certificates, state: 'hit' };
+function certificateCacheApi() {
+  const cache = globalThis.caches?.default;
+  return cache && typeof cache.match === 'function' && typeof cache.put === 'function' ? cache : null;
+}
+function certificateCacheKey(env) {
+  return new Request(env.CERT_URL_OVERRIDE || DEFAULT_CERT_URL, { method: 'GET' });
+}
+function validCertificateMetadata(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+export async function getCertificates(env, force = false) {
   const url = env.CERT_URL_OVERRIDE || DEFAULT_CERT_URL;
+  const cache = certificateCacheApi(); const cacheKey = certificateCacheKey(env);
+  if (!force && cache) {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      const certificates = await cached.json();
+      if (!validCertificateMetadata(certificates)) throw new Error('CERT_METADATA_INVALID');
+      return { certificates, state: 'hit' };
+    }
+  }
   const response = await fetch(url, { cf: { cacheTtl: 0 } });
   if (!response.ok) throw new Error('CERT_FETCH_FAILED');
   if (env.FORCE_CACHE_METADATA_INVALID === 'true') throw new Error('CACHE_METADATA_INVALID');
   const ttl = maxAge(response.headers); const certificates = await response.json();
-  if (!certificates || typeof certificates !== 'object' || Array.isArray(certificates)) throw new Error('CERT_METADATA_INVALID');
-  certificateCache = { certificates, expiresAt: now + ttl * 1000 };
+  if (!validCertificateMetadata(certificates)) throw new Error('CERT_METADATA_INVALID');
+  if (cache) {
+    await cache.put(cacheKey, new Response(JSON.stringify(certificates), { headers: { 'Cache-Control': `public, max-age=${ttl}`, 'Content-Type': 'application/json' } }));
+  }
   return { certificates, state: 'miss' };
+}
+async function clearCertificateCache(env) {
+  const cache = certificateCacheApi();
+  if (cache && typeof cache.delete === 'function') await cache.delete(certificateCacheKey(env));
 }
 async function verifyJwt(token, env, forceRefresh = false) {
   const parts = token.split('.'); if (parts.length !== 3) throw new Error('JWT_FORMAT');
@@ -1188,7 +1210,7 @@ export default {
     if (url.pathname === '/__test/reset-cache') {
       if (env.TEST_CONTROLS !== 'enabled') return reject(404, 'NOT_FOUND', requestId, 'none', env.RUN_MARKER, scenario);
       if (!env.TEST_RESET_NONCE || request.headers.get('x-s3-test-reset') !== env.TEST_RESET_NONCE) return reject(403, 'TEST_CONTROL_DENIED', requestId, 'none', env.RUN_MARKER, scenario);
-      certificateCache = { expiresAt: 0, certificates: null };
+      await clearCertificateCache(env);
       return Response.json({ ok: true, requestId });
     }
     const isAuditMutation = url.pathname === '/__test/audit-mutation';
