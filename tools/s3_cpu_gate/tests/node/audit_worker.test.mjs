@@ -108,3 +108,32 @@ test('database rejects audit UPDATE and DELETE tampering', async () => {
     database.close();
   }
 });
+
+test('certificate cache is shared across separate Worker isolates in one data-center cache', async () => {
+  const originalCaches = globalThis.caches;
+  const originalFetch = globalThis.fetch;
+  const entries = new Map();
+  globalThis.caches = { default: {
+    async match(request) { const response = entries.get(request.url); return response?.clone(); },
+    async put(request, response) { entries.set(request.url, response.clone()); },
+    async delete(request) { return entries.delete(request.url); },
+  } };
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return new Response(JSON.stringify({ testKey: 'test-certificate' }), { status: 200, headers: { 'Cache-Control': 'public, max-age=3600' } });
+  };
+  try {
+    const moduleUrl = new URL('../../src/worker/src/index.js', import.meta.url).href;
+    const isolateOne = await import(`${moduleUrl}?isolate=one`);
+    const isolateTwo = await import(`${moduleUrl}?isolate=two`);
+    const env = { CERT_URL_OVERRIDE: 'https://certificates.example.test/firebase-x509' };
+    assert.equal((await isolateOne.getCertificates(env)).state, 'miss');
+    assert.equal((await isolateTwo.getCertificates(env)).state, 'hit');
+    assert.equal(fetchCount, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = originalCaches;
+  }
+});
