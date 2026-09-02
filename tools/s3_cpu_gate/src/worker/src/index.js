@@ -871,9 +871,45 @@ export async function listActiveParticipants(env) {
   return rows.map(row => ({ uid: row.uid, role: row.role }));
 }
 
-async function handleApi(request, env, requestId, scenario, user) {
+function auditReadLimit(url) {
+  const raw = url.searchParams.get('limit');
+  if (raw === null) return 50;
+  if (!/^\d+$/.test(raw)) throw new DomainError('AUDIT_LIMIT_INVALID', 400);
+  const limit = Number(raw);
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new DomainError('AUDIT_LIMIT_INVALID', 400);
+  return Math.min(limit, 100);
+}
+
+export async function listAuditLog(env, url) {
+  const limit = auditReadLimit(url);
+  const rows = (await env.DB.prepare(`
+    SELECT a.id, a.entity_type, a.entity_id, a.action, a.actor_uid, u.role AS actor_role,
+           a.created_at, a.before_json, a.after_json
+    FROM audit_log AS a
+    LEFT JOIN app_users AS u ON u.uid = a.actor_uid
+    ORDER BY a.id DESC
+    LIMIT ?1
+  `).bind(limit).all()).results || [];
+  return rows.map(row => ({
+    id: row.id,
+    entity_type: row.entity_type,
+    entity_id: row.entity_id,
+    action: row.action,
+    actor_uid: row.actor_uid,
+    actor_role: row.actor_role || null,
+    created_at: row.created_at,
+    before: row.before_json === null ? null : JSON.parse(row.before_json),
+    after: JSON.parse(row.after_json),
+  }));
+}
+
+export async function handleApi(request, env, requestId, scenario, user) {
   const url = new URL(request.url); const parts = url.pathname.split('/').filter(Boolean);
   const method = request.method.toUpperCase(); const body = method === 'POST' || method === 'PATCH' ? await parseRequestJson(request) : {};
+  if (parts[1] === 'audit' && parts.length === 2) {
+    if (method !== 'GET') throw new DomainError('METHOD_NOT_ALLOWED', 405);
+    return Response.json({ ok: true, data: await listAuditLog(env, url), requestId });
+  }
   if (parts[1] === 'participants' && parts.length === 2 && method === 'GET') return Response.json({ ok: true, data: await listActiveParticipants(env), requestId });
   if (parts[1] === 'search' && parts[2] === 'works' && parts.length === 3 && method === 'GET') return Response.json({ ok: true, data: await searchWorksS8(env, Object.fromEntries(url.searchParams.entries())), requestId });
   if (parts[1] === 'alerts' && parts.length === 2) {

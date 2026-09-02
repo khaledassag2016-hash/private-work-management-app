@@ -10,6 +10,7 @@ const state = {
   selectedWork: null,
   financial: { periodKey: new Date().toISOString().slice(0, 7), preview: null, snapshots: [], reopenRequests: [], transfers: [], subscriptions: [], expenses: [], participants: [] },
   s8: { filters: { q: '', period_basis: 'CREATED_AT', month: '', year: '', status: '', customer_id: '', country: '', university: '', specialty_key: '', work_type_key: '', collection_status: '', include_archived: false }, search: { items: [], page: 1, page_size: 25, has_more: false }, analytics: null, alerts: null, alertSettings: [], export_type: 'WORK', export_work_id: '', export_customer_id: '', loading: false },
+  audit: { rows: [], loading: false },
   modal: null,
   busy: false,
 };
@@ -43,6 +44,8 @@ const labels = {
   HTTP_404: 'السجل المطلوب غير موجود أو لم يعد متاحًا.',
   HTTP_409: 'توجد حالة تعارض. حدّث البيانات ثم أعد المحاولة.',
   HTTP_500: 'تعذر إكمال العملية في الخدمة. لم تُعرض تفاصيل داخلية ولم تُسجل حالة نجاح.',
+  METHOD_NOT_ALLOWED: 'هذه العملية للقراءة فقط.',
+  AUDIT_LIMIT_INVALID: 'حد قراءة سجل التدقيق غير صالح.',
   MALFORMED_RESPONSE: 'تعذر التحقق من استجابة الخدمة بأمان. لم تُحفظ أي بيانات جديدة.',
   FACT_SOURCE_REQUIRED: 'يلزم إدخال مصدر أو دليل للواقعة قبل حفظها.',
   FACT_TIME_REQUIRED: 'يلزم إدخال وقت الواقعة الموثقة.',
@@ -154,6 +157,8 @@ function dateTimeLabel(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? escapeHtml(value) : new Intl.DateTimeFormat('ar-SA', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 }
+function auditActionLabel(action) { return ({ CREATE: 'إنشاء', UPDATE: 'تعديل', DELETE: 'حذف' }[action] || action || 'عملية'); }
+function auditValueLabel(value) { return value === null ? 'إنشاء جديد' : JSON.stringify(value, null, 2); }
 function requestId() { return crypto.randomUUID(); }
 function toast(message, kind = '') {
   const region = document.querySelector('.toast-region') || Object.assign(document.createElement('div'), { className: 'toast-region' });
@@ -241,6 +246,11 @@ async function loadCatalogs() {
   const entries = await Promise.all(['country', 'specialty', 'work_type'].map(async kind => [kind, await api(`/api/catalog/${kind}`)]));
   state.catalogs = Object.fromEntries(entries);
 }
+async function loadAuditLog() {
+  state.audit.loading = true;
+  try { state.audit.rows = await api('/api/audit?limit=50'); }
+  finally { state.audit.loading = false; }
+}
 async function loadDashboard() {
   const [customers, works] = await Promise.all([api('/api/customers'), api('/api/works')]);
   state.customers = customers; state.works = works;
@@ -277,11 +287,11 @@ function authScreen() {
 
 function shell(content) {
   const nav = [
-    ['dashboard', 'نظرة عامة'], ['customers', 'العملاء'], ['works', 'الأعمال'], ['financial', 'التحصيل والتسويات'], ['s8', 'بحث وتحليلات S8'], ['catalogs', 'القوائم'],
+    ['dashboard', 'نظرة عامة'], ['customers', 'العملاء'], ['works', 'الأعمال'], ['financial', 'التحصيل والتسويات'], ['s8', 'بحث وتحليلات S8'], ['catalogs', 'القوائم'], ['audit', 'سجل التدقيق'],
   ].map(([id, label]) => `<button class="nav-item" data-nav="${id}" ${state.view === id ? 'aria-current="page"' : ''}>${label}</button>`).join('');
   return `<div class="shell"><aside class="sidebar"><div class="brand-lockup"><div class="brand-mark">إ</div><div><h1>إدارة الأعمال</h1><p>العملاء والأعمال</p></div></div><nav class="nav-list" aria-label="التنقل الرئيسي">${nav}</nav><div class="sidebar-footer">يُعالج التفويض والتحقق في Worker. لا تمنح الواجهة صلاحية إضافية ولا تصل إلى D1 مباشرة.</div></aside><section class="content"><header class="topbar"><div><h1>${pageTitle()}</h1><p>واجهة عملية عربية RTL — الحالة السلطوية والوقائع الموثقة فقط</p></div><div class="identity"><div><strong>${escapeHtml(state.auth.email || 'حساب مصرح')}</strong><br/><span>${escapeHtml(state.auth.role || 'مستخدم مسموح')}</span></div><div class="avatar">${escapeHtml((state.auth.email || 'م').slice(0, 1))}</div><button class="button ghost" id="sign-out" type="button">خروج</button></div></header>${content}</section></div>${modalMarkup()}`;
 }
-function pageTitle() { return ({ dashboard: 'نظرة عامة', customers: 'العملاء', works: 'الأعمال', financial: 'التحصيل والتسويات', s8: 'بحث وتحليلات S8', catalogs: 'القوائم', customer: 'سجل العميل', work: 'تفاصيل العمل' }[state.view] || 'إدارة الأعمال'); }
+function pageTitle() { return ({ dashboard: 'نظرة عامة', customers: 'العملاء', works: 'الأعمال', financial: 'التحصيل والتسويات', s8: 'بحث وتحليلات S8', catalogs: 'القوائم', audit: 'سجل التدقيق', customer: 'سجل العميل', work: 'تفاصيل العمل' }[state.view] || 'إدارة الأعمال'); }
 function empty(message) { return `<div class="empty">${escapeHtml(message)}</div>`; }
 function loading(message = 'جارٍ تحميل البيانات…') { return `<div class="loading"><span class="spinner"></span>${escapeHtml(message)}</div>`; }
 function isPricingUnset(work) { return (work.pricing_state || work.price_state) === 'PRICE_UNSET'; }
@@ -382,6 +392,10 @@ function customersPage() { return `<section class="card"><div class="toolbar"><d
 function worksPage() { return `<section class="card"><div class="toolbar"><div><h2>الأعمال</h2><p>كل عمل سجل مستقل، حتى عند وجود علاقة تابع/أصل.</p></div><button class="button" data-action="new-work" type="button">إضافة عمل</button></div>${state.works.length ? worksTable(state.works) : empty('لا توجد أعمال بعد. أنشئ أول عمل من هنا أو من سجل العميل.')}</section>`; }
 function catalogsPage() { return `<section class="grid grid-3">${['country', 'specialty', 'work_type'].map(kind => `<article class="card"><div class="toolbar"><h2>${({ country: 'الدول', specialty: 'التخصصات', work_type: 'أنواع الأعمال' }[kind])}</h2><button class="button secondary" data-action="new-catalog" data-kind="${kind}" type="button">إضافة قيمة</button></div>${catalogList(kind)}</article>`).join('')}</section>`; }
 function catalogList(kind) { const values = state.catalogs[kind] || []; return values.length ? `<div class="fact-list">${values.map(value => `<li><strong>${escapeHtml(value.label)}</strong><span>${escapeHtml(value.value_key)} ${value.active ? '' : '— غير نشط'}</span></li>`).join('')}</div>` : empty('لا توجد قيم بعد.'); }
+function auditPage() {
+  const rows = state.audit.rows || [];
+  return `<section class="card" data-audit-log><div class="toolbar"><div><h2>سجل التدقيق</h2><p>عرض قراءة فقط للسجل السلطوي، مرتب من الأحدث إلى الأقدم حسب المعرّف.</p></div><button class="button secondary" data-action="audit-refresh" type="button" ${state.audit.loading ? 'disabled' : ''}>تحديث</button></div><p class="notice info">Hard delete is prohibited; لذلك يعرض السجل عمليات CREATE وUPDATE الفعلية، وتاريخ الأرشفة أو الإلغاء المحكوم عند انطباقه.</p>${state.audit.loading ? loading() : rows.length ? `<div class="table-wrap"><table class="audit-table"><thead><tr><th>العملية</th><th>نوع السجل ومعرفه</th><th>من قام بالعملية</th><th>التاريخ والوقت</th><th>القيمة السابقة</th><th>القيمة الجديدة</th></tr></thead><tbody>${rows.map(row => `<tr data-audit-id="${escapeHtml(row.id)}"><td>${escapeHtml(auditActionLabel(row.action))}</td><td>${escapeHtml(row.entity_type)}<br/><span class="hint">${escapeHtml(row.entity_id)}</span></td><td>${escapeHtml(row.actor_role || 'مستخدم مصرح')}<br/><span class="hint">${escapeHtml(row.actor_uid)}</span></td><td>${escapeHtml(dateTimeLabel(row.created_at))}</td><td><pre class="audit-json">${escapeHtml(auditValueLabel(row.before))}</pre></td><td><pre class="audit-json">${escapeHtml(auditValueLabel(row.after))}</pre></td></tr>`).join('')}</tbody></table></div>` : empty('لا توجد سجلات تدقيق متاحة.')}</section>`;
+}
 function customerPage() {
   const customer = state.selectedCustomer; if (!customer) return loading();
   const works = customer.works || []; const warnings = customer.warnings || []; const history = customer.history || [];
@@ -771,7 +785,7 @@ function factForm() { const customer = state.selectedCustomer; return `<form id=
 
 function render() {
   if (state.auth.status !== 'signed_in') { root.innerHTML = authScreen(); associateFieldLabels(); bindAuth(); return; }
-  const content = state.view === 'dashboard' ? dashboard() : state.view === 'customers' ? customersPage() : state.view === 'works' ? worksPage() : state.view === 'financial' ? financialPage() : state.view === 's8' ? s8SearchPage() : state.view === 'catalogs' ? catalogsPage() : state.view === 'customer' ? customerPage() : workPage();
+  const content = state.view === 'dashboard' ? dashboard() : state.view === 'customers' ? customersPage() : state.view === 'works' ? worksPage() : state.view === 'financial' ? financialPage() : state.view === 's8' ? s8SearchPage() : state.view === 'catalogs' ? catalogsPage() : state.view === 'audit' ? auditPage() : state.view === 'customer' ? customerPage() : workPage();
   root.innerHTML = shell(content); associateFieldLabels(); bindShell(); syncBusyControls(); bindDialogAccessibility();
 }
 function bindAuth() {
@@ -803,6 +817,7 @@ function bindShell() {
   document.querySelector('[data-action="s8-refresh"]')?.addEventListener('click', () => { void submitFlow(async () => { await loadS8Workspace(); render(); }); });
   document.querySelector('[data-action="s8-analytics-refresh"]')?.addEventListener('click', s8RefreshAnalytics);
   document.querySelector('[data-action="s8-reset"]')?.addEventListener('click', () => { state.s8.filters = { ...state.s8.filters, q: '', month: '', year: '', status: '', customer_id: '', country: '', university: '', specialty_key: '', work_type_key: '', collection_status: '', include_archived: false }; state.s8.search.page = 1; void submitFlow(async () => { await loadS8Workspace(); render(); }); });
+  document.querySelector('[data-action="audit-refresh"]')?.addEventListener('click', () => { void submitFlow(async () => { await loadAuditLog(); render(); }); });
   document.querySelector('[data-action="s8-prev"]')?.addEventListener('click', () => { state.s8.search.page = Math.max(1, state.s8.search.page - 1); void submitFlow(async () => { await loadS8Search(); render(); }); });
   document.querySelector('[data-action="s8-next"]')?.addEventListener('click', () => { state.s8.search.page += 1; void submitFlow(async () => { await loadS8Search(); render(); }); });
   bindModalForms();
@@ -916,7 +931,7 @@ async function refreshWorkCustomerContext(customerId, data = {}) {
   }
 }
 async function submitFlow(action) { if (state.busy) return; setBusy(true); try { await action(); } catch (error) { toast(errorMessage(error.code), 'error'); } finally { setBusy(false); } }
-async function refreshForView() { try { if (state.view === 'dashboard' || state.view === 'customers' || state.view === 'works') await loadDashboard(); if (state.view === 'financial') await loadFinancialWorkspace(); if (state.view === 's8') await loadS8Workspace(); if (state.view === 'catalogs') await loadCatalogs(); render(); } catch (error) { toast(errorMessage(error.code), 'error'); } }
+async function refreshForView() { try { if (state.view === 'dashboard' || state.view === 'customers' || state.view === 'works') await loadDashboard(); if (state.view === 'financial') await loadFinancialWorkspace(); if (state.view === 's8') await loadS8Workspace(); if (state.view === 'catalogs') await loadCatalogs(); if (state.view === 'audit') await loadAuditLog(); render(); } catch (error) { toast(errorMessage(error.code), 'error'); } }
 async function openCustomer(customerId) { try { state.selectedCustomer = null; state.view = 'customer'; render(); const [customer, works, history, warnings] = await Promise.all([api(`/api/customers/${encodeURIComponent(customerId)}`), api(`/api/works${queryString({ customer_id: customerId })}`), api(`/api/customers/${encodeURIComponent(customerId)}/history`), api(`/api/customers/${encodeURIComponent(customerId)}/warnings`)]); state.selectedCustomer = { ...customer, works, history, warnings }; render(); } catch (error) { toast(errorMessage(error.code), 'error'); state.view = 'customers'; render(); } }
 async function refreshWorkAfterMutation(workId, successMessage) {
   const refreshed = await openWork(workId, { reason: 'post-mutation' });
