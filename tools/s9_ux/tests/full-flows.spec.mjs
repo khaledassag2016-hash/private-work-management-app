@@ -24,7 +24,8 @@ async function submitConfirmed(page, form, path) {
 test('A-M capability matrix is reachable with identical mobile and desktop functions', async ({ page }) => {
   expect(capabilityMatrix.capabilities.map(item => item.id)).toEqual('ABCDEFGHIJKLM'.split(''));
   expect(capabilityMatrix.capabilities.every(item => item.mobile === 'required' && item.desktop === 'required')).toBe(true);
-  await expect(page.locator('.nav-item')).toHaveCount(6);
+  await expect(page.locator('.nav-item')).toHaveCount(7);
+  await expect(page.locator('[data-nav="audit"]')).toHaveCount(1);
   await page.locator('[data-nav="customers"]').click();
   await expect(page.locator(`[data-customer="customer-1"]`)).toBeVisible();
   await page.locator('[data-action="new-customer"]').click();

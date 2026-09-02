@@ -94,6 +94,8 @@ th, td { padding: .8rem; text-align: right; white-space: nowrap; border-bottom: 
 th { color: var(--muted); font-weight: 600; background: #faf8f3; }
 tr:last-child td { border-bottom: 0; }
 .row-action { min-width: 44px; min-height: 44px; padding: .45rem; color: var(--brand); text-decoration: underline; background: transparent; font-size: .73rem; }
+.audit-table th, .audit-table td { vertical-align: top; }
+.audit-json { min-width: 180px; max-width: 360px; margin: 0; padding: .55rem; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; background: #faf8f3; border-radius: 8px; font: .68rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; direction: ltr; text-align: left; }
 
 .badge { display: inline-flex; align-items: center; gap: .35rem; padding: .32rem .55rem; font-size: .65rem; border-radius: 999px; }
 .badge.unset { color: var(--warning); background: var(--warning-soft); }
