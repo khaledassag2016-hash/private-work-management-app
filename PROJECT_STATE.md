@@ -14,7 +14,9 @@
 
 - `S1 = CLOSED_COMPLETE`.
 - `S2 = CLOSED_COMPLETE`.
-- `S3 = REOPENED_IN_PROGRESS` under S3-R / Issue #2; it is not S3 COMPLETE.
+- `S3 = CLOSED_COMPLETE` under D-022 / Issue #2 administrative closure.
+- `S3_COMPLETE = TRUE`.
+- `S3_READY_FOR_CLOSURE = YES`.
 - `S4 = CLOSED_COMPLETE`.
 - `S5 = CLOSED_COMPLETE`.
 - `S6 = CLOSED_COMPLETE`.
@@ -29,9 +31,28 @@
 - `S11 = CLOSED_COMPLETE` after PR #88 implementation/review plus this S11 administrative closure PR, applicable final-head CI, Squash merge, post-merge verification and Issue #10 closure become effective.
 - `S11_COMPLETE = TRUE` after the same closure condition becomes effective.
 
-## S3-R — preserved Codex Live checkpoint
+## S3 final closure — administrative state
 
-This section preserves the latest validated state of the old Codex Live run for D-021 resumability. It does **not** declare S3 complete and does not allow an independent new Live run to inherit PASS automatically without its own evidence.
+- `PR115_FINAL_HEAD = 5606eb0425bfedb529f30f41372a89beecd3c1a1`.
+- `PR115_SQUASH_MAIN_SHA = 0cb6980bb320ea1beb785f36129ed64cc1dbc49e`.
+- `EXACTLY_TWO_AUTHORIZED_ACCOUNTS = PASS — supervisory live-login evidence for person_1 and person_2`.
+- No emails, UIDs, screenshots or credentials are stored in repository state.
+- `THIRD_UNREGISTERED_DENIED = PASS`.
+- `D1_MAX_TWO_ENFORCEMENT = PASS`.
+- `SERVER_SIDE_FIREBASE_D1_ALLOWLIST = PASS`.
+- `AUDIT_ACTOR_TIME_BEFORE_AFTER = PASS`.
+- `AUDIT_READ_ONLY_APPEND_ONLY_TAMPER_RESISTANCE = PASS`.
+- `FR_026 = PASS`.
+- `AC_11 = PASS`.
+- `NO_SECRETS_OR_REAL_REPOSITORY_DATA = PASS`.
+- `CPU_TELEMETRY = DEFERRED_NON_BLOCKING_BY-D-022`.
+- `RESOURCE_DISPOSITION = RETAINED_OPERATIONAL`.
+- `ACTIVE_S3_BLOCKERS = NONE`.
+- `ISSUE_2_PRODUCT_SECURITY_ACCEPTANCE = PASS`.
+
+## S3-R — HISTORICAL PRESERVED EVIDENCE
+
+This section preserves the latest validated state of the old Codex Live run for D-021 resumability. It is historical preserved evidence and does not independently convert any historical failure or deferred CPU/Telemetry result into PASS.
 
 - `OLD_CODEX_RUN_ID = s3cpu-20260814-170441-fcdbae71`.
 - `OLD_CODEX_RUN_PRESERVE = YES`.
@@ -48,7 +69,7 @@ This section preserves the latest validated state of the old Codex Live run for 
 - `LAST_FAILURE_FINGERPRINT = 8046f374b37cdc2fe4d79fbbd741819cde2b21fcdf381265a83ddcdb3ea12645`.
 - `LAST_BLOCKER_CURRENT_STATUS = DNS/HTTPS subsequently observed reachable; the active Live run must validate this before dependent gates`.
 - `NO_RERUN_PRIOR_CODEX_GATES = TRUE` for any authorized continuation of the preserved Codex run unless an exact checkpoint is explicitly invalidated.
-- `S3_READY_FOR_CLOSURE = NO`.
+- `HISTORICAL_S3_READY_FOR_CLOSURE = NO` at the time of the preserved run; current administrative state is recorded above.
 - The old Codex resources are preserved and are not owned by any independent new Live run. No cleanup, delete, reset or reuse of those resources is authorized by this checkpoint.
 - Runtime secrets/tokens/passwords are intentionally absent from repository state and must never be committed.
 
@@ -339,10 +360,9 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 
 ## Next stage
 
-- `NEXT_STAGE = S3_R_REOPENED_IN_PROGRESS`.
-- S11 was the final stage in the prior closure cycle; S3 has since been explicitly reopened under separate S3-R supervision.
-- No stage after S3-R is authorized by this checkpoint.
-- Any Live/Deployment continuation remains governed by D-021 and the preserved checkpoint above.
+- `NEXT_STAGE = SUPERVISORY_REVIEW_OF_S3_CLOSURE`.
+- S3 is administratively complete under D-022; the closure PR remains subject to supervisory review before merge.
+- No Live, Deployment, CPU, Telemetry, Billing or resource cleanup is authorized by this closure state.
 
 ## Permanent rules
 

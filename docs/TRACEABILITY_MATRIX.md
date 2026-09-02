@@ -31,7 +31,7 @@
 | FR-023 | متطلب وظيفي | S5 | no hard delete/archive retention; S8 reverify historical search/analytics visibility; S10 archive/history restore reconciliation | **PASS — S5 + S8 + S10 REVERIFY** |
 | FR-024 | متطلب وظيفي | S8 | authoritative DTO + real XLSX exports for Work/month/follow-up/customer/classification + S10 regression | **PASS — S8 / S10 reverify** |
 | FR-025 | متطلب وظيفي | S8 | Arabic RTL real XLSX structural/OOXML verification + S10 AC-09 regression | **PASS — S8 / S10 reverify** |
-| FR-026 | متطلب وظيفي | S3 | audit identity/time scope; S10 tests implemented evidence only under D-020 | `DEFERRED_S3_NOT_FULL_PASS` — S3 remains deferred |
+| FR-026 | متطلب وظيفي | S3 | PR #115 authenticated read-only Audit visibility; actor/time/before/after; append-only/tamper protection; final-head CI | **PASS — S3 / PR #115** |
 | FR-027 | متطلب وظيفي | S2 | schema excludes file/blob/attachment storage | PASS — S2 portion |
 | FR-028 | متطلب وظيفي | S4 | runtime catalog value addition/use + S10 AC-13 | PASS — S4 / S10 reverify |
 | FR-029 | متطلب وظيفي | S8 | configurable NO_PRICE/NO_REPLY/NO_PAYMENT alerts with D-017 authoritative anchors and no default thresholds | **PASS — S8 PR #80 / D-017** |
@@ -46,7 +46,7 @@
 | AC-08 | معيار قبول | S8 | current/old title search finds retained same Work including explicit archived history؛ S10 regression | **PASS — S8 / S10** |
 | AC-09 | معيار قبول | S8 | Arabic RTL organized real Excel for month/Work/follow-up plus customer/classification؛ S10 workbook regression | **PASS — S8 / S10** |
 | AC-10 | معيار قبول | S8 | statistics by type/specialty/country/university/period؛ S10 analytics regression | **PASS — S8 / S10** |
-| AC-11 | معيار قبول | S3 | actor/time audit visibility; S10 tests implemented actor/time evidence only, without S3 implementation, under D-020 | `DEFERRED_S3_NOT_FULL_PASS` |
+| AC-11 | معيار قبول | S3 | PR #115 user-visible Audit UI showing actor identity and timestamp; final-head S9 acceptance SUCCESS | **PASS — S3 / PR #115** |
 | AC-12 | معيار قبول | S5 | archive retains record/history; S8 search/analytics historical inclusion and active exclusion; S10 restore/history regression | **PASS — S5 + S8 + S10 REVERIFY** |
 | AC-13 | معيار قبول | S4 | catalog additions without source change؛ S10 runtime dynamic-extension fixture | PASS — S4 / S10 |
 | AC-14 | معيار قبول | S11 | S10 verifies only that no current protected route silently injects historical numbers; implementation/import remains S11 under D-020 | `DEFERRED_S11_NOT_FULL_PASS` — S11 owns completion |

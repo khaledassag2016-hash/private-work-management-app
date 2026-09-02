@@ -8,3 +8,7 @@
 - المسار المقاس: Firebase ID Token RS256/X.509/claims ثم D1 allowlist.
 - الحكم: 20 warm-up، جولتان cache hit ×100، و20 cache miss، مع CPU telemetry رسمية.
 - أي قياس ناقص أو Billing أو خطة مدفوعة أو تقليل أمني يؤدي إلى FAIL.
+
+## الحالة التاريخية
+
+هذه الخطة تاريخية ومحفوظة لأغراض التتبع. وفق D-022، أُلغيت صفة بوابة CPU/Telemetry كمانع لإغلاق S3 فقط. لا يحول ذلك أي قياس تاريخي إلى PASS، ولا يجيز Billing أو Workers Paid أو PayGo أو بطاقة أو Live run جديدًا.
