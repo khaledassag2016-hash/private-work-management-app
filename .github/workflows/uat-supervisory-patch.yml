@@ -7,6 +7,12 @@ on:
     paths:
       - tools/.uat-supervisory-patch/**
       - .github/workflows/uat-supervisory-patch.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - tools/.uat-supervisory-patch/**
+      - .github/workflows/uat-supervisory-patch.yml
 
 permissions:
   contents: write
