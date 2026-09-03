@@ -62,6 +62,8 @@
     "src/worker/migrations/0009_s7_d014_d016_authoritative_settlement.sql",
     "src/worker/migrations/0010_s8_search_filter_alert_core.sql",
     "src/worker/migrations/0011_s11_historical_import.sql",
+    "src/worker/migrations/0012_uat_account_admin.sql",
+    "src/worker/migrations/0013_uat_financial_integrity.sql",
     "tests/pester/Common.Tests.ps1",
     "tests/pester/CpuGate.Tests.ps1",
     "tests/pester/FirebaseProtoJsonRecordsCount.Tests.ps1",
@@ -92,6 +94,8 @@
     "tests/node/s8_pr_b_analytics_export.test.mjs",
     "tests/node/s8_pr_c_ui_e2e.test.mjs",
     "tests/node/s11_historical_import.test.mjs",
+    "tests/node/uat_remediation_contract.test.mjs",
+    "tests/node/uat_supervisory_corrections.test.mjs",
     "tests/python/test_cpu_stats.py",
     "tests/python/test_offline_simulation.py",
     "tests/python/test_package_verify.py",
@@ -121,6 +125,8 @@
     "worker/migrations/0009_s7_d014_d016_authoritative_settlement.sql",
     "worker/migrations/0010_s8_search_filter_alert_core.sql",
     "worker/migrations/0011_s11_historical_import.sql",
+    "worker/migrations/0012_uat_account_admin.sql",
+    "worker/migrations/0013_uat_financial_integrity.sql",
     "tests/fixtures/s7_final_schema_ad482ec0dc78ba5796797d40223beb6d6fed0f5b.sql"
   ]
 }
