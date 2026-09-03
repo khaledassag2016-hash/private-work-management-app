@@ -19,7 +19,7 @@ def test_worker_exp(): assert 'EXP_INVALID' in text('src/worker/src/index.js')
 def test_worker_iat(): assert 'IAT_INVALID' in text('src/worker/src/index.js')
 def test_worker_auth_time(): assert 'AUTH_TIME_INVALID' in text('src/worker/src/index.js')
 def test_worker_sub(): assert 'SUB_INVALID' in text('src/worker/src/index.js')
-def test_worker_d1_allowlist(): assert 'SELECT uid, role FROM app_users' in text('src/worker/src/index.js')
+def test_worker_d1_allowlist(): assert 'SELECT uid, role, auth_valid_since FROM app_users WHERE uid = ?1 AND active = 1' in text('src/worker/src/index.js')
 def test_worker_no_guest(): assert 'guest' not in text('src/worker/src/index.js').lower()
 def test_worker_no_token_log():
  lines=[line.lower() for line in text('src/worker/src/index.js').splitlines() if 'console.log' in line]

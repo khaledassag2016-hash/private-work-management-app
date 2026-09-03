@@ -22,6 +22,7 @@ async function submitConfirmed(page, form, path) {
   await page.locator(`${form} button[type="submit"]`).click();
   await handleNextDialog(page, 'accept');
   await expect.poll(() => api.count('POST', path)).toBe(before + 1);
+  await expect(page.locator('#app')).toHaveAttribute('aria-busy', 'false');
 }
 
 test('A-M capability matrix is reachable with identical mobile and desktop functions', async ({ page }) => {
