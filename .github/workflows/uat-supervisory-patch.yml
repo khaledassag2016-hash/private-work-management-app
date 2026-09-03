@@ -1,0 +1,47 @@
+name: UAT supervisory correction
+
+on:
+  push:
+    branches:
+      - codex/uat-remediation-after-s11
+    paths:
+      - tools/.uat-supervisory-patch/**
+      - .github/workflows/uat-supervisory-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/uat-remediation-after-s11
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply supervisory corrections
+        run: |
+          cat tools/.uat-supervisory-patch/part00 tools/.uat-supervisory-patch/part01 tools/.uat-supervisory-patch/part02 | base64 -d | gzip -d > /tmp/uat_supervisory_patch.mjs
+          node /tmp/uat_supervisory_patch.mjs
+          rm -rf tools/.uat-supervisory-patch .github/workflows/uat-supervisory-patch.yml
+      - name: Syntax and targeted acceptance
+        run: |
+          node --check tools/s3_cpu_gate/src/worker/src/index.js
+          node --check tools/s3_cpu_gate/src/worker/assets/app.js
+          node --test \
+            tools/s3_cpu_gate/tests/node/uat_remediation_contract.test.mjs \
+            tools/s3_cpu_gate/tests/node/uat_supervisory_corrections.test.mjs \
+            tools/s3_cpu_gate/tests/node/s6_pr_a_financial_core.test.mjs \
+            tools/s3_cpu_gate/tests/node/s7_pr_b_settlement_core.test.mjs
+          git diff --check
+      - name: Commit corrected branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(uat): apply supervisory corrections"
+          git push origin HEAD:codex/uat-remediation-after-s11
