@@ -118,7 +118,7 @@ async function verifyJwt(token, env, forceRefresh = false) {
 }
 
 async function allowed(env, uid) {
-  const row = await env.DB.prepare('SELECT uid, role FROM app_users WHERE uid = ?1 AND active = 1').bind(uid).first();
+  const row = await env.DB.prepare('SELECT uid, role, auth_valid_since FROM app_users WHERE uid = ?1 AND active = 1').bind(uid).first();
   return row || null;
 }
 
@@ -289,7 +289,7 @@ function softWorkDetailWarnings(work) {
   return warnings;
 }
 function workReadModel(work) {
-  return { ...work, is_archived: Boolean(work.archived_at), soft_warnings: softWorkDetailWarnings(work) };
+  return { ...work, is_archived: Boolean(work.archived_at), is_cancelled: isCancelledWorkStatus(work.status), soft_warnings: softWorkDetailWarnings(work) };
 }
 function workPricingReadModel(work, currentPriceHalalas) {
   return {
@@ -455,6 +455,7 @@ function s8IncludeArchived(value) {
 }
 function s8CollectionSql() {
   return `CASE
+    WHEN w.status IN ('CANCELLED_BEFORE_EXECUTION','PARTIALLY_STOPPED') THEN 'CANCELLED_ZERO_BALANCE'
     WHEN COALESCE(p.price_movement_count,0)=0 THEN 'PRICE_UNSET'
     WHEN COALESCE(pay.approved_paid_halalas,0)>p.current_price_halalas THEN 'OVERPAYMENT_UNRESOLVED'
     WHEN p.current_price_halalas=0 OR COALESCE(pay.approved_paid_halalas,0)=p.current_price_halalas THEN 'FINANCIALLY_CLOSED'
@@ -482,7 +483,7 @@ export async function searchWorksS8(env, input = {}) {
     clauses.push(`(w.title LIKE ${current} ESCAPE '\\' OR EXISTS (SELECT 1 FROM work_title_history th WHERE th.work_id=w.id AND (th.old_title LIKE ${historicalOld} ESCAPE '\\' OR th.new_title LIKE ${historicalNew} ESCAPE '\\')))`);
   }
   const collection = input.collection_status === undefined || input.collection_status === null || input.collection_status === '' ? null : String(input.collection_status).toUpperCase();
-  if (collection && !['PRICE_UNSET', 'UNPAID', 'PARTIALLY_COLLECTED', 'FINANCIALLY_CLOSED', 'OVERPAYMENT_UNRESOLVED'].includes(collection)) throw new DomainError('S8_COLLECTION_INVALID', 400);
+  if (collection && !['PRICE_UNSET', 'UNPAID', 'PARTIALLY_COLLECTED', 'FINANCIALLY_CLOSED', 'OVERPAYMENT_UNRESOLVED', 'CANCELLED_ZERO_BALANCE'].includes(collection)) throw new DomainError('S8_COLLECTION_INVALID', 400);
   const baseWhere = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const collectionWhere = collection ? `WHERE collection_status=${add(collection)}` : '';
   const limit = add(pageSize); const offset = add((page - 1) * pageSize);
@@ -507,7 +508,7 @@ export async function searchWorksS8(env, input = {}) {
 }
 export async function listS8AlertSettings(env) {
   const rows = (await env.DB.prepare('SELECT alert_type,threshold_days,updated_by,updated_at,request_id FROM s8_alert_settings ORDER BY alert_type ASC').all()).results || [];
-  const byType = new Map(rows.map(row => [row.alert_type, { ...row, threshold_days: Number(row.threshold_days) }]));
+  const byType = new Map(rows.map(row => [row.alert_type, { ...row, state: 'CONFIGURED', threshold_days: Number(row.threshold_days) }]));
   return S8_ALERT_TYPES.map(alertType => byType.get(alertType) || { alert_type: alertType, state: 'NOT_CONFIGURED', threshold_days: null, updated_by: null, updated_at: null, request_id: null });
 }
 export async function upsertS8AlertSetting(env, actorUid, requestId, input) {
@@ -550,7 +551,7 @@ export async function getS8Alerts(env, input = {}, internal = {}) {
       ), candidates AS (
         SELECT 'NO_PRICE' AS alert_type,w.id AS work_id,w.customer_id,w.title,w.created_at AS anchor_at,NULL AS current_price_halalas,0 AS approved_paid_halalas
         FROM works w LEFT JOIN price_totals pt ON pt.work_id=w.id
-        WHERE w.archived_at IS NULL AND pt.current_price_halalas IS NULL
+        WHERE w.archived_at IS NULL AND w.status NOT IN ('CANCELLED_BEFORE_EXECUTION','PARTIALLY_STOPPED') AND pt.current_price_halalas IS NULL
         UNION ALL
         SELECT 'NO_REPLY' AS alert_type,w.id AS work_id,w.customer_id,w.title,COALESCE(ra.anchor_at,w.created_at) AS anchor_at,NULL AS current_price_halalas,0 AS approved_paid_halalas
         FROM works w LEFT JOIN reply_anchors ra ON ra.work_id=w.id
@@ -558,7 +559,7 @@ export async function getS8Alerts(env, input = {}, internal = {}) {
         UNION ALL
         SELECT 'NO_PAYMENT' AS alert_type,w.id AS work_id,w.customer_id,w.title,w.confirmed_at AS anchor_at,pt.current_price_halalas,COALESCE(pay.approved_paid_halalas,0) AS approved_paid_halalas
         FROM works w JOIN price_totals pt ON pt.work_id=w.id LEFT JOIN payment_totals pay ON pay.work_id=w.id
-        WHERE w.archived_at IS NULL AND w.confirmed_at IS NOT NULL AND pt.current_price_halalas>0 AND COALESCE(pay.approved_paid_halalas,0)=0
+        WHERE w.archived_at IS NULL AND w.status NOT IN ('CANCELLED_BEFORE_EXECUTION','PARTIALLY_STOPPED') AND w.confirmed_at IS NOT NULL AND pt.current_price_halalas>0 AND COALESCE(pay.approved_paid_halalas,0)=0
       )
       SELECT c.alert_type,c.work_id,c.customer_id,c.title,c.anchor_at,c.current_price_halalas,c.approved_paid_halalas,s.threshold_days
       FROM candidates c JOIN s8_alert_settings s ON s.alert_type=c.alert_type
@@ -616,8 +617,8 @@ function s8FinancialRow(row) {
     is_archived: Boolean(row.archived_at),
     current_price_halalas: currentPrice,
     approved_paid_halalas: approvedPaid,
-    remaining_halalas: currentPrice === null ? null : safeFinancialAdd(currentPrice, -approvedPaid),
-    collection_status: paymentCollectionStatus(currentPrice, approvedPaid),
+    remaining_halalas: isCancelledWorkStatus(row.status) ? 0 : currentPrice === null ? null : safeFinancialAdd(currentPrice, -approvedPaid),
+    collection_status: paymentCollectionStatus(currentPrice, approvedPaid, row.status),
   };
 }
 function s8EligibleWorkSql(input = {}, required = {}) {
@@ -668,7 +669,7 @@ async function s8ExportWorks(env, input = {}, required = {}) {
 }
 function s8SnapshotRow(row) {
   if (!row) return null;
-  const numeric = ['work_count','cumulative_work_count','total_work_value_halalas','person_1_work_share_halalas','person_2_work_share_halalas','approved_receipts_halalas','approved_receipts_person_1_halalas','approved_receipts_person_2_halalas','transfer_amount_halalas','transfer_fee_halalas','subscription_total_halalas','subscription_effect_person_1_halalas','subscription_effect_person_2_halalas','governed_expense_total_halalas','prior_balance_halalas','final_balance_halalas','version'];
+  const numeric = ['work_count','cumulative_work_count','total_work_value_halalas','person_1_work_share_halalas','person_2_work_share_halalas','approved_receipts_halalas','approved_receipts_person_1_halalas','approved_receipts_person_2_halalas','transfer_amount_halalas','transfer_fee_halalas','subscription_total_halalas','subscription_effect_person_1_halalas','subscription_effect_person_2_halalas','governed_expense_total_halalas','settlement_adjustment_person_1_halalas','settlement_adjustment_person_2_halalas','prior_balance_halalas','final_balance_halalas','version'];
   return { ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, numeric.includes(key) && value !== null ? Number(value) : value])), transfer_net_person_2_halalas: null, transfer_net_person_2_authority: 'UNAVAILABLE_NOT_PERSISTED_IN_SNAPSHOT' };
 }
 export async function getS8WorkExportDto(env, workId) {
@@ -732,6 +733,7 @@ export async function getS8ClassificationExportDto(env, input = {}) {
 export async function updateWork(env, actorUid, requestId, id, input) {
   await ensureActor(env, actorUid);
   const before = await getWorkRaw(env, id);
+  assertWorkOperational(before);
   const nextConfirmedAt = input.confirmed_at === undefined ? (before.confirmed_at ?? null) : (input.confirmed_at === null ? null : canonicalEventTimestamp(input.confirmed_at));
   await prbEnsureWorkAffectedPeriods(env, before.confirmed_at ?? null, nextConfirmedAt);
   const version = positiveVersion(input.version);
@@ -764,8 +766,8 @@ export async function listCatalog(env, kind) {
 export async function createCatalogValue(env, actorUid, requestId, kind, input) {
   await ensureActor(env, actorUid);
   allowedCatalogKind(kind);
-  const valueKey = requiredString(input.value_key, 'CATALOG_VALUE_REQUIRED');
   const label = requiredString(input.label, 'CATALOG_LABEL_REQUIRED');
+  const valueKey = input.value_key === undefined ? `custom_${crypto.randomUUID()}` : requiredString(input.value_key, 'CATALOG_VALUE_REQUIRED');
   const existing = await env.DB.prepare('SELECT id FROM catalog_values WHERE kind=?1 AND value_key=?2').bind(kind, valueKey).first();
   if (existing) throw new DomainError('CATALOG_DUPLICATE', 409);
   const id = newId('catalog'); const createdAt = nowIso();
@@ -854,6 +856,8 @@ async function readAuthorized(request, env, requestId, scenario) {
     const verified = await verifyJwt(auth.slice(7), env, forceCertificateRefresh);
     const user = await allowed(env, verified.claims.sub);
     if (!user) throw new DomainError('UID_NOT_ALLOWED', 403);
+    const authValidSince = Number(user.auth_valid_since || 0);
+    if (authValidSince > 0 && Number(verified.claims.iat || 0) <= authValidSince) throw new DomainError('TOKEN_REVOKED', 401);
     const requestedRunId = request.headers.get('x-s3-run-id') || '';
     const runId = requestedRunId === env.RUN_MARKER ? requestedRunId : '';
     const cacheState = verified.cacheState;
@@ -869,6 +873,124 @@ async function readAuthorized(request, env, requestId, scenario) {
 export async function listActiveParticipants(env) {
   const rows = (await env.DB.prepare(`SELECT uid,role FROM app_users WHERE active=1 AND role IN ('person_1','person_2') ORDER BY CASE role WHEN 'person_1' THEN 1 ELSE 2 END,uid ASC`).all()).results || [];
   return rows.map(row => ({ uid: row.uid, role: row.role }));
+}
+
+async function requireAccountAdmin(env, actorUid) {
+  const actor = await ensureActor(env, actorUid);
+  if (actor.role !== 'person_1') throw new DomainError('ACCOUNT_ADMIN_FORBIDDEN', 403);
+  return actor;
+}
+function accountDisplayName(role) {
+  return role === 'person_1' ? 'خالد' : role === 'person_2' ? 'وليد' : 'مستخدم';
+}
+async function accountAdminTarget(env, role) {
+  if (role !== 'person_1' && role !== 'person_2') throw new DomainError('ACCOUNT_TARGET_NOT_FOUND', 404);
+  const target = await env.DB.prepare("SELECT uid,role,active,auth_valid_since FROM app_users WHERE role=?1 AND active=1").bind(role).first();
+  if (!target) throw new DomainError('ACCOUNT_TARGET_NOT_FOUND', 404);
+  return target;
+}
+function b64urlEncodeBytes(bytes) {
+  let raw = ''; for (const byte of bytes) raw += String.fromCharCode(byte);
+  return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function b64urlEncodeJson(value) { return b64urlEncodeBytes(new TextEncoder().encode(JSON.stringify(value))); }
+function privateKeyPemToDer(pem) {
+  const normalized = pem.replace(/\\n/g, '\n');
+  const body = normalized.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, '');
+  if (!body) throw new DomainError('ACCOUNT_ADMIN_NOT_CONFIGURED', 503);
+  const raw = atob(body); const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+let firebaseAdminTokenCache = null;
+async function firebaseAdminAccessToken(env) {
+  if (env.TEST_CONTROLS === 'enabled' && typeof env.FIREBASE_ADMIN_ACCESS_TOKEN === 'string' && env.FIREBASE_ADMIN_ACCESS_TOKEN.trim()) return env.FIREBASE_ADMIN_ACCESS_TOKEN.trim();
+  const clientEmail = requiredString(env.FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL, 'ACCOUNT_ADMIN_NOT_CONFIGURED');
+  const privateKey = requiredString(env.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY, 'ACCOUNT_ADMIN_NOT_CONFIGURED');
+  const now = Math.floor(Date.now() / 1000);
+  if (firebaseAdminTokenCache?.clientEmail === clientEmail && firebaseAdminTokenCache.expiresAt > now + 60) return firebaseAdminTokenCache.accessToken;
+  const header = b64urlEncodeJson({ alg: 'RS256', typ: 'JWT' });
+  const claim = b64urlEncodeJson({ iss: clientEmail, scope: 'https://www.googleapis.com/auth/identitytoolkit', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 });
+  const unsigned = new TextEncoder().encode(`${header}.${claim}`);
+  let key;
+  try { key = await crypto.subtle.importKey('pkcs8', privateKeyPemToDer(privateKey), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']); }
+  catch { throw new DomainError('ACCOUNT_ADMIN_NOT_CONFIGURED', 503); }
+  const signature = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, unsigned));
+  const assertion = `${header}.${claim}.${b64urlEncodeBytes(signature)}`;
+  let response;
+  try {
+    response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }).toString() });
+  } catch { throw new DomainError('ACCOUNT_PROVIDER_UNAVAILABLE', 503); }
+  if (!response.ok) throw new DomainError('ACCOUNT_PROVIDER_REJECTED', 502);
+  const payload = await response.json();
+  if (typeof payload?.access_token !== 'string' || !payload.access_token) throw new DomainError('ACCOUNT_PROVIDER_REJECTED', 502);
+  const expiresIn = Number(payload.expires_in || 3600);
+  firebaseAdminTokenCache = { clientEmail, accessToken: payload.access_token, expiresAt: now + (Number.isFinite(expiresIn) ? expiresIn : 3600) };
+  return payload.access_token;
+}
+async function firebaseAdminIdentityRequest(env, operation, body) {
+  const projectId = requiredString(env.FIREBASE_PROJECT_ID, 'ACCOUNT_ADMIN_NOT_CONFIGURED');
+  const token = await firebaseAdminAccessToken(env);
+  let response;
+  try {
+    response = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/${operation}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch { throw new DomainError('ACCOUNT_PROVIDER_UNAVAILABLE', 503); }
+  if (!response.ok) throw new DomainError('ACCOUNT_PROVIDER_REJECTED', 502);
+  return response.json();
+}
+async function firebaseAdminLookupUser(env, uid) {
+  const payload = await firebaseAdminIdentityRequest(env, 'accounts:lookup', { localId: [uid] });
+  const user = Array.isArray(payload?.users) ? payload.users.find(item => item?.localId === uid) : null;
+  if (!user) throw new DomainError('ACCOUNT_TARGET_NOT_FOUND', 404);
+  return { uid, email: typeof user.email === 'string' ? user.email : '', disabled: Boolean(user.disabled) };
+}
+function accountAdminAuditStatement(env, actorUid, targetUid, action, before, after, requestId, createdAt = nowIso()) {
+  const id = newId('account-audit');
+  return {
+    record: { id, actor_uid: actorUid, target_uid: targetUid, action, created_at: createdAt, before, after, request_id: requestId },
+    statement: env.DB.prepare(`INSERT INTO account_admin_audit(id,actor_uid,target_uid,action,created_at,before_json,after_json,request_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`).bind(id, actorUid, targetUid, action, createdAt, before === null ? null : JSON.stringify(before), JSON.stringify(after), requestId),
+  };
+}
+export async function listAccountAdminAccounts(env, actorUid) {
+  await requireAccountAdmin(env, actorUid);
+  const targets = (await env.DB.prepare("SELECT uid,role,active FROM app_users WHERE active=1 AND role IN ('person_1','person_2') ORDER BY CASE role WHEN 'person_1' THEN 1 ELSE 2 END").all()).results || [];
+  return Promise.all(targets.map(async target => {
+    const provider = await firebaseAdminLookupUser(env, target.uid);
+    return { role: target.role, display_name: accountDisplayName(target.role), email: provider.email, active: Boolean(target.active), disabled: provider.disabled };
+  }));
+}
+export async function changeAccountEmail(env, actorUid, requestId, role, input) {
+  await requireAccountAdmin(env, actorUid);
+  const target = await accountAdminTarget(env, role);
+  const providerBefore = await firebaseAdminLookupUser(env, target.uid);
+  const email = requiredString(input.email, 'ACCOUNT_EMAIL_REQUIRED');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new DomainError('ACCOUNT_EMAIL_INVALID', 400);
+  if (providerBefore.email.toLowerCase() === email.toLowerCase()) throw new DomainError('ACCOUNT_EMAIL_UNCHANGED', 400);
+  const validSince = Math.floor(Date.now() / 1000);
+  await firebaseAdminIdentityRequest(env, 'accounts:update', { localId: target.uid, email, emailVerified: false, validSince: String(validSince) });
+  const before = { role: target.role, display_name: accountDisplayName(target.role), email: providerBefore.email, active: true, disabled: providerBefore.disabled };
+  const after = { role: target.role, display_name: accountDisplayName(target.role), email, active: true, disabled: providerBefore.disabled, sessions_revoked: true };
+  const audit = accountAdminAuditStatement(env, actorUid, target.uid, 'CHANGE_EMAIL', before, after, requestId);
+  const updateSessionCutoff = env.DB.prepare('UPDATE app_users SET auth_valid_since=?1 WHERE uid=?2 AND role=?3 AND active=1').bind(validSince, target.uid, target.role);
+  const results = await executeBatch(env, [updateSessionCutoff, audit.statement]);
+  if (Number(results[0]?.meta?.changes) !== 1 || Number(results[1]?.meta?.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return { role: target.role, display_name: accountDisplayName(target.role), email, sessions_revoked: true, audit: audit.record };
+}
+export async function sendAccountPasswordReset(env, actorUid, requestId, role) {
+  await requireAccountAdmin(env, actorUid);
+  const target = await accountAdminTarget(env, role);
+  const provider = await firebaseAdminLookupUser(env, target.uid);
+  if (!provider.email) throw new DomainError('ACCOUNT_EMAIL_REQUIRED', 409);
+  await firebaseAdminIdentityRequest(env, 'accounts:sendOobCode', { requestType: 'PASSWORD_RESET', email: provider.email });
+  const before = { role: target.role, display_name: accountDisplayName(target.role), email: provider.email, active: true, disabled: provider.disabled };
+  const after = { ...before, password_reset_sent: true };
+  const audit = accountAdminAuditStatement(env, actorUid, target.uid, 'SEND_PASSWORD_RESET', before, after, requestId);
+  const results = await executeBatch(env, [audit.statement]);
+  if (Number(results[0]?.meta?.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
+  return { role: target.role, display_name: accountDisplayName(target.role), email: provider.email, password_reset_sent: true, audit: audit.record };
+}
+export function uatResetPolicy(env) {
+  return { allowed: env?.APP_ENVIRONMENT === 'uat' && env?.ALLOW_UAT_RESET === 'true' && typeof env?.UAT_RESET_NONCE === 'string' && env.UAT_RESET_NONCE.length >= 16, destructive: false };
 }
 
 function auditReadLimit(url) {
@@ -906,6 +1028,11 @@ export async function listAuditLog(env, url) {
 export async function handleApi(request, env, requestId, scenario, user) {
   const url = new URL(request.url); const parts = url.pathname.split('/').filter(Boolean);
   const method = request.method.toUpperCase(); const body = method === 'POST' || method === 'PATCH' ? await parseRequestJson(request) : {};
+  if (parts[1] === 'account-admin' && parts[2] === 'accounts') {
+    if (parts.length === 3 && method === 'GET') return Response.json({ ok: true, data: await listAccountAdminAccounts(env, user.uid), requestId });
+    if (parts.length === 5 && parts[4] === 'email' && method === 'POST') return Response.json({ ok: true, data: await changeAccountEmail(env, user.uid, requestId, decodeURIComponent(parts[3]), body), requestId });
+    if (parts.length === 5 && parts[4] === 'password-reset' && method === 'POST') return Response.json({ ok: true, data: await sendAccountPasswordReset(env, user.uid, requestId, decodeURIComponent(parts[3])), requestId });
+  }
   if (parts[1] === 'audit' && parts.length === 2) {
     if (method !== 'GET') throw new DomainError('METHOD_NOT_ALLOWED', 405);
     return Response.json({ ok: true, data: await listAuditLog(env, url), requestId });
@@ -1056,7 +1183,8 @@ function canonicalEventTimestamp(value) {
 
 export async function createWorkEvent(env, actorUid, requestId, workId, input) {
   await ensureActor(env, actorUid);
-  await getWorkRaw(env, workId);
+  const work = await getWorkRaw(env, workId);
+  assertWorkOperational(work);
   const eventType = requiredString(input.event_type, 'EVENT_TYPE_REQUIRED');
   const description = requiredString(input.description, 'EVENT_DESCRIPTION_REQUIRED');
   const effectiveAt = canonicalEventTimestamp(input.effective_at);
@@ -1078,6 +1206,7 @@ export async function listWorkEvents(env, workId) {
 export async function changeWorkTitle(env, actorUid, requestId, workId, input) {
   await ensureActor(env, actorUid);
   const before = await getWorkRaw(env, workId);
+  assertWorkOperational(before);
   const version = positiveVersion(input.version);
   if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
   const newTitle = requiredString(input.new_title, 'TITLE_REQUIRED');
@@ -1103,6 +1232,7 @@ export async function listWorkTitleHistory(env, workId) {
 export async function changeWorkStatus(env, actorUid, requestId, workId, input) {
   await ensureActor(env, actorUid);
   const before = await getWorkRaw(env, workId);
+  assertWorkOperational(before);
   const version = positiveVersion(input.version);
   if (version !== before.version) throw new DomainError('VERSION_CONFLICT', 409);
   const newStatus = validateWorkStatus(input.status);
@@ -1163,6 +1293,7 @@ export async function approveCancelArchiveRequest(env, actorUid, requestId, work
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
   const approvedAt = nowIso();
   const newStatus = requestRow.action === 'CANCEL' ? requestRow.target_execution_status : beforeWork.status;
+  if (requestRow.action === 'CANCEL' && isCancelledWorkStatus(beforeWork.status)) throw new DomainError('CANCELLED_WORK_OPERATION_FORBIDDEN', 409);
   const statusHistId = newId('status_hist');
   const archiveHistId = newId('archive_hist');
 
@@ -1208,11 +1339,14 @@ export async function approveCancelArchiveRequest(env, actorUid, requestId, work
     'EXISTS (SELECT 1 FROM work_status_history WHERE work_id=?10 AND request_id=?11 AND new_status=?12) OR EXISTS (SELECT 1 FROM work_archive_history WHERE work_id=?10 AND request_id=?11)',
     [workId, requestId, newStatus]);
 
-  const results = await executeBatch(env, [workMutation, requestMutation, historyMutation, archiveHistoryMutation, auditRequest, auditWork]);
-  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || (requestRow.action === 'CANCEL' && Number(results[2]?.meta?.changes) !== 1) || (requestRow.action === 'ARCHIVE' && Number(results[3]?.meta?.changes) !== 1)) {
+  const adjustment = requestRow.action === 'CANCEL' ? await prbPrepareCancellationAdjustment(env, beforeWork, reqId, actorUid, approvedAt, requestId) : null;
+  const statements = [workMutation, requestMutation, historyMutation, archiveHistoryMutation, auditRequest, auditWork];
+  if (adjustment) statements.push(adjustment.statement);
+  const results = await executeBatch(env, statements);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || (requestRow.action === 'CANCEL' && Number(results[2]?.meta?.changes) !== 1) || (requestRow.action === 'ARCHIVE' && Number(results[3]?.meta?.changes) !== 1) || (adjustment && Number(results[6]?.meta?.changes) !== 1)) {
     throw new DomainError('TRANSACTION_FAILED', 409);
   }
-  return { request: afterRequest, work: workReadModel(afterWork) };
+  return { request: afterRequest, work: workReadModel(afterWork), settlement_adjustment: adjustment?.record || null };
 }
 
 export async function listWorkArchiveHistory(env, workId) {
@@ -1275,9 +1409,17 @@ export default {
 // S6 PR-A Financial Core: integer-halalah math and governed approval paths.
 const MAX_SAFE_HALALAS = Number.MAX_SAFE_INTEGER;
 const MAX_SAFE_HALALAS_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
-const DEFAULT_PERSON_1_BPS = 3000;
-const DEFAULT_PERSON_2_BPS = 7000;
+const DEFAULT_PERSON_1_BPS = 7000;
+const DEFAULT_PERSON_2_BPS = 3000;
 const PRICE_MOVEMENT_TYPES = Object.freeze(['BASE', 'INCREASE', 'DECREASE', 'DISCOUNT']);
+
+function isCancelledWorkStatus(status) {
+  return status === 'CANCELLED_BEFORE_EXECUTION' || status === 'PARTIALLY_STOPPED';
+}
+
+function assertWorkOperational(work) {
+  if (isCancelledWorkStatus(work?.status)) throw new DomainError('CANCELLED_WORK_OPERATION_FORBIDDEN', 409);
+}
 
 function safeFinancialInteger(value, code = 'MONEY_OVERFLOW') {
   if (!Number.isSafeInteger(value)) throw new DomainError(code, 400);
@@ -1368,7 +1510,8 @@ function validatePaymentMethod(value) {
   return method;
 }
 
-function paymentCollectionStatus(currentPriceHalalas, approvedPaidTotalHalalas) {
+function paymentCollectionStatus(currentPriceHalalas, approvedPaidTotalHalalas, workStatus = null) {
+  if (isCancelledWorkStatus(workStatus)) return 'CANCELLED_ZERO_BALANCE';
   if (currentPriceHalalas === null) return 'PRICE_UNSET';
   if (approvedPaidTotalHalalas > currentPriceHalalas) return 'OVERPAYMENT_UNRESOLVED';
   if (currentPriceHalalas === 0 || approvedPaidTotalHalalas === currentPriceHalalas) return 'FINANCIALLY_CLOSED';
@@ -1449,6 +1592,7 @@ export async function createClientPayment(env, actorUid, requestId, workId, inpu
     return { payment: paymentReadModel(existing), financials: await getWorkFinancials(env, workId), idempotent_replay: true };
   }
   const beforeWork = await getWorkRaw(env, workId);
+  assertWorkOperational(beforeWork);
   const version = positiveVersion(input.version);
   if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
   const amountHalalas = parseMoneyHalalas(input.amount_riyals);
@@ -1482,7 +1626,7 @@ export async function createClientPayment(env, actorUid, requestId, workId, inpu
 }
 
 export async function getWorkFinancials(env, workId) {
-  await getWorkRaw(env, workId);
+  const work = await getWorkRaw(env, workId);
   const [movements, priceRequests, ratioRequests, ratioHistory, paymentRows] = await Promise.all([
     listApprovedPriceMovementsRaw(env, workId),
     listPriceChangeRequestsRaw(env, workId),
@@ -1492,11 +1636,13 @@ export async function getWorkFinancials(env, workId) {
   ]);
   const currentPriceHalalas = sumApprovedPriceMovements(movements);
   const ratio = await currentRatio(env, workId);
-  const person1Share = calculateShareHalalas(currentPriceHalalas, ratio.person_1_bps);
-  const person2Share = calculateShareHalalas(currentPriceHalalas, ratio.person_2_bps);
   const totals = paymentTotals(paymentRows);
   const hasS7Payments = paymentRows.length > 0;
-  const remainingHalalas = currentPriceHalalas === null ? null : safeFinancialAdd(currentPriceHalalas, -totals.approvedPaid);
+  const cancelled = isCancelledWorkStatus(work.status);
+  const shareBasisHalalas = cancelled ? totals.approvedPaid : currentPriceHalalas;
+  const person1Share = calculateShareHalalas(shareBasisHalalas, ratio.person_1_bps);
+  const person2Share = calculateShareHalalas(shareBasisHalalas, ratio.person_2_bps);
+  const remainingHalalas = cancelled ? 0 : currentPriceHalalas === null ? null : safeFinancialAdd(currentPriceHalalas, -totals.approvedPaid);
   return {
     work_id: workId,
     price_state: currentPriceHalalas === null ? 'PRICE_UNSET' : 'PRICE_APPROVED',
@@ -1505,13 +1651,16 @@ export async function getWorkFinancials(env, workId) {
     shares: { person_1_halalas: person1Share, person_2_halalas: person2Share },
     approved_payments_total_halalas: totals.approvedPaid,
     remaining_halalas: remainingHalalas,
-    collection_status: paymentCollectionStatus(currentPriceHalalas, totals.approvedPaid),
+    customer_remaining_halalas: remainingHalalas,
+    internal_share_basis_halalas: shareBasisHalalas,
+    internal_share_basis: cancelled ? 'NET_APPROVED_RECEIPTS_AFTER_REVERSALS' : 'CURRENT_APPROVED_PRICE',
+    collection_status: paymentCollectionStatus(currentPriceHalalas, totals.approvedPaid, work.status),
     remaining_projection: hasS7Payments ? 'S7_APPROVED_PAYMENTS_LEDGER' : 'PRE_S7_APPROVED_PAYMENTS_ZERO',
     payments: paymentRows.map(paymentReadModel),
     payment_totals: { gross_paid_halalas: totals.gross, reversed_paid_halalas: totals.reversed, approved_paid_halalas: totals.approvedPaid },
     movements,
-    price_requests: priceRequests,
-    ratio_requests: ratioRequests,
+    price_requests: cancelled ? priceRequests.map(row => row.state === 'PENDING' ? { ...row, state: 'SUPERSEDED' } : row) : priceRequests,
+    ratio_requests: cancelled ? ratioRequests.map(row => row.state === 'PENDING' ? { ...row, state: 'SUPERSEDED' } : row) : ratioRequests,
     ratio_history: ratioHistory,
   };
 }
@@ -1537,7 +1686,7 @@ export async function createPaymentReversalRequest(env, actorUid, requestId, wor
   const payment = await env.DB.prepare('SELECT * FROM client_payments WHERE id=?1').bind(paymentId).first();
   if (!payment) throw new DomainError('PAYMENT_NOT_FOUND', 404);
   if (payment.work_id !== workId) throw new DomainError('PAYMENT_WORK_MISMATCH', 404);
-  await prbEnsurePeriodOpen(env, payment.effective_at);
+  if (!isCancelledWorkStatus(beforeWork.status)) await prbEnsurePeriodOpen(env, payment.effective_at);
   const existing = await env.DB.prepare('SELECT state FROM payment_reversal_requests WHERE payment_id=?1 ORDER BY requested_at DESC,id DESC LIMIT 1').bind(paymentId).first();
   if (existing?.state === 'PENDING') throw new DomainError('REVERSAL_ALREADY_PENDING', 409);
   if (existing?.state === 'APPROVED') throw new DomainError('REVERSAL_ALREADY_APPROVED', 409);
@@ -1562,17 +1711,20 @@ export async function approvePaymentReversalRequest(env, actorUid, requestId, wo
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const payment = await env.DB.prepare('SELECT * FROM client_payments WHERE id=?1 AND work_id=?2').bind(requestRow.payment_id, workId).first();
   if (!payment) throw new DomainError('PAYMENT_NOT_FOUND', 404);
-  await prbEnsurePeriodOpen(env, payment.effective_at);
   const beforeWork = await getWorkRaw(env, workId);
-  if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
+  const cancelled = isCancelledWorkStatus(beforeWork.status);
+  if (!cancelled) await prbEnsurePeriodOpen(env, payment.effective_at);
+  const existingReversal = await env.DB.prepare('SELECT id FROM payment_reversals WHERE payment_id=?1 OR reversal_request_id=?2 LIMIT 1').bind(payment.id, requestIdToApprove).first();
+  if (existingReversal) throw new DomainError('REVERSAL_ALREADY_APPROVED', 409);
   const approvedAt = nowIso();
   const reversalId = newId('payment_reversal');
   const afterRequest = { ...requestRow, state: 'APPROVED', approved_by: actorUid, approved_at: approvedAt, approval_request_id: requestId };
   const afterReversal = { id: reversalId, payment_id: payment.id, reversal_request_id: requestIdToApprove, work_id: workId, amount_halalas: Number(payment.amount_halalas), reason: requestRow.reason, requested_by: requestRow.requested_by, approved_by: actorUid, requested_at: requestRow.requested_at, approved_at: approvedAt, request_id: requestId };
   const workMutation = env.DB.prepare(`UPDATE works SET version=version+1, updated_by=?1, updated_at=?2
-    WHERE id=?3 AND version=?4 AND EXISTS (SELECT 1 FROM payment_reversal_requests WHERE id=?5 AND state='PENDING' AND work_version=?4 AND requested_by<>?1)`).bind(actorUid, approvedAt, workId, beforeWork.version, requestIdToApprove);
+    WHERE id=?3 AND version=?4 AND EXISTS (SELECT 1 FROM payment_reversal_requests WHERE id=?5 AND work_id=?3 AND state='PENDING' AND requested_by<>?1)`).bind(actorUid, approvedAt, workId, beforeWork.version, requestIdToApprove);
   const requestMutation = env.DB.prepare(`UPDATE payment_reversal_requests SET state='APPROVED', approved_by=?1, approved_at=?2, approval_request_id=?3
-    WHERE id=?4 AND work_id=?5 AND state='PENDING' AND work_version=?6 AND EXISTS (SELECT 1 FROM works WHERE id=?5 AND version=?7)`).bind(actorUid, approvedAt, requestId, requestIdToApprove, workId, beforeWork.version, beforeWork.version + 1);
+    WHERE id=?4 AND work_id=?5 AND payment_id=?6 AND state='PENDING' AND requested_by<>?1
+      AND EXISTS (SELECT 1 FROM works WHERE id=?5 AND version=?7)`).bind(actorUid, approvedAt, requestId, requestIdToApprove, workId, payment.id, beforeWork.version + 1);
   const reversalMutation = env.DB.prepare(`INSERT INTO payment_reversals(id,payment_id,reversal_request_id,work_id,amount_halalas,reason,requested_by,approved_by,requested_at,approved_at,request_id)
     SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11
     WHERE EXISTS (SELECT 1 FROM payment_reversal_requests WHERE id=?3 AND state='APPROVED' AND approval_request_id=?11)`).bind(reversalId, payment.id, requestIdToApprove, workId, Number(payment.amount_halalas), requestRow.reason, requestRow.requested_by, actorUid, requestRow.requested_at, approvedAt, requestId);
@@ -1580,9 +1732,12 @@ export async function approvePaymentReversalRequest(env, actorUid, requestId, wo
     'EXISTS (SELECT 1 FROM payment_reversal_requests WHERE id=?10 AND state=\'APPROVED\' AND approved_by=?11 AND approval_request_id=?12)', [requestIdToApprove, actorUid, requestId]);
   const auditReversal = auditStatementWhen(env, 'payment_reversal', reversalId, 'CREATE', actorUid, null, afterReversal, env.RUN_MARKER, `${requestId}:reversal`, approvedAt,
     'EXISTS (SELECT 1 FROM payment_reversals WHERE id=?10 AND payment_id=?11 AND request_id=?12)', [reversalId, payment.id, requestId]);
-  const results = await executeBatch(env, [workMutation, requestMutation, reversalMutation, auditRequest, auditReversal]);
-  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1 || !results[3]?.meta || Number(results[3].meta.changes) !== 1 || !results[4]?.meta || Number(results[4].meta.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
-  return { request: afterRequest, reversal: afterReversal, financials: await getWorkFinancials(env, workId) };
+  const adjustment = cancelled ? await prbPreparePostCancelReversalAdjustment(env, beforeWork, payment, reversalId, actorUid, approvedAt, requestId) : null;
+  const statements = [workMutation, requestMutation, reversalMutation, auditRequest, auditReversal];
+  if (adjustment) statements.push(adjustment.statement);
+  const results = await executeBatch(env, statements);
+  if (!results[0]?.meta || Number(results[0].meta.changes) !== 1 || !results[1]?.meta || Number(results[1].meta.changes) !== 1 || !results[2]?.meta || Number(results[2].meta.changes) !== 1 || !results[3]?.meta || Number(results[3].meta.changes) !== 1 || !results[4]?.meta || Number(results[4].meta.changes) !== 1 || (adjustment && Number(results[5]?.meta?.changes) !== 1)) throw new DomainError('TRANSACTION_FAILED', 409);
+  return { request: afterRequest, reversal: afterReversal, settlement_adjustment: adjustment?.record || null, financials: await getWorkFinancials(env, workId) };
 }
 
 export async function listPriceMovements(env, workId) {
@@ -1596,13 +1751,15 @@ async function listPriceChangeRequestsRaw(env, workId) {
 }
 
 export async function listPriceChangeRequests(env, workId) {
-  await getWorkRaw(env, workId);
-  return listPriceChangeRequestsRaw(env, workId);
+  const work = await getWorkRaw(env, workId);
+  const rows = await listPriceChangeRequestsRaw(env, workId);
+  return isCancelledWorkStatus(work.status) ? rows.map(row => row.state === 'PENDING' ? { ...row, state: 'SUPERSEDED' } : row) : rows;
 }
 
 export async function createPriceChangeRequest(env, actorUid, requestId, workId, input) {
   await ensureActor(env, actorUid);
   const beforeWork = await getWorkRaw(env, workId);
+  assertWorkOperational(beforeWork);
   const version = positiveVersion(input.version);
   if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
   const movementType = validatePriceMovementType(input.movement_type);
@@ -1632,6 +1789,7 @@ export async function approvePriceChangeRequest(env, actorUid, requestId, workId
   if (requestRow.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const beforeWork = await getWorkRaw(env, workId);
+  assertWorkOperational(beforeWork);
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
   const movements = await listApprovedPriceMovementsRaw(env, workId);
   if (requestRow.movement_type === 'BASE' && movements.length) throw new DomainError('BASE_ALREADY_SET', 409);
@@ -1662,8 +1820,9 @@ async function listRatioChangeRequestsRaw(env, workId) {
 }
 
 export async function listRatioChangeRequests(env, workId) {
-  await getWorkRaw(env, workId);
-  return listRatioChangeRequestsRaw(env, workId);
+  const work = await getWorkRaw(env, workId);
+  const rows = await listRatioChangeRequestsRaw(env, workId);
+  return isCancelledWorkStatus(work.status) ? rows.map(row => row.state === 'PENDING' ? { ...row, state: 'SUPERSEDED' } : row) : rows;
 }
 
 async function listRatioHistoryRaw(env, workId) {
@@ -1679,6 +1838,7 @@ export async function listRatioHistory(env, workId) {
 export async function createRatioChangeRequest(env, actorUid, requestId, workId, input) {
   await ensureActor(env, actorUid);
   const beforeWork = await getWorkRaw(env, workId);
+  assertWorkOperational(beforeWork);
   await prbEnsureWorkAffectedPeriods(env, null, beforeWork.confirmed_at);
   const version = positiveVersion(input.version);
   if (version !== beforeWork.version) throw new DomainError('VERSION_CONFLICT', 409);
@@ -1704,6 +1864,7 @@ export async function approveRatioChangeRequest(env, actorUid, requestId, workId
   if (requestRow.state !== 'PENDING') throw new DomainError('ALREADY_FINALIZED', 400);
   if (requestRow.requested_by === actorUid) throw new DomainError('SELF_APPROVAL_REJECTED', 400);
   const beforeWork = await getWorkRaw(env, workId);
+  assertWorkOperational(beforeWork);
   if (beforeWork.version !== requestRow.work_version) throw new DomainError('STALE_VERSION', 409);
   await prbEnsureWorkAffectedPeriods(env, null, beforeWork.confirmed_at);
   const oldRatio = await currentRatio(env, workId);
@@ -1778,6 +1939,93 @@ async function prbEnsureWorkAffectedPeriods(env, oldConfirmedAt, newConfirmedAt)
     throw error;
   }
 }
+
+function prbNextPeriodKey(periodKey) {
+  const [year, month] = prbPeriodKey(periodKey).split('-').map(Number);
+  const next = new Date(Date.UTC(month === 12 ? year + 1 : year, month === 12 ? 0 : month, 1));
+  return next.toISOString().slice(0, 7);
+}
+async function prbActiveClosedSnapshotForPeriod(env, periodKey) {
+  return env.DB.prepare(`SELECT s.* FROM settlement_snapshots s
+    WHERE s.period_key=?1 AND s.state='CLOSED'
+      AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at)
+    ORDER BY s.version DESC LIMIT 1`).bind(periodKey).first();
+}
+async function prbFirstOpenPeriodKey(env, startPeriodKey) {
+  let key = prbPeriodKey(startPeriodKey);
+  for (let i = 0; i < 240; i++) {
+    if (!(await prbActiveClosedSnapshotForPeriod(env, key))) return key;
+    key = prbNextPeriodKey(key);
+  }
+  throw new DomainError('SETTLEMENT_ADJUSTMENT_OPEN_PERIOD_NOT_FOUND', 409);
+}
+async function prbPriceAt(env, workId, approvedAt) {
+  const row = await env.DB.prepare('SELECT COUNT(*) AS count,COALESCE(SUM(amount_halalas),0) AS total FROM price_movements WHERE work_id=?1 AND approved_at<=?2').bind(workId, approvedAt).first();
+  return Number(row?.count || 0) ? Number(row.total || 0) : 0;
+}
+function prbDefaultRatioAt(approvedAt) {
+  return approvedAt < '2026-09-03T00:00:00.000Z'
+    ? { person_1_bps: 3000, person_2_bps: 7000, source: 'HISTORICAL_DEFAULT_PRE_D023' }
+    : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT_D023' };
+}
+async function prbRatioAt(env, workId, approvedAt) {
+  const row = await env.DB.prepare('SELECT new_person_1_bps,new_person_2_bps FROM ratio_history WHERE work_id=?1 AND approved_at<=?2 ORDER BY approved_at DESC,id DESC LIMIT 1').bind(workId, approvedAt).first();
+  return row ? { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps), source: 'APPROVED_HISTORY' } : prbDefaultRatioAt(approvedAt);
+}
+async function prbNetApprovedReceiptsForWork(env, workId) {
+  return paymentTotals(await listPaymentRowsRaw(env, workId)).approvedPaid;
+}
+function prbSettlementAdjustment(env, { periodKey, sourcePeriodKey, sourceSnapshotId, workId, adjustmentType, sourceEventId, recognizedPerson1, recognizedPerson2, correctedPerson1, correctedPerson2, actorUid, createdAt, requestId, reason }) {
+  const person1Delta = safeFinancialAdd(correctedPerson1, -recognizedPerson1);
+  const person2Delta = safeFinancialAdd(correctedPerson2, -recognizedPerson2);
+  if (person1Delta === 0 && person2Delta === 0) return null;
+  const id = newId('settlement-adjustment');
+  const record = { id, period_key: periodKey, source_period_key: sourcePeriodKey, source_snapshot_id: sourceSnapshotId, work_id: workId, adjustment_type: adjustmentType, source_event_id: sourceEventId, person_1_delta_halalas: person1Delta, person_2_delta_halalas: person2Delta, recognized_person_1_before_halalas: recognizedPerson1, recognized_person_2_before_halalas: recognizedPerson2, corrected_person_1_after_halalas: correctedPerson1, corrected_person_2_after_halalas: correctedPerson2, reason, created_by: actorUid, created_at: createdAt, request_id: requestId };
+  const statement = env.DB.prepare(`INSERT INTO settlement_adjustments(id,period_key,source_period_key,source_snapshot_id,work_id,adjustment_type,source_event_id,person_1_delta_halalas,person_2_delta_halalas,recognized_person_1_before_halalas,recognized_person_2_before_halalas,corrected_person_1_after_halalas,corrected_person_2_after_halalas,reason,created_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`).bind(id, periodKey, sourcePeriodKey, sourceSnapshotId, workId, adjustmentType, sourceEventId, person1Delta, person2Delta, recognizedPerson1, recognizedPerson2, correctedPerson1, correctedPerson2, reason, actorUid, createdAt, requestId);
+  return { record, statement };
+}
+async function prbPrepareCancellationAdjustment(env, beforeWork, sourceEventId, actorUid, approvedAt, requestId) {
+  if (!beforeWork.confirmed_at) return null;
+  const sourcePeriodKey = beforeWork.confirmed_at.slice(0, 7);
+  const sourceSnapshot = await prbActiveClosedSnapshotForPeriod(env, sourcePeriodKey);
+  if (!sourceSnapshot) return null;
+  const recognizedPrice = await prbPriceAt(env, beforeWork.id, sourceSnapshot.created_at);
+  const recognizedRatio = await prbRatioAt(env, beforeWork.id, sourceSnapshot.created_at);
+  const correctedRatio = await currentRatio(env, beforeWork.id);
+  const netReceipts = await prbNetApprovedReceiptsForWork(env, beforeWork.id);
+  const recognizedPerson1 = calculateShareHalalas(recognizedPrice, recognizedRatio.person_1_bps);
+  const recognizedPerson2 = calculateShareHalalas(recognizedPrice, recognizedRatio.person_2_bps);
+  const correctedPerson1 = calculateShareHalalas(netReceipts, correctedRatio.person_1_bps);
+  const correctedPerson2 = calculateShareHalalas(netReceipts, correctedRatio.person_2_bps);
+  const periodKey = await prbFirstOpenPeriodKey(env, approvedAt.slice(0, 7));
+  return prbSettlementAdjustment(env, { periodKey, sourcePeriodKey, sourceSnapshotId: sourceSnapshot.id, workId: beforeWork.id, adjustmentType: 'CANCELLATION', sourceEventId, recognizedPerson1, recognizedPerson2, correctedPerson1, correctedPerson2, actorUid, createdAt: approvedAt, requestId: `${requestId}:settlement-adjustment`, reason: 'D-024 cancellation adjustment: closed snapshot preserved; receipt-based share carried to first open period' });
+}
+async function prbPreparePostCancelReversalAdjustment(env, beforeWork, payment, sourceEventId, actorUid, approvedAt, requestId) {
+  if (!beforeWork.confirmed_at) return null;
+  const sourcePeriodKey = beforeWork.confirmed_at.slice(0, 7);
+  const sourceSnapshot = await prbActiveClosedSnapshotForPeriod(env, sourcePeriodKey);
+  if (!sourceSnapshot) return null;
+  const ratio = await currentRatio(env, beforeWork.id);
+  const beforeNet = await prbNetApprovedReceiptsForWork(env, beforeWork.id);
+  const afterNet = safeFinancialAdd(beforeNet, -Number(payment.amount_halalas));
+  const recognizedPerson1 = calculateShareHalalas(beforeNet, ratio.person_1_bps);
+  const recognizedPerson2 = calculateShareHalalas(beforeNet, ratio.person_2_bps);
+  const correctedPerson1 = calculateShareHalalas(afterNet, ratio.person_1_bps);
+  const correctedPerson2 = calculateShareHalalas(afterNet, ratio.person_2_bps);
+  const periodKey = await prbFirstOpenPeriodKey(env, approvedAt.slice(0, 7));
+  return prbSettlementAdjustment(env, { periodKey, sourcePeriodKey, sourceSnapshotId: sourceSnapshot.id, workId: beforeWork.id, adjustmentType: 'POST_CANCEL_REVERSAL', sourceEventId, recognizedPerson1, recognizedPerson2, correctedPerson1, correctedPerson2, actorUid, createdAt: approvedAt, requestId: `${requestId}:settlement-adjustment`, reason: 'D-024 post-cancellation reversal adjustment: closed snapshot preserved; delta carried to first open period' });
+}
+export async function listSettlementAdjustments(env, periodKey = '') {
+  const key = periodKey ? prbPeriodKey(periodKey) : null;
+  const rows = (await env.DB.prepare(`SELECT a.* FROM settlement_adjustments a
+    JOIN settlement_snapshots s ON s.id=a.source_snapshot_id
+    WHERE (?1 IS NULL OR a.period_key=?1)
+      AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at)
+    ORDER BY a.created_at ASC,a.id ASC`).bind(key).all()).results || [];
+  return rows.map(row => ({ ...row, person_1_delta_halalas: Number(row.person_1_delta_halalas), person_2_delta_halalas: Number(row.person_2_delta_halalas), recognized_person_1_before_halalas: Number(row.recognized_person_1_before_halalas), recognized_person_2_before_halalas: Number(row.recognized_person_2_before_halalas), corrected_person_1_after_halalas: Number(row.corrected_person_1_after_halalas), corrected_person_2_after_halalas: Number(row.corrected_person_2_after_halalas) }));
+}
+
 function prbAudit(env, type, id, actorUid, after, requestId, createdAt) {
   return auditStatement(env, type, id, 'CREATE', actorUid, null, after, env.RUN_MARKER, requestId, createdAt);
 }
@@ -1859,7 +2107,7 @@ export async function listCommonExpenses(env) {
 
 function prbInClause(values) { return values.map(() => '?').join(','); }
 async function prbSettlementComponents(env, bounds) {
-  const works = (await env.DB.prepare(`SELECT id,confirmed_at FROM works WHERE confirmed_at>=?1 AND confirmed_at<?2 ORDER BY confirmed_at ASC,id ASC`).bind(bounds.start, bounds.end).all()).results || [];
+  const works = (await env.DB.prepare(`SELECT id,status,confirmed_at FROM works WHERE confirmed_at>=?1 AND confirmed_at<?2 ORDER BY confirmed_at ASC,id ASC`).bind(bounds.start, bounds.end).all()).results || [];
   const cumulativeRow = (await env.DB.prepare(`SELECT COUNT(*) AS count,
       (SELECT s.period_key FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_period_key,
       (SELECT s.version FROM settlement_snapshots s WHERE s.state='CLOSED' AND s.unresolved_code IS NULL AND s.final_balance_halalas IS NOT NULL AND s.period_end<=?2 AND NOT EXISTS (SELECT 1 FROM settlement_reopen_history r WHERE r.period_key=s.period_key AND r.approved_at>s.created_at) ORDER BY s.period_end DESC,s.version DESC LIMIT 1) AS prior_version,
@@ -1884,6 +2132,9 @@ async function prbSettlementComponents(env, bounds) {
   const subscriptionHistory = (await env.DB.prepare(`SELECT id,subscription_count,aggregate_amount_halalas,effective_at,state,paid_by_uid,recorded_by,note,created_at,request_id FROM subscription_history WHERE effective_at<?1 ORDER BY effective_at ASC,id ASC`).bind(bounds.end).all()).results || [];
   const priorSettlement = cumulativeRow.prior_period_key ? { period_key: cumulativeRow.prior_period_key, version: Number(cumulativeRow.prior_version), final_balance_halalas: Number(cumulativeRow.prior_final_balance) } : null;
   const expense = (await env.DB.prepare(`SELECT COALESCE(SUM(amount_halalas),0) AS amount FROM common_expenses WHERE effective_at>=?1 AND effective_at<?2`).bind(bounds.start, bounds.end).first()) || { amount: 0 };
+  const adjustments = await listSettlementAdjustments(env, bounds.periodKey);
+  const adjustmentPerson1 = adjustments.reduce((total, row) => safeFinancialAdd(total, row.person_1_delta_halalas), 0);
+  const adjustmentPerson2 = adjustments.reduce((total, row) => safeFinancialAdd(total, row.person_2_delta_halalas), 0);
   return {
     works,
     cumulativeWorkCount: Number(cumulative),
@@ -1897,6 +2148,9 @@ async function prbSettlementComponents(env, bounds) {
     priorBalance: priorSettlement ? Number(priorSettlement.final_balance_halalas) : 0,
     priorSettlement,
     expenseTotal: Number(expense.amount),
+    adjustments,
+    adjustmentPerson1,
+    adjustmentPerson2,
   };
 }
 function prbRoundHalf(value) {
@@ -1916,9 +2170,10 @@ async function prbBuildSettlementPreview(env, periodKey, input = {}) {
     const price = prices.get(work.id) ?? 0;
     const ratio = ratios.get(work.id) || { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS };
     const receipt = receipts.get(work.id) || { person_1: 0, person_2: 0 };
+    const shareBasis = isCancelledWorkStatus(work.status) ? safeFinancialAdd(receipt.person_1, receipt.person_2) : price;
     totalWork = safeFinancialAdd(totalWork, price);
-    person1 = safeFinancialAdd(person1, calculateShareHalalas(price, ratio.person_1_bps));
-    person2 = safeFinancialAdd(person2, calculateShareHalalas(price, ratio.person_2_bps));
+    person1 = safeFinancialAdd(person1, calculateShareHalalas(shareBasis, ratio.person_1_bps));
+    person2 = safeFinancialAdd(person2, calculateShareHalalas(shareBasis, ratio.person_2_bps));
     receiptsPerson1 = safeFinancialAdd(receiptsPerson1, receipt.person_1);
     receiptsPerson2 = safeFinancialAdd(receiptsPerson2, receipt.person_2);
   }
@@ -1941,6 +2196,7 @@ async function prbBuildSettlementPreview(env, periodKey, input = {}) {
     finalBalance = safeFinancialAdd(finalBalance, -components.transferNetPerson2);
     finalBalance = safeFinancialAdd(finalBalance, subscriptionHalf);
     finalBalance = safeFinancialAdd(finalBalance, -feeHalf);
+    finalBalance = safeFinancialAdd(finalBalance, components.adjustmentPerson2);
   }
   return {
     period_key: bounds.periodKey,
@@ -1967,13 +2223,16 @@ async function prbBuildSettlementPreview(env, periodKey, input = {}) {
     transfer_fee_effect_person_2_halalas: feeEffectPerson2,
     governed_expense_total_halalas: components.expenseTotal,
     governed_expense_net_effect_to_person_2_halalas: expenseEffectPerson2,
+    settlement_adjustment_person_1_halalas: components.adjustmentPerson1,
+    settlement_adjustment_person_2_halalas: components.adjustmentPerson2,
+    settlement_adjustments: components.adjustments,
     generic_expense_allocation: components.expenseTotal > 0 ? 'UNRESOLVED' : 'NOT_PRESENT',
     prior_balance_halalas: components.priorBalance,
     prior_balance_authority: components.priorSettlement ? 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT' : 'ZERO_NO_PRIOR_SETTLEMENT',
     final_balance_halalas: finalBalance,
     unresolved_code: unresolvedCodes[0] || null,
     unresolved_codes: unresolvedCodes,
-    component_formula: 'PRIOR_BALANCE + PERSON_2_WORK_SHARE - APPROVED_RECEIPTS_RECEIVED_BY_PERSON_2 - NET_TRANSFERS_TO_PERSON_2 + HALF_SUBSCRIPTION - HALF_TRANSFER_FEES + GOVERNED_EXPENSE_NET_EFFECT_TO_PERSON_2',
+    component_formula: 'PRIOR_BALANCE + PERSON_2_WORK_SHARE - APPROVED_RECEIPTS_RECEIVED_BY_PERSON_2 - NET_TRANSFERS_TO_PERSON_2 + HALF_SUBSCRIPTION - HALF_TRANSFER_FEES + GOVERNED_EXPENSE_NET_EFFECT_TO_PERSON_2 + SETTLEMENT_ADJUSTMENT_PERSON_2',
   };
 }
 export async function getSettlementPreview(env, periodKey, input = {}) { return prbBuildSettlementPreview(env, periodKey, input); }
@@ -1992,8 +2251,8 @@ export async function closeSettlement(env, actorUid, requestId, periodKey, input
   const version = Number(latest?.version || 0) + 1;
   const id = newId('settlement'); const createdAt = nowIso();
   const after = { ...preview, id, state: 'CLOSED', version, created_by: actorUid, created_at: createdAt, request_id: requestId };
-  const mutation = env.DB.prepare(`INSERT INTO settlement_snapshots(id,period_key,period_start,period_end,period_basis,balance_formula,state,work_count,cumulative_work_count,total_work_value_halalas,person_1_work_share_halalas,person_2_work_share_halalas,approved_receipts_halalas,approved_receipts_person_1_halalas,approved_receipts_person_2_halalas,transfer_amount_halalas,transfer_fee_halalas,subscription_total_halalas,subscription_effect_person_1_halalas,subscription_effect_person_2_halalas,governed_expense_total_halalas,prior_balance_halalas,final_balance_halalas,unresolved_code,version,created_by,created_at,request_id)
-    VALUES (?1,?2,?3,?4,?5,?6,'CLOSED',?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,NULL,?23,?24,?25,?26)`).bind(id, periodKey, preview.period_start, preview.period_end, preview.period_basis, preview.balance_formula, preview.work_count, preview.cumulative_work_count, preview.total_work_value_halalas, preview.person_1_work_share_halalas, preview.person_2_work_share_halalas, preview.approved_receipts_halalas, preview.approved_receipts_person_1_halalas, preview.approved_receipts_person_2_halalas, preview.transfer_amount_halalas, preview.transfer_fee_halalas, preview.subscription_total_halalas, preview.subscription_effect_person_1_halalas, preview.subscription_effect_person_2_halalas, preview.governed_expense_total_halalas, preview.prior_balance_halalas, preview.final_balance_halalas, version, actorUid, createdAt, requestId);
+  const mutation = env.DB.prepare(`INSERT INTO settlement_snapshots(id,period_key,period_start,period_end,period_basis,balance_formula,state,work_count,cumulative_work_count,total_work_value_halalas,person_1_work_share_halalas,person_2_work_share_halalas,approved_receipts_halalas,approved_receipts_person_1_halalas,approved_receipts_person_2_halalas,transfer_amount_halalas,transfer_fee_halalas,subscription_total_halalas,subscription_effect_person_1_halalas,subscription_effect_person_2_halalas,governed_expense_total_halalas,settlement_adjustment_person_1_halalas,settlement_adjustment_person_2_halalas,prior_balance_halalas,final_balance_halalas,unresolved_code,version,created_by,created_at,request_id)
+    VALUES (?1,?2,?3,?4,?5,?6,'CLOSED',?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,NULL,?25,?26,?27,?28)`).bind(id, periodKey, preview.period_start, preview.period_end, preview.period_basis, preview.balance_formula, preview.work_count, preview.cumulative_work_count, preview.total_work_value_halalas, preview.person_1_work_share_halalas, preview.person_2_work_share_halalas, preview.approved_receipts_halalas, preview.approved_receipts_person_1_halalas, preview.approved_receipts_person_2_halalas, preview.transfer_amount_halalas, preview.transfer_fee_halalas, preview.subscription_total_halalas, preview.subscription_effect_person_1_halalas, preview.subscription_effect_person_2_halalas, preview.governed_expense_total_halalas, preview.settlement_adjustment_person_1_halalas, preview.settlement_adjustment_person_2_halalas, preview.prior_balance_halalas, preview.final_balance_halalas, version, actorUid, createdAt, requestId);
   await executeBatch(env, [mutation, prbAudit(env, 'settlement_snapshot', id, actorUid, after, `${requestId}:audit`, createdAt)]);
   return after;
 }

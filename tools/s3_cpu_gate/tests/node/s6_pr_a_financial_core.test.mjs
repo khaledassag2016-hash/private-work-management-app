@@ -19,6 +19,10 @@ import worker, {
   listPriceMovements,
   listPriceChangeRequests,
   listRatioHistory,
+  createClientPayment,
+  createCancelArchiveRequest,
+  approveCancelArchiveRequest,
+  changeWorkTitle,
 } from '../../src/worker/src/index.js';
 
 const schemaPath = fileURLToPath(new URL('../../src/worker/schema.sql', import.meta.url));
@@ -100,6 +104,29 @@ test('S6 MONEY parser rejects malformed, >2 decimals, and unsafe values before D
   } finally { database.close(); }
 });
 
+test('UAT cancellation preserves historical money, zeroes customer balance, and freezes ordinary mutations', async () => {
+  const { database, env } = fixture();
+  try {
+    const { work } = await setupWork(env, { title: 'Cancelled UAT Work' });
+    const base = await createPriceChangeRequest(env, 'uid-one', 'uat-cancel-base', work.id, { version: 1, movement_type: 'BASE', amount_riyals: '1700.00', reason: 'UAT base' });
+    await approvePriceChangeRequest(env, 'uid-two', 'uat-cancel-base-approve', work.id, base.id);
+    await createClientPayment(env, 'uid-one', 'uat-cancel-payment', work.id, { version: 2, amount_riyals: '100.00', effective_at: '2026-08-12T12:00:00.000Z', payment_method: 'BANK_TRANSFER' });
+    const beforeCancel = await getWork(env, work.id);
+    const cancel = await createCancelArchiveRequest(env, 'uid-one', 'uat-cancel-request', work.id, { version: beforeCancel.version, action: 'CANCEL', target_execution_status: 'PARTIALLY_STOPPED', reason: 'UAT cancellation' });
+    await approveCancelArchiveRequest(env, 'uid-two', 'uat-cancel-approve', work.id, cancel.id);
+    const financials = await getWorkFinancials(env, work.id);
+    assert.equal(financials.current_price_halalas, 170000);
+    assert.equal(financials.customer_remaining_halalas, 0);
+    assert.equal(financials.internal_share_basis_halalas, 10000);
+    assert.equal(financials.collection_status, 'CANCELLED_ZERO_BALANCE');
+    assert.deepEqual(financials.shares, { person_1_halalas: 7000, person_2_halalas: 3000 });
+    const cancelled = await getWork(env, work.id);
+    await assert.rejects(createPriceChangeRequest(env, 'uid-one', 'uat-cancel-price', work.id, { version: cancelled.version, movement_type: 'INCREASE', amount_riyals: '1.00', reason: 'must be blocked' }), /CANCELLED_WORK_OPERATION_FORBIDDEN/);
+    await assert.rejects(changeWorkTitle(env, 'uid-one', 'uat-cancel-title', work.id, { version: cancelled.version, new_title: 'must be blocked', reason: 'must be blocked' }), /CANCELLED_WORK_OPERATION_FORBIDDEN/);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM client_payments WHERE work_id=?").get(work.id).count, 1);
+  } finally { database.close(); }
+});
+
 test('S6 AC-02 computes 1500 + 200 + 100 and later -100 with retained history', async () => {
   const { database, env } = fixture();
   try {
@@ -115,7 +142,7 @@ test('S6 AC-02 computes 1500 + 200 + 100 and later -100 with retained history', 
     assert.equal(financials.current_price_halalas, null);
     const approvedBase = await approvePrice(env, work.id, request, 'uid-two', 'price-base-approval');
     assert.equal(approvedBase.financials.current_price_halalas, 150000);
-    assert.deepEqual(approvedBase.financials.shares, { person_1_halalas: 45000, person_2_halalas: 105000 });
+    assert.deepEqual(approvedBase.financials.shares, { person_1_halalas: 105000, person_2_halalas: 45000 });
 
     const workV2 = await getWork(env, work.id);
     request = await createPriceChangeRequest(env, 'uid-two', 'price-increase-1-request', work.id, { version: workV2.version, movement_type: 'INCREASE', amount_riyals: '200.00', reason: 'Synthetic survey outside agreement' });
@@ -129,7 +156,7 @@ test('S6 AC-02 computes 1500 + 200 + 100 and later -100 with retained history', 
 
     financials = await getWorkFinancials(env, work.id);
     assert.equal(financials.current_price_halalas, 170000);
-    assert.deepEqual(financials.shares, { person_1_halalas: 51000, person_2_halalas: 119000 });
+    assert.deepEqual(financials.shares, { person_1_halalas: 119000, person_2_halalas: 51000 });
     assert.equal(financials.remaining_halalas, 170000);
     assert.equal(financials.approved_payments_total_halalas, 0);
     assert.equal(financials.remaining_projection, 'PRE_S7_APPROVED_PAYMENTS_ZERO');
@@ -184,15 +211,15 @@ test('S6 ratio exception is pending then approved by other account with retained
     const current = await getWork(env, work.id);
     const ratioRequest = await createRatioChangeRequest(env, 'uid-one', 'ratio-request', work.id, { version: current.version, person_1_bps: 5000, person_2_bps: 5000, reason: 'Synthetic exceptional equal share' });
     let financials = await getWorkFinancials(env, work.id);
-    assert.deepEqual(financials.ratio, { person_1_bps: 3000, person_2_bps: 7000, source: 'DEFAULT' });
-    assert.deepEqual(financials.shares, { person_1_halalas: 51000, person_2_halalas: 119000 });
+    assert.deepEqual(financials.ratio, { person_1_bps: 7000, person_2_bps: 3000, source: 'DEFAULT' });
+    assert.deepEqual(financials.shares, { person_1_halalas: 119000, person_2_halalas: 51000 });
     await assert.rejects(approveRatio(env, work.id, ratioRequest, 'uid-one', 'ratio-self'), /SELF_APPROVAL_REJECTED/);
     const approved = await approveRatio(env, work.id, ratioRequest, 'uid-two', 'ratio-approval');
     assert.deepEqual(approved.financials.ratio, { person_1_bps: 5000, person_2_bps: 5000, source: 'APPROVED_HISTORY' });
     assert.deepEqual(approved.financials.shares, { person_1_halalas: 85000, person_2_halalas: 85000 });
     const history = await listRatioHistory(env, work.id);
     assert.equal(history.length, 1);
-    assert.equal(history[0].old_person_1_bps, 3000);
+    assert.equal(history[0].old_person_1_bps, 7000);
     assert.equal(history[0].new_person_1_bps, 5000);
   } finally { database.close(); }
 });
@@ -321,7 +348,7 @@ test('S6 API envelope is consumed by the existing private Worker route', { skip:
     assert.equal(approvePricePayload.ok, true);
     assert.ok(approvePricePayload.requestId);
     assert.equal(approvePricePayload.data.financials.current_price_halalas, 150000);
-    assert.deepEqual(approvePricePayload.data.financials.shares, { person_1_halalas: 45000, person_2_halalas: 105000 });
+    assert.deepEqual(approvePricePayload.data.financials.shares, { person_1_halalas: 105000, person_2_halalas: 45000 });
     assert.equal(approvePricePayload.data.financials.remaining_halalas, 150000);
     const refreshedFinancials = await worker.fetch(new Request(`https://example.test/api/works/${work.id}/financials`, { headers: { authorization: `Bearer ${tokenTwo}`, 'x-s3-run-id': 'run-s6', 'x-s3-request-id': 's6-financial-refresh' } }), env);
     assert.equal(refreshedFinancials.status, 200);

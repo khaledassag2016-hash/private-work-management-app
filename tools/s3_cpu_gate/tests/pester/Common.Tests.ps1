@@ -56,7 +56,7 @@ Describe 'Common security helpers' {
  }
  It 'fails closed for a synthetic secret inside the required payload' {
   $c=Get-TestContext;Initialize-TestPreCloudPayload;New-Item -ItemType Directory -Path (Join-Path $TestDrive 'python') -Force|Out-Null
-  Set-Content (Join-Path $TestDrive 'worker\src\index.js') (("-----BEGIN "+"PRIVATE KEY-----")+"`nsynthetic`n"+("-----END "+"PRIVATE KEY-----"))
+  Set-Content (Join-Path $TestDrive 'worker\src\index.js') (("-----BEGIN "+"PRIVATE KEY-----")+"`nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`n"+("-----END "+"PRIVATE KEY-----"))
   Copy-Item (Join-Path $SourceRoot 'src\python\secret_scan.py') (Join-Path $TestDrive 'python\secret_scan.py')
   {Assert-S3DeploymentPayloadNoSecret -Context $c -Scope PreCloud}|Should -Throw
  }

@@ -189,7 +189,7 @@ test('S7 reversal requires other-account approval in both directions and pending
   } finally { database.close(); }
 });
 
-test('S7 stale unauthorized and mismatch reversal attempts fail closed', async () => {
+test('S7 unauthorized and mismatch reversal attempts fail closed while unrelated version changes remain valid', async () => {
   const { database, env } = fixture();
   try {
     const first = await setupWork(env, 'Stale Reversal');
@@ -199,10 +199,14 @@ test('S7 stale unauthorized and mismatch reversal attempts fail closed', async (
     const otherPayment = await addPayment(env, other.work.id, 2, 'stale-other-payment', 'uid-two', '100.00');
     const payment = await addPayment(env, first.work.id, 2, 'stale-payment', 'uid-one', '500.00');
     const request = await createPaymentReversalRequest(env, 'uid-one', 'stale-request', first.work.id, { version: 3, payment_id: payment.payment.id, reason: 'Synthetic stale request' });
+    await assert.rejects(approvePaymentReversalRequest(env, 'uid-three', 'unauthorized-approval', first.work.id, request.id), /UID_NOT_ALLOWED/);
     await addPayment(env, first.work.id, 3, 'stale-second-payment', 'uid-one', '100.00');
-    await assert.rejects(approvePaymentReversalRequest(env, 'uid-two', 'stale-approval', first.work.id, request.id), /STALE_VERSION/);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM payment_reversals').get().count, 0);
-    await assert.rejects(createPaymentReversalRequest(env, 'uid-one', 'wrong-payment-request', first.work.id, { version: 4, payment_id: otherPayment.payment.id, reason: 'Wrong work synthetic' }), /PAYMENT_WORK_MISMATCH/);
+    const approved = await approvePaymentReversalRequest(env, 'uid-two', 'stale-approval', first.work.id, request.id);
+    assert.equal(approved.request.state, 'APPROVED');
+    assert.equal(approved.financials.approved_payments_total_halalas, 10000);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM payment_reversals').get().count, 1);
+    const currentVersion = (await getWork(env, first.work.id)).version;
+    await assert.rejects(createPaymentReversalRequest(env, 'uid-one', 'wrong-payment-request', first.work.id, { version: currentVersion, payment_id: otherPayment.payment.id, reason: 'Wrong work synthetic' }), /PAYMENT_WORK_MISMATCH/);
   } finally { database.close(); }
 });
 

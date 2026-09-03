@@ -21,6 +21,10 @@ exports/
 *.sql
 !tools/s3_cpu_gate/src/worker/migrations/0005_s5_domain_data_api.sql
 !tools/s3_cpu_gate/worker/migrations/0005_s5_domain_data_api.sql
+!tools/s3_cpu_gate/src/worker/migrations/0012_uat_account_admin.sql
+!tools/s3_cpu_gate/worker/migrations/0012_uat_account_admin.sql
+!tools/s3_cpu_gate/src/worker/migrations/0013_uat_financial_integrity.sql
+!tools/s3_cpu_gate/worker/migrations/0013_uat_financial_integrity.sql
 
 # User work files
 client-files/

@@ -364,6 +364,18 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - S3 is administratively complete under D-022; the closure PR remains subject to supervisory review before merge.
 - No Live, Deployment, CPU, Telemetry, Billing or resource cleanup is authorized by this closure state.
 
+## UAT Remediation after S11
+
+- Activation base: `68af792607fd7abf879ca0c2d25a7e65a6ddd041` (current `origin/main` and dedicated UAT worktree HEAD).
+- This round is tracked in `docs/UAT_REMEDIATION_MATRIX.md`; it is not named S12 and is not closed.
+- Governing decisions added: D-023..D-026 in `docs/DECISION_LOG.md`.
+- Remediation checkpoint `505e2819e9c86b837ca6aba27f9e738a83da2d55` was committed and pushed to `codex/uat-remediation-after-s11`; no merge or main write has occurred.
+- Corrected technical head before this administrative state update: `2315a948755728cd77aaafb48885a83866969ec0`.
+- Applicable CI on `2315a948755728cd77aaafb48885a83866969ec0` is fully green: Foundation `33786658047`, S2 `33786658053`, S3 static `33786658031`, S9 UX `33786658009`, S10 integration/backup/restore `33786658142`, S11 historical import `33786658247` — all `SUCCESS`.
+- The technical remediation at that head therefore has no active CI blocker. This administrative state update changes HEAD and must itself receive applicable final-head CI before supervisory approval.
+- UAT remediation status: `PENDING_FINAL_ADMIN_CI_THEN_SUPERVISORY_REVIEW`; not COMPLETE and not merged.
+- No deploy, Cloud write, Billing, resource creation, production reset, real account mutation or direct `main` write is authorized by this update.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.

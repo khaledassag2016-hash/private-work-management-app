@@ -30,7 +30,7 @@ test('S4 Gate 2 UI client relies on a bearer token provider and never exposes to
 test('S4 Gate 2 UI includes clear PRICE_UNSET, fact-derived warning, and non-blocking missing-details language', () => {
   const source = readFileSync(appPath, 'utf8');
   assert.match(source, /السعر غير محدد/);
-  assert.match(source, /لا تمثل الواجهة السعر غير المحدد برقم 0/);
+  assert.match(source, /لا تمثل الواجهة السعر غير المحدد برقم صفر/);
   assert.match(source, /لن يُنشأ تحذير يدوي/);
   assert.match(source, /دون منع حفظ المعلومة المفقودة/);
   assert.match(source, /لم تعرض تفاصيل داخلية/);

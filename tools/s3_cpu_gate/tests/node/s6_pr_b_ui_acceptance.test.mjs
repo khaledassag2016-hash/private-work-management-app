@@ -3,6 +3,9 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+// datetime-local values are interpreted in the product's configured Riyadh timezone.
+process.env.TZ = 'Asia/Riyadh';
+
 const appPath = fileURLToPath(new URL('../../src/worker/assets/app.js', import.meta.url));
 const appContent = readFileSync(appPath, 'utf8');
 const appRoot = { _html: '', set innerHTML(value) { this._html = value; }, get innerHTML() { return this._html; } };
@@ -54,7 +57,7 @@ function installOpenWorkFetch(financials) {
     return response(authoritativeWorkPayload(financials));
   };
 }
-function financials({ price = 150000, stateValue = 'PRICE_APPROVED', ratio = { person_1_bps: 3000, person_2_bps: 7000, source: 'DEFAULT' }, movements = [], priceRequests = [], ratioRequests = [], ratioHistory = [] } = {}) {
+function financials({ price = 150000, stateValue = 'PRICE_APPROVED', ratio = { person_1_bps: 7000, person_2_bps: 3000, source: 'DEFAULT' }, movements = [], priceRequests = [], ratioRequests = [], ratioHistory = [] } = {}) {
   return {
     work_id: 'w1', price_state: stateValue, current_price_halalas: stateValue === 'PRICE_UNSET' ? null : price, ratio,
     shares: stateValue === 'PRICE_UNSET' ? { person_1_halalas: null, person_2_halalas: null } : { person_1_halalas: Math.round(price * ratio.person_1_bps / 10000), person_2_halalas: Math.round(price * ratio.person_2_bps / 10000) },
@@ -72,7 +75,7 @@ test('S6 UI detail shows authoritative price/ratio/shares and previous-new appro
   const html = testApp.workPage();
   assert.match(html, /السعر المعتمد/);
   assert.match(html, /1700\.00 ريال/);
-  assert.match(html, /الشخص الأول/);
+  assert.match(html, /خالد/);
   assert.match(html, /السابق: 1500\.00 ريال/);
   assert.match(html, /الجديد: 1700\.00 ريال/);
   assert.match(html, /معلق — لا يغير السعر المعتمد/);
@@ -83,7 +86,7 @@ test('S6 UI detail shows authoritative price/ratio/shares and previous-new appro
 test('S6 UI keeps pending price/ratio requests separate and blocks self approval', () => {
   setup({ uid: 'uid-one', selectedWork: { id: 'w1', version: 1, title: 'سعر غير محدد', financials: financials({ stateValue: 'PRICE_UNSET', priceRequests: [{ id: 'p1', state: 'PENDING', movement_type: 'BASE', amount_halalas: 150000, reason: 'Base', requested_by: 'uid-one', requested_at: '2026-08-12T12:00:00.000Z' }], ratioRequests: [{ id: 'r1', state: 'PENDING', person_1_bps: 5000, person_2_bps: 5000, reason: 'Ratio', requested_by: 'uid-one', requested_at: '2026-08-12T12:00:00.000Z' }] }) } });
   const html = testApp.workPage();
-  assert.match(html, /PRICE_UNSET/);
+  assert.match(html, /السعر غير محدد/);
   assert.match(html, /الطلبات المعلقة منفصلة/);
   assert.match(html, /لا يمكنك اعتماد طلبك/);
   assert.doesNotMatch(html, /data-action="approve-price-request" data-request-id="p1"/);
@@ -129,7 +132,7 @@ test('S6 UI mutation uses request version and verifies authoritative refetch bef
   assert.equal(calls[0].path, '/api/works/w1/price-requests');
   assert.equal(calls[0].body.version, 1);
   assert.equal(calls[0].body.amount_riyals, '1500.00');
-  assert.equal(calls[0].body.effective_at, '2026-08-10T12:00:00.000Z');
+  assert.equal(calls[0].body.effective_at, '2026-08-10T09:00:00.000Z');
   assert.ok(calls.some(call => call.path === '/api/works/w1/financials' && call.method === undefined));
   assert.equal(state.busy, false);
 });

@@ -65,7 +65,6 @@ function dataFor(path, method) {
 export async function installHarness(page) {
   await page.addInitScript(() => {
     window.__PRIVATE_WORK_APP_CONFIG__ = { apiBaseUrl: '', s8ExportModuleUrl: '/assets/s8-export.mjs', getIdToken: async () => 'synthetic-token', signOut: async () => {}, email: 'synthetic@example.test' };
-    window.__PRIVATE_WORK_APP_TEST__ = {};
   });
   const requestsLog = [];
   let nextFailure = null;

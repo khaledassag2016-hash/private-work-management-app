@@ -66,7 +66,7 @@ EXPECTED_DECISION_MAPPING = {
     "Q-003": "D-011",
     "Q-004": "D-012",
 }
-EXPECTED_RECORDED_DECISIONS = {f"D-{number:03d}" for number in range(1, 23)}
+EXPECTED_RECORDED_DECISIONS = {f"D-{number:03d}" for number in range(1, 27)}
 
 
 def expected_stage_map() -> dict[str, str]:
@@ -335,7 +335,7 @@ def main() -> int:
     print("Coverage: FR 30/30, AC 14/14, P 7/7, scenarios 14/14")
     print("Trace stage assignments: PASS")
     print("Manifest and issue index: PASS")
-    print("Recorded decisions: D-001 through D-022")
+    print("Recorded decisions: D-001 through D-026")
     print("Resolved decisions recorded: Q-001, Q-002, Q-003, Q-004")
     print("Required governance and source files:", len(REQUIRED), "present")
     print("Authoritative source segments:", len(SOURCE_FILES), "verified")
