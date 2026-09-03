@@ -303,15 +303,15 @@ test('S5 Cancel / Archive Requests: Pending model, targets, and dual-approval me
     assert.equal(statHistory[0].new_status, 'PARTIALLY_STOPPED');
     assert.equal(statHistory[0].reason, 'Approved CANCEL request: Client withdrew again');
 
-    const raceReq = await createCancelArchiveRequest(env, 'uid-one', 'req-race-create', work.id, { version: approvedResult.work.version, action: 'CANCEL', reason: 'Concurrent approval test', target_execution_status: 'PARTIALLY_STOPPED' });
+    const raceReq = await createCancelArchiveRequest(env, 'uid-one', 'req-race-create', other.id, { version: other.version, action: 'CANCEL', reason: 'Concurrent approval test', target_execution_status: 'PARTIALLY_STOPPED' });
     const raceResults = await Promise.allSettled([
-      approveCancelArchiveRequest(env, 'uid-two', 'req-race-a', work.id, raceReq.id),
-      approveCancelArchiveRequest(env, 'uid-two', 'req-race-b', work.id, raceReq.id),
+      approveCancelArchiveRequest(env, 'uid-two', 'req-race-a', other.id, raceReq.id),
+      approveCancelArchiveRequest(env, 'uid-two', 'req-race-b', other.id, raceReq.id),
     ]);
     assert.equal(raceResults.filter(result => result.status === 'fulfilled').length, 1);
     assert.equal(raceResults.filter(result => result.status === 'rejected').length, 1);
     assert.equal(database.prepare('SELECT state FROM cancel_archive_requests WHERE id=?').get(raceReq.id).state, 'APPROVED');
-    assert.equal((await listWorkStatusHistory(env, work.id)).filter(row => row.reason.includes('Concurrent approval test')).length, 1);
+    assert.equal((await listWorkStatusHistory(env, other.id)).filter(row => row.reason.includes('Concurrent approval test')).length, 1);
   } finally { database.close(); }
 });
 

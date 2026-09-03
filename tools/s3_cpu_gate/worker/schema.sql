@@ -13,6 +13,23 @@ CREATE TRIGGER IF NOT EXISTS trg_app_users_max_two_active_update
 BEFORE UPDATE OF active ON app_users WHEN NEW.active = 1 AND OLD.active = 0 AND (SELECT COUNT(*) FROM app_users WHERE active = 1) >= 2
 BEGIN SELECT RAISE(ABORT, 'maximum two active users'); END;
 
+CREATE TABLE IF NOT EXISTS account_admin_audit (
+  id TEXT PRIMARY KEY NOT NULL,
+  actor_uid TEXT NOT NULL,
+  target_uid TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('CHANGE_EMAIL','SEND_PASSWORD_RESET')),
+  created_at TEXT NOT NULL,
+  before_json TEXT CHECK (before_json IS NULL OR json_valid(before_json)),
+  after_json TEXT NOT NULL CHECK (json_valid(after_json)),
+  request_id TEXT NOT NULL UNIQUE,
+  FOREIGN KEY (actor_uid) REFERENCES app_users(uid) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (target_uid) REFERENCES app_users(uid) ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+CREATE TRIGGER IF NOT EXISTS trg_account_admin_audit_no_update BEFORE UPDATE ON account_admin_audit
+BEGIN SELECT RAISE(ABORT, 'account_admin_audit is append only'); END;
+CREATE TRIGGER IF NOT EXISTS trg_account_admin_audit_no_delete BEFORE DELETE ON account_admin_audit
+BEGIN SELECT RAISE(ABORT, 'account_admin_audit is append only'); END;
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   entity_type TEXT NOT NULL CHECK (entity_type IN ('s3_audit_probe','customer','work','catalog_value','documented_fact','work_event','work_title_history','work_status_history','cancel_archive_request','price_change_request','price_movement','ratio_change_request','ratio_history','client_payment','payment_reversal_request','payment_reversal','inter_party_transfer','subscription_history','common_expense','settlement_snapshot','settlement_reopen_request','settlement_reopen_history','s8_alert_setting')),

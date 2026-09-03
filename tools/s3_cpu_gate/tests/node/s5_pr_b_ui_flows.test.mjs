@@ -490,10 +490,10 @@ describe('S5 PR-B UI Flows', () => {
     assert.match(html, /data-execution-status/);
     assert.match(html, /حالة التنفيذ/);
     assert.match(html, /data-collection-status/);
-    assert.match(html, /حدود التحصيل قبل S7/);
+    assert.match(html, /ملخص التحصيل/);
     const collectionCard = html.split('data-collection-status')[1].split('</article>')[0];
-    assert.match(collectionCard, /PRE-S7 projection/);
-    assert.match(collectionCard, /لا توجد حالة تحصيل أو payment mutation داخل S6/);
+    assert.match(collectionCard, /قراءة تمهيدية من السجل المالي المعتمد/);
+    assert.match(collectionCard, /تعرض هذه المنطقة حالة التحصيل دون خلطها بحالة التنفيذ/);
     assert.doesNotMatch(collectionCard, /PRICE_UNSET|سعر غير محدد|سعر صفري/);
   });
 

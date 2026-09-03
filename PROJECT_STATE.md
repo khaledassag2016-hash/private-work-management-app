@@ -364,6 +364,15 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - S3 is administratively complete under D-022; the closure PR remains subject to supervisory review before merge.
 - No Live, Deployment, CPU, Telemetry, Billing or resource cleanup is authorized by this closure state.
 
+## UAT Remediation after S11
+
+- Activation base: `68af792607fd7abf879ca0c2d25a7e65a6ddd041` (current `origin/main` and dedicated UAT worktree HEAD).
+- This round is tracked in `docs/UAT_REMEDIATION_MATRIX.md`; it is not named S12 and is not closed.
+- Governing decisions added: D-023..D-026 in `docs/DECISION_LOG.md`.
+- External Issue/PR creation is pending GitHub authentication/tooling availability; no merge or main write has occurred.
+- Local verification: Node `163` tests = `154 PASS`, `3` environment-blocked failures (`openssl`/backup cleanup), `6 SKIP`; Playwright Level-A remains blocked before assertions by Chromium `spawn EPERM`.
+- The shared worktree Git lock prevented creating a new branch, commit, or push; all remediation edits remain visible as working-tree changes on `codex/uat-remediation-after-s11`.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.

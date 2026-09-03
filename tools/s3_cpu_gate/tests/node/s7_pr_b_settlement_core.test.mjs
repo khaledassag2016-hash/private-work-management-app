@@ -126,9 +126,9 @@ test('PR-B settlement components consume S6 price authority, receipts, transfers
     await createClientPayment(env, 'uid-one', 'prb-components-payment-p2', work.id, { version: 3, amount_riyals: '100.00', effective_at: '2026-08-12T12:30:00.000Z', payment_method: 'BANK_TRANSFER', received_by: 'uid-two' });
     await createInterPartyTransfer(env, 'uid-one', 'prb-components-transfer', { amount_riyals: '100.00', fee_riyals: '1.01', effective_at: '2026-08-12T10:00:00.000Z', from_party: 'person_1', to_party: 'person_2', fee_payer: 'person_1' });
     const preview = await getSettlementPreview(env, '2026-08', settlementInput({ prior_balance_riyals: '999999.99' }));
-    assert.equal(preview.work_count, 1); assert.equal(preview.total_work_value_halalas, 170000); assert.equal(preview.person_1_work_share_halalas, 51000); assert.equal(preview.person_2_work_share_halalas, 119000); assert.equal(preview.approved_receipts_halalas, 110000); assert.equal(preview.approved_receipts_person_1_halalas, 100000); assert.equal(preview.approved_receipts_person_2_halalas, 10000); assert.equal(preview.transfer_fee_halalas, 101); assert.equal(preview.prior_balance_halalas, 0); assert.equal(preview.prior_balance_authority, 'ZERO_NO_PRIOR_SETTLEMENT'); assert.equal(preview.final_balance_halalas, 105774); assert.equal(preview.period_basis, 'CONFIRMED_AT'); assert.equal(preview.balance_formula, 'D-015_PERSON_1_OWES_PERSON_2_POSITIVE');
+    assert.equal(preview.work_count, 1); assert.equal(preview.total_work_value_halalas, 170000); assert.equal(preview.person_1_work_share_halalas, 119000); assert.equal(preview.person_2_work_share_halalas, 51000); assert.equal(preview.approved_receipts_halalas, 110000); assert.equal(preview.approved_receipts_person_1_halalas, 100000); assert.equal(preview.approved_receipts_person_2_halalas, 10000); assert.equal(preview.transfer_fee_halalas, 101); assert.equal(preview.prior_balance_halalas, 0); assert.equal(preview.prior_balance_authority, 'ZERO_NO_PRIOR_SETTLEMENT'); assert.equal(preview.final_balance_halalas, 37774); assert.equal(preview.period_basis, 'CONFIRMED_AT'); assert.equal(preview.balance_formula, 'D-015_PERSON_1_OWES_PERSON_2_POSITIVE');
     const closed = await closeSettlement(env, 'uid-one', 'prb-components-close', '2026-08', settlementInput({ prior_balance_riyals: '999999.99' }));
-    assert.equal(closed.final_balance_halalas, 105774); assert.equal((await listSettlementSnapshots(env, '2026-08')).length, 1);
+    assert.equal(closed.final_balance_halalas, 37774); assert.equal((await listSettlementSnapshots(env, '2026-08')).length, 1);
   } finally { database.close(); }
 });
 
@@ -263,7 +263,7 @@ test('PR-B D-015 receipts split by received_by, exclude approved reversals, and 
     const reversalRequest = await createPaymentReversalRequest(env, 'uid-one', 'd015-receipt-reversal-request', work.id, { version: 4, payment_id: database.prepare('SELECT id FROM client_payments WHERE request_id=?').get('d015-receipt-p1').id, reason: 'Synthetic approved reversal' });
     await approvePaymentReversalRequest(env, 'uid-two', 'd015-receipt-reversal-approve', work.id, reversalRequest.id);
     const preview = await getSettlementPreview(env, '2026-08', settlementInput());
-    assert.equal(preview.approved_receipts_person_1_halalas, 0); assert.equal(preview.approved_receipts_person_2_halalas, 20000); assert.equal(preview.approved_receipts_halalas, 20000); assert.equal(preview.final_balance_halalas, 105825);
+    assert.equal(preview.approved_receipts_person_1_halalas, 0); assert.equal(preview.approved_receipts_person_2_halalas, 20000); assert.equal(preview.approved_receipts_halalas, 20000); assert.equal(preview.final_balance_halalas, 37825);
   } finally { database.close(); }
 });
 
@@ -272,10 +272,10 @@ test('PR-B D-015 first settlement prior is zero and next settlement carries late
   try {
     const { work } = await setupWork(env, 'D015 Carry'); await price(env, work, 'd015-carry');
     const firstPreview = await getSettlementPreview(env, '2026-08', settlementInput());
-    assert.equal(firstPreview.prior_balance_halalas, 0); assert.equal(firstPreview.prior_balance_authority, 'ZERO_NO_PRIOR_SETTLEMENT'); assert.equal(firstPreview.final_balance_halalas, 125825);
+    assert.equal(firstPreview.prior_balance_halalas, 0); assert.equal(firstPreview.prior_balance_authority, 'ZERO_NO_PRIOR_SETTLEMENT'); assert.equal(firstPreview.final_balance_halalas, 57825);
     const firstClosed = await closeSettlement(env, 'uid-one', 'd015-carry-close-aug', '2026-08', settlementInput());
     const nextPreview = await getSettlementPreview(env, '2026-09', settlementInput());
-    assert.equal(nextPreview.prior_balance_halalas, 125825); assert.equal(nextPreview.prior_balance_authority, 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT'); assert.equal(nextPreview.final_balance_halalas, 132650); assert.equal(firstClosed.final_balance_halalas, 125825);
+    assert.equal(nextPreview.prior_balance_halalas, 57825); assert.equal(nextPreview.prior_balance_authority, 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT'); assert.equal(nextPreview.final_balance_halalas, 64650); assert.equal(firstClosed.final_balance_halalas, 57825);
   } finally { database.close(); }
 });
 
@@ -284,18 +284,18 @@ test('PR-B D-015 reopened prior snapshots are invalid until re-closed and latest
   try {
     const { work } = await setupWork(env, 'D015 Reopened Prior'); await price(env, work, 'd015-reopened-prior');
     const first = await closeSettlement(env, 'uid-one', 'd015-reopened-prior-close-aug', '2026-08', settlementInput());
-    assert.equal(first.final_balance_halalas, 125825);
+    assert.equal(first.final_balance_halalas, 57825);
     const reopen = await createSettlementReopenRequest(env, 'uid-one', 'd015-reopened-prior-request', '2026-08', { reason: 'Synthetic prior invalidation' });
     await approveSettlementReopenRequest(env, 'uid-two', 'd015-reopened-prior-approve', '2026-08', reopen.id);
     const beforeReclose = await getSettlementPreview(env, '2026-09', settlementInput());
     assert.equal(beforeReclose.prior_balance_halalas, 0); assert.equal(beforeReclose.prior_balance_authority, 'ZERO_NO_PRIOR_SETTLEMENT'); assert.equal(beforeReclose.final_balance_halalas, 6825);
     await createInterPartyTransfer(env, 'uid-one', 'd015-reopened-prior-transfer', { amount_riyals: '10.00', effective_at: '2026-08-20T00:00:00.000Z', from_party: 'person_1', to_party: 'person_2', fee_payer: 'person_1' });
     const reclosed = await closeSettlement(env, 'uid-two', 'd015-reopened-prior-reclose-aug', '2026-08', settlementInput());
-    assert.equal(reclosed.version, 2); assert.equal(reclosed.final_balance_halalas, 124825);
+    assert.equal(reclosed.version, 2); assert.equal(reclosed.final_balance_halalas, 56825);
     const afterReclose = await getSettlementPreview(env, '2026-09', settlementInput());
-    assert.equal(afterReclose.prior_balance_halalas, 124825); assert.equal(afterReclose.prior_balance_authority, 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT'); assert.equal(afterReclose.final_balance_halalas, 131650);
+    assert.equal(afterReclose.prior_balance_halalas, 56825); assert.equal(afterReclose.prior_balance_authority, 'LATEST_VALID_PRIOR_MONTHLY_SETTLEMENT'); assert.equal(afterReclose.final_balance_halalas, 63650);
     const nextClosed = await closeSettlement(env, 'uid-one', 'd015-reopened-prior-close-sep', '2026-09', settlementInput());
-    assert.equal(nextClosed.prior_balance_halalas, 124825); assert.equal(nextClosed.final_balance_halalas, 131650);
+    assert.equal(nextClosed.prior_balance_halalas, 56825); assert.equal(nextClosed.final_balance_halalas, 63650);
   } finally { database.close(); }
 });
 
