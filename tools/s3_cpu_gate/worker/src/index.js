@@ -508,7 +508,7 @@ export async function searchWorksS8(env, input = {}) {
 }
 export async function listS8AlertSettings(env) {
   const rows = (await env.DB.prepare('SELECT alert_type,threshold_days,updated_by,updated_at,request_id FROM s8_alert_settings ORDER BY alert_type ASC').all()).results || [];
-  const byType = new Map(rows.map(row => [row.alert_type, { ...row, threshold_days: Number(row.threshold_days) }]));
+  const byType = new Map(rows.map(row => [row.alert_type, { ...row, state: 'CONFIGURED', threshold_days: Number(row.threshold_days) }]));
   return S8_ALERT_TYPES.map(alertType => byType.get(alertType) || { alert_type: alertType, state: 'NOT_CONFIGURED', threshold_days: null, updated_by: null, updated_at: null, request_id: null });
 }
 export async function upsertS8AlertSetting(env, actorUid, requestId, input) {
