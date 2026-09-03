@@ -369,9 +369,9 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - Activation base: `68af792607fd7abf879ca0c2d25a7e65a6ddd041` (current `origin/main` and dedicated UAT worktree HEAD).
 - This round is tracked in `docs/UAT_REMEDIATION_MATRIX.md`; it is not named S12 and is not closed.
 - Governing decisions added: D-023..D-026 in `docs/DECISION_LOG.md`.
-- External Issue/PR creation is pending GitHub authentication/tooling availability; no merge or main write has occurred.
-- Local verification: Node `163` tests = `154 PASS`, `3` environment-blocked failures (`openssl`/backup cleanup), `6 SKIP`; Playwright Level-A remains blocked before assertions by Chromium `spawn EPERM`.
-- The shared worktree Git lock prevented creating a new branch, commit, or push; all remediation edits remain visible as working-tree changes on `codex/uat-remediation-after-s11`.
+- Remediation checkpoint `505e2819e9c86b837ca6aba27f9e738a83da2d55` was committed and pushed to `codex/uat-remediation-after-s11`; no merge or main write has occurred.
+- Local verification at that checkpoint: Node `163` tests = `154 PASS`, `3` environment-blocked failures (`openssl`/backup cleanup), `6 SKIP`; Playwright Level-A was blocked before assertions by Chromium `spawn EPERM`.
+- Supervisory review found targeted gaps in UAT-043, UAT-047, D-024 settlement adjustments, D-025 account administration, and UAT mapping. A corrective commit on the same branch addresses only those gaps; final PASS remains pending PR/final-head CI and supervisory review.
 
 ## Permanent rules
 

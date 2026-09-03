@@ -20,6 +20,9 @@ let pendingConfirmation = null;
 
 const labels = {
   TOKEN_MISSING: 'يلزم تسجيل الدخول للوصول إلى البيانات الخاصة.',
+  TOKEN_REVOKED: 'تم إنهاء الجلسة بعد تغيير بيانات الحساب. سجّل الدخول مجددًا.',
+  ACCOUNT_ADMIN_NOT_CONFIGURED: 'إدارة الحسابات غير مهيأة على الخادم بعد.',
+  ACCOUNT_EMAIL_UNCHANGED: 'البريد الجديد مطابق للبريد الحالي.',
   UID_NOT_ALLOWED: 'هذا الحساب غير مصرح له باستخدام التطبيق.',
   CUSTOMER_NOT_FOUND: 'تعذر العثور على العميل المطلوب.',
   WORK_NOT_FOUND: 'تعذر العثور على العمل المطلوب.',
@@ -226,12 +229,23 @@ async function createFirebaseAdapter() {
   ]);
   const firebaseApp = initializeApp(appConfig.firebaseConfig);
   const auth = getAuth(firebaseApp);
+  let initialUserPromise = null;
+  function waitForInitialUser() {
+    if (initialUserPromise) return initialUserPromise;
+    initialUserPromise = new Promise(resolve => {
+      let unsubscribe = null;
+      const finish = user => { const stop = unsubscribe; unsubscribe = null; stop?.(); resolve(user || null); };
+      unsubscribe = onAuthStateChanged(auth, finish, () => finish(null));
+    });
+    return initialUserPromise;
+  }
   return {
+    waitForInitialUser,
     async getToken() { return auth.currentUser ? auth.currentUser.getIdToken() : null; },
     signIn(email, password) { return signInWithEmailAndPassword(auth, email, password); },
     signOut() { return signOut(auth); },
     observe(callback) { return onAuthStateChanged(auth, callback); },
-    email: auth.currentUser?.email || '',
+    getEmail() { return auth.currentUser?.email || ''; },
   };
 }
 
@@ -277,12 +291,13 @@ async function authenticateExistingSession() {
     const adapter = await createFirebaseAdapter();
     if (!adapter) { state.auth.status = 'needs_configuration'; render(); return; }
     state.auth.tokenProvider = adapter;
+    await adapter.waitForInitialUser?.();
     const token = await adapter.getToken();
     if (!token) { state.auth.status = 'signed_out'; render(); return; }
     const ping = await api('/private/ping');
     state.auth.status = 'signed_in';
     state.auth.uid = ping.uid || '';
-    state.auth.email = adapter.email || '';
+    state.auth.email = adapter.getEmail?.() || adapter.email || '';
     state.auth.role = ping.role || '';
     await Promise.all([loadCatalogs(), loadDashboard()]);
     render();
@@ -294,7 +309,7 @@ async function authenticateExistingSession() {
 
 function authScreen() {
   const configured = Boolean(appConfig.firebaseConfig || typeof appConfig.getIdToken === 'function');
-  const message = state.auth.status === 'forbidden' ? 'تم التحقق من الحساب، لكنه غير موجود في قائمة السماح المكونة من الشخصين.' : configured ? 'سجّل الدخول بحساب Firebase الذي أنشأه المشرف. لا توجد شاشة تسجيل حسابات جديدة.' : 'تحتاج الواجهة إلى تهيئة Firebase العامة وقت النشر. لا تُدرج هذه التهيئة أي كلمة مرور أو token أو مفتاح خدمة.';
+  const message = state.auth.status === 'forbidden' ? 'تم التحقق من الحساب، لكنه غير موجود في قائمة السماح المكونة من الشخصين.' : configured ? 'سجّل الدخول بأحد الحسابين المعتمدين. لا توجد شاشة لإنشاء حسابات جديدة.' : 'تحتاج الواجهة إلى تهيئة تسجيل الدخول من إعدادات النشر قبل الاستخدام.';
   return `<section class="auth-screen"><div class="auth-card">
     <div class="brand-lockup"><div class="brand-mark">إ</div><div><h1>إدارة الأعمال الخاصة</h1><p>مساحة مغلقة لشخصين فقط</p></div></div>
     <h2>${state.auth.status === 'forbidden' ? 'الوصول غير مصرح' : 'تسجيل الدخول'}</h2><p>${message}</p>
@@ -317,17 +332,25 @@ async function loadAccountAdmin() {
 function accountAdminMarkup() {
   if (state.view !== 'audit' || state.auth.role !== 'person_1') return '';
   const accounts = state.accountAdmin.accounts || [];
-  return `<section class="card" data-account-admin style="margin-top:1rem"><div class="toolbar"><div><h2>إدارة الحسابات</h2><p>متاحة لخالد فقط. تغيير البريد يخرج الجلسات الحالية، وإعادة التعيين ترسل رسالة إلى البريد دون كشف كلمة المرور.</p></div><span class="badge ok">خالد — مسؤول الحسابات</span></div>${state.accountAdmin.loading ? loading() : accounts.length ? `<div class="fact-list">${accounts.map(account => `<div class="account-admin-row"><strong>${escapeHtml(roleLabel(account.role))}</strong><form class="account-email-form" data-uid="${escapeHtml(account.uid)}"><label>البريد الجديد<input class="input" type="email" name="email" autocomplete="email" required/></label><button class="button secondary" type="submit">تغيير البريد</button></form><form class="account-reset-form" data-uid="${escapeHtml(account.uid)}"><label>البريد الحالي لإرسال الرسالة<input class="input" type="email" name="email" autocomplete="email" required/></label><button class="button ghost" type="submit">إرسال رابط إعادة التعيين</button></form></div>`).join('')}</div>` : empty('لا توجد حسابات نشطة لإدارتها.')}</section>`;
+  return `<section class="card" data-account-admin style="margin-top:1rem"><div class="toolbar"><div><h2>إدارة الحسابات</h2><p>متاحة لخالد فقط. تغيير البريد ينهي الجلسات السابقة للحساب، وإعادة التعيين تُرسل إلى البريد الحالي الموثوق من الخادم دون كشف كلمة المرور.</p></div><span class="badge ok">خالد — مسؤول الحسابات</span></div>${state.accountAdmin.loading ? loading() : accounts.length ? `<div class="fact-list">${accounts.map(account => `<div class="account-admin-row" data-role="${escapeHtml(account.role)}"><div><strong>${escapeHtml(account.display_name || roleLabel(account.role))}</strong><br/><span>${escapeHtml(account.email || 'بريد غير متاح')}</span> <span class="badge ${account.disabled ? 'warn' : 'ok'}">${account.disabled ? 'معطل' : 'نشط'}</span></div><form class="account-email-form" data-role="${escapeHtml(account.role)}"><label>البريد الجديد<input class="input" type="email" name="email" autocomplete="email" value="${escapeHtml(account.email || '')}" required/></label><button class="button secondary" type="submit">تغيير البريد</button></form><form class="account-reset-form" data-role="${escapeHtml(account.role)}"><button class="button ghost" type="submit">إرسال رابط إعادة التعيين إلى البريد الحالي</button></form></div>`).join('')}</div>` : empty('لا توجد حسابات نشطة لإدارتها.')}`;
 }
 async function submitAccountEmail(event) {
-  event.preventDefault(); const form = event.currentTarget; const uid = form.dataset.uid; const values = formObject(form);
-  if (!(await confirmSensitive('تغيير بريد الحساب', 'سيؤدي التغيير إلى إنهاء الجلسات الحالية للحساب.'))) return;
-  await submitFlow(async () => { await api(`/api/account-admin/accounts/${encodeURIComponent(uid)}/email`, { method: 'POST', body: { email: values.email } }); await loadAccountAdmin(); render(); toast('تم تغيير البريد وتسجيل العملية.', ''); });
+  event.preventDefault(); const form = event.currentTarget; const role = form.dataset.role; const values = formObject(form);
+  if (!(await confirmSensitive('تغيير بريد الحساب', 'سيؤدي التغيير إلى إنهاء الجلسات السابقة للحساب وإلزامه بتسجيل الدخول مجددًا.'))) return;
+  await submitFlow(async () => {
+    const result = await api(`/api/account-admin/accounts/${encodeURIComponent(role)}/email`, { method: 'POST', body: { email: values.email } });
+    if (result.role === state.auth.role) {
+      await state.auth.tokenProvider?.signOut?.();
+      state.auth = { status: 'signed_out', tokenProvider: state.auth.tokenProvider, email: '', role: '' };
+      render(); toast('تم تغيير البريد وإنهاء الجلسة. سجّل الدخول بالبريد الجديد.', ''); return;
+    }
+    await loadAccountAdmin(); render(); toast('تم تغيير البريد وإنهاء جلسات الحساب السابقة.', '');
+  });
 }
 async function submitAccountReset(event) {
-  event.preventDefault(); const form = event.currentTarget; const uid = form.dataset.uid; const values = formObject(form);
-  if (!(await confirmSensitive('إرسال رابط إعادة تعيين كلمة المرور', 'سيصل الرابط إلى البريد المدخل، ولا تُعرض كلمة المرور داخل التطبيق.'))) return;
-  await submitFlow(async () => { await api(`/api/account-admin/accounts/${encodeURIComponent(uid)}/password-reset`, { method: 'POST', body: { email: values.email } }); await loadAccountAdmin(); render(); toast('تم إرسال رابط إعادة التعيين وتسجيل العملية.', ''); });
+  event.preventDefault(); const form = event.currentTarget; const role = form.dataset.role;
+  if (!(await confirmSensitive('إرسال رابط إعادة تعيين كلمة المرور', 'سيصل الرابط إلى البريد الحالي المسجل للحساب، ولا تُعرض كلمة المرور داخل التطبيق.'))) return;
+  await submitFlow(async () => { await api(`/api/account-admin/accounts/${encodeURIComponent(role)}/password-reset`, { method: 'POST', body: {} }); await loadAccountAdmin(); render(); toast('تم إرسال رابط إعادة التعيين إلى البريد الحالي وتسجيل العملية.', ''); });
 }
 function pageTitle() { return ({ dashboard: 'نظرة عامة', customers: 'العملاء', works: 'الأعمال', financial: 'التحصيل والتسويات', s8: 'البحث والتحليلات', catalogs: 'القوائم', audit: 'سجل التدقيق', customer: 'سجل العميل', work: 'تفاصيل العمل' }[state.view] || 'إدارة الأعمال'); }
 function empty(message) { return `<div class="empty">${escapeHtml(message)}</div>`; }
@@ -347,7 +370,7 @@ function ratioPercentLabel(ratio) { return `${Number(ratio?.person_1_bps || 0) /
 function workTypeLabel(value) { return state.catalogs.work_type?.find(item => item.value_key === value)?.label || (value ? 'نوع عمل محفوظ' : 'نوع العمل غير محدد'); }
 function paymentMethodLabel(value) { return ({ BANK_TRANSFER: 'تحويل بنكي', CASH: 'نقدي', CARD: 'بطاقة', OTHER: 'أخرى' }[value] || 'طريقة دفع أخرى'); }
 function movementLabel(type) { return ({ BASE: 'سعر أساسي', INCREASE: 'زيادة', DECREASE: 'نقصان', DISCOUNT: 'خصم' }[type] || type || 'حركة سعر'); }
-function requestStateLabel(stateValue) { return stateValue === 'PENDING' ? 'معلق — لا يغير السعر المعتمد' : stateValue === 'APPROVED' ? 'معتمد' : stateValue || 'غير معروف'; }
+function requestStateLabel(stateValue) { return stateValue === 'PENDING' ? 'معلق — لا يغير السعر المعتمد' : stateValue === 'APPROVED' ? 'معتمد' : stateValue === 'SUPERSEDED' ? 'أصبح غير قابل للتنفيذ بعد إلغاء العمل' : stateValue || 'غير معروف'; }
 function badgeForWork(work) {
   if (isPricingUnset(work)) return '<span class="badge unset">السعر غير محدد</span>';
   return `<span class="badge ok">${escapeHtml(moneyLabel(work.current_price_halalas))}</span>`;
@@ -379,7 +402,8 @@ function financialMarkup(work) {
   const priceRequests = Array.isArray(financials.price_requests) ? financials.price_requests : [];
   const ratioRequests = Array.isArray(financials.ratio_requests) ? financials.ratio_requests : [];
   const ratioHistory = Array.isArray(financials.ratio_history) ? financials.ratio_history : [];
-  return `<section class="s6-financial-core" data-s6-financial-core><div class="grid grid-3"><article class="stat"><small>السعر المعتمد</small><strong data-authoritative-price>${escapeHtml(pricingState === 'PRICE_UNSET' ? 'السعر غير محدد' : moneyLabel(currentPrice))}</strong><span class="hint">يعتمد العرض على السجل المالي المعتمد فقط.</span></article><article class="stat"><small>المتبقي</small><strong>${escapeHtml(moneyLabel(financials.remaining_halalas ?? currentPrice))}</strong><span class="hint">يُحتسب من السعر والدفعات المعتمدة.</span></article><article class="stat"><small>النسبة الحالية</small><strong>${escapeHtml(ratioPercentLabel(ratio))}</strong><span class="hint">${escapeHtml(ratio.source === 'DEFAULT' ? 'النسبة الافتراضية' : 'استثناء معتمد وموثق')}</span></article></div><div class="grid grid-2" style="margin-top:1rem"><article class="card"><h2>الحصص المعتمدة</h2><ul class="fact-list"><li><strong>خالد</strong><span>${escapeHtml(moneyLabel(financials.shares?.person_1_halalas))}</span></li><li><strong>وليد</strong><span>${escapeHtml(moneyLabel(financials.shares?.person_2_halalas))}</span></li></ul></article><article class="card"><h2>طلبات السعر والنسبة</h2><p class="hint">الطلبات المعلقة منفصلة عن السعر والنسبة المعتمدين.</p><form id="s6-price-form" class="form-grid"><div class="field"><label>نوع الحركة</label><select class="select" name="movement_type" required><option value="BASE">سعر أساسي</option><option value="INCREASE">زيادة</option><option value="DECREASE">نقصان</option><option value="DISCOUNT">خصم</option></select></div><div class="field"><label>القيمة بالريال</label><input class="input" name="amount_riyals" inputmode="decimal" placeholder="1500.00" required/></div><div class="field"><label>التاريخ التجاري</label><input class="input" name="effective_at" type="datetime-local"/></div><div class="field full"><label>السبب</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب حركة سعر</button></div></form><form id="s6-ratio-form" class="form-grid" style="margin-top:1rem"><div class="field"><label>نسبة خالد (%)</label><input class="input" name="person_1_bps" type="number" min="0" max="100" step="0.01" value="${escapeHtml(Number(ratio.person_1_bps) / 100)}" required/><span class="hint">أدخل نسبة من 0 إلى 100. يجب أن يساوي مجموع النسب 100%.</span></div><div class="field"><label>نسبة وليد (%)</label><input class="input" name="person_2_bps" type="number" min="0" max="100" step="0.01" value="${escapeHtml(Number(ratio.person_2_bps) / 100)}" required/></div><div class="field full"><label>سبب الاستثناء</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button secondary" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب استثناء النسبة</button></div></form></article></div><div class="grid grid-2" style="margin-top:1rem"><article class="card"><h2>تاريخ حركات السعر المعتمدة</h2>${movements.length ? `<ul class="fact-list">${movements.map(item => `<li><strong>${escapeHtml(movementLabel(item.movement_type))}: ${escapeHtml(moneyLabel(item.amount_halalas))}</strong><span>السابق: ${escapeHtml(moneyLabel(item.previous_price_halalas))} ← الجديد: ${escapeHtml(moneyLabel(item.new_price_halalas))}</span><span>السبب: ${escapeHtml(item.reason)} — التاريخ التجاري: ${dateTimeLabel(item.effective_at)}</span><span>الطالب: ${escapeHtml(roleLabel(item.requested_by))} — الموافق: ${escapeHtml(roleLabel(item.approved_by))} — وقت الاعتماد: ${dateTimeLabel(item.approved_at)}</span></li>`).join('')}</ul>` : empty('لا توجد حركة سعر معتمدة بعد.')}</article><article class="card"><h2>تاريخ النسب والطلبات</h2>${ratioHistory.length ? `<ul class="fact-list">${ratioHistory.map(item => `<li><strong>${escapeHtml(`${Number(item.old_person_1_bps) / 100}% / ${Number(item.old_person_2_bps) / 100}% → ${Number(item.new_person_1_bps) / 100}% / ${Number(item.new_person_2_bps) / 100}%`)}</strong><span>السبب: ${escapeHtml(item.reason)} — طلب: ${dateTimeLabel(item.requested_at)} — اعتماد: ${dateTimeLabel(item.approved_at)}</span></li>`).join('')}</ul>` : empty('لا توجد استثناءات نسبة معتمدة؛ النسبة الافتراضية 70% خالد / 30% وليد.')}</article></div><section class="card" style="margin-top:1rem"><h2>حالة الطلبات</h2>${priceRequests.length ? `<h3>طلبات السعر</h3>${priceRequests.map(item => financialRequestCard(item, 'price')).join('')}` : ''}${ratioRequests.length ? `<h3>طلبات النسبة</h3>${ratioRequests.map(item => financialRequestCard(item, 'ratio')).join('')}` : (!priceRequests.length ? empty('لا توجد طلبات مالية.') : '')}</section></section>`;
+  const cancelled = work.is_cancelled || ['CANCELLED_BEFORE_EXECUTION', 'PARTIALLY_STOPPED'].includes(work.status);
+  return `<section class="s6-financial-core" data-s6-financial-core><div class="grid grid-3"><article class="stat"><small>السعر المعتمد</small><strong data-authoritative-price>${escapeHtml(pricingState === 'PRICE_UNSET' ? 'السعر غير محدد' : moneyLabel(currentPrice))}</strong><span class="hint">يعتمد العرض على السجل المالي المعتمد فقط.</span></article><article class="stat"><small>المتبقي</small><strong>${escapeHtml(moneyLabel(financials.remaining_halalas ?? currentPrice))}</strong><span class="hint">يُحتسب من السعر والدفعات المعتمدة.</span></article><article class="stat"><small>النسبة الحالية</small><strong>${escapeHtml(ratioPercentLabel(ratio))}</strong><span class="hint">${escapeHtml(ratio.source === 'DEFAULT' ? 'النسبة الافتراضية' : 'استثناء معتمد وموثق')}</span></article></div><div class="grid grid-2" style="margin-top:1rem"><article class="card"><h2>الحصص المعتمدة</h2><ul class="fact-list"><li><strong>خالد</strong><span>${escapeHtml(moneyLabel(financials.shares?.person_1_halalas))}</span></li><li><strong>وليد</strong><span>${escapeHtml(moneyLabel(financials.shares?.person_2_halalas))}</span></li></ul></article><article class="card"><h2>طلبات السعر والنسبة</h2><p class="hint">الطلبات المعلقة منفصلة عن السعر والنسبة المعتمدين.</p><form id="s6-price-form" class="form-grid" ${cancelled ? 'hidden' : ''}><div class="field"><label>نوع الحركة</label><select class="select" name="movement_type" required><option value="BASE">سعر أساسي</option><option value="INCREASE">زيادة</option><option value="DECREASE">نقصان</option><option value="DISCOUNT">خصم</option></select></div><div class="field"><label>القيمة بالريال</label><input class="input" name="amount_riyals" inputmode="decimal" placeholder="1500.00" required/></div><div class="field"><label>التاريخ التجاري</label><input class="input" name="effective_at" type="datetime-local"/></div><div class="field full"><label>السبب</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب حركة سعر</button></div></form><form id="s6-ratio-form" class="form-grid" style="margin-top:1rem" ${cancelled ? 'hidden' : ''}><div class="field"><label>نسبة خالد (%)</label><input class="input" name="person_1_bps" type="number" min="0" max="100" step="0.01" value="${escapeHtml(Number(ratio.person_1_bps) / 100)}" required/><span class="hint">أدخل نسبة من 0 إلى 100. يجب أن يساوي مجموع النسب 100%.</span></div><div class="field"><label>نسبة وليد (%)</label><input class="input" name="person_2_bps" type="number" min="0" max="100" step="0.01" value="${escapeHtml(Number(ratio.person_2_bps) / 100)}" required/></div><div class="field full"><label>سبب الاستثناء</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button secondary" type="submit" ${state.busy ? 'disabled' : ''}>تقديم طلب استثناء النسبة</button></div></form></article></div><div class="grid grid-2" style="margin-top:1rem"><article class="card"><h2>تاريخ حركات السعر المعتمدة</h2>${movements.length ? `<ul class="fact-list">${movements.map(item => `<li><strong>${escapeHtml(movementLabel(item.movement_type))}: ${escapeHtml(moneyLabel(item.amount_halalas))}</strong><span>السابق: ${escapeHtml(moneyLabel(item.previous_price_halalas))} ← الجديد: ${escapeHtml(moneyLabel(item.new_price_halalas))}</span><span>السبب: ${escapeHtml(item.reason)} — التاريخ التجاري: ${dateTimeLabel(item.effective_at)}</span><span>الطالب: ${escapeHtml(roleLabel(item.requested_by))} — الموافق: ${escapeHtml(roleLabel(item.approved_by))} — وقت الاعتماد: ${dateTimeLabel(item.approved_at)}</span></li>`).join('')}</ul>` : empty('لا توجد حركة سعر معتمدة بعد.')}</article><article class="card"><h2>تاريخ النسب والطلبات</h2>${ratioHistory.length ? `<ul class="fact-list">${ratioHistory.map(item => `<li><strong>${escapeHtml(`${Number(item.old_person_1_bps) / 100}% / ${Number(item.old_person_2_bps) / 100}% → ${Number(item.new_person_1_bps) / 100}% / ${Number(item.new_person_2_bps) / 100}%`)}</strong><span>السبب: ${escapeHtml(item.reason)} — طلب: ${dateTimeLabel(item.requested_at)} — اعتماد: ${dateTimeLabel(item.approved_at)}</span></li>`).join('')}</ul>` : empty('لا توجد استثناءات نسبة معتمدة؛ النسبة الافتراضية 70% خالد / 30% وليد.')}</article></div><section class="card" style="margin-top:1rem"><h2>حالة الطلبات</h2>${priceRequests.length ? `<h3>طلبات السعر</h3>${priceRequests.map(item => financialRequestCard(item, 'price')).join('')}` : ''}${ratioRequests.length ? `<h3>طلبات النسبة</h3>${ratioRequests.map(item => financialRequestCard(item, 'ratio')).join('')}` : (!priceRequests.length ? empty('لا توجد طلبات مالية.') : '')}</section></section>`;
 }
 function collectionLabel(value) {
   return ({ PRICE_UNSET: 'السعر غير محدد', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم', FINANCIALLY_CLOSED: 'مغلق ماليًا', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', CANCELLED_ZERO_BALANCE: 'ملغى — الرصيد على العميل صفر' }[value] || 'غير متاح');
@@ -397,7 +421,7 @@ function s7WorkFinancialMarkup(work) {
 function settlementRows(items, renderItem, emptyText) { return items.length ? `<ul class="fact-list">${items.map(renderItem).join('')}</ul>` : empty(emptyText); }
 function settlementPreviewMarkup(preview) {
   if (!preview) return loading('جارٍ تحميل معاينة التسوية…');
-  const rows = [['عدد الأعمال', preview.work_count], ['العدد التراكمي', preview.cumulative_work_count], ['إجمالي قيمة الأعمال', moneyLabel(preview.total_work_value_halalas)], ['حصة خالد', moneyLabel(preview.person_1_work_share_halalas)], ['حصة وليد', moneyLabel(preview.person_2_work_share_halalas)], ['المتحصل من العميل', moneyLabel(preview.approved_receipts_halalas)], ['استلام خالد', moneyLabel(preview.approved_receipts_person_1_halalas)], ['استلام وليد', moneyLabel(preview.approved_receipts_person_2_halalas)], ['التحويلات', moneyLabel(preview.transfer_amount_halalas)], ['رسوم التحويل', moneyLabel(preview.transfer_fee_halalas)], ['إجمالي الاشتراكات', moneyLabel(preview.subscription_total_halalas)], ['المصروفات المشتركة', moneyLabel(preview.governed_expense_total_halalas)], ['الرصيد السابق', moneyLabel(preview.prior_balance_halalas)], ['الرصيد النهائي', moneyLabel(preview.final_balance_halalas)]];
+  const rows = [['عدد الأعمال', preview.work_count], ['العدد التراكمي', preview.cumulative_work_count], ['إجمالي قيمة الأعمال', moneyLabel(preview.total_work_value_halalas)], ['حصة خالد', moneyLabel(preview.person_1_work_share_halalas)], ['حصة وليد', moneyLabel(preview.person_2_work_share_halalas)], ['المتحصل من العميل', moneyLabel(preview.approved_receipts_halalas)], ['استلام خالد', moneyLabel(preview.approved_receipts_person_1_halalas)], ['استلام وليد', moneyLabel(preview.approved_receipts_person_2_halalas)], ['التحويلات', moneyLabel(preview.transfer_amount_halalas)], ['رسوم التحويل', moneyLabel(preview.transfer_fee_halalas)], ['إجمالي الاشتراكات', moneyLabel(preview.subscription_total_halalas)], ['المصروفات المشتركة', moneyLabel(preview.governed_expense_total_halalas)], ['تسويات تاريخية — خالد', moneyLabel(preview.settlement_adjustment_person_1_halalas)], ['تسويات تاريخية — وليد', moneyLabel(preview.settlement_adjustment_person_2_halalas)], ['الرصيد السابق', moneyLabel(preview.prior_balance_halalas)], ['الرصيد النهائي', moneyLabel(preview.final_balance_halalas)]];
   const unresolved = preview.unresolved_code ? `<section class="notice warning" data-settlement-unresolved><strong>المعاينة تعرض المكونات الموضوعية فقط.</strong><p>${escapeHtml(errorMessage(preview.unresolved_code))}</p><p>لن يُتاح الإقفال حتى تحل القاعدة الحاكمة على الخادم.</p></section>` : '';
   return `${unresolved}<div class="table-wrap"><table><tbody>${rows.map(([name, value]) => `<tr><th>${escapeHtml(name)}</th><td>${escapeHtml(String(value ?? 'غير متاح'))}</td></tr>`).join('')}</tbody></table></div>`;
 }
@@ -407,7 +431,7 @@ function financialPage() {
   return `<section class="notice info"><strong>مصدر الحقيقة ماليًا هو Worker.</strong><p>تعرض هذه الصفحة سجلات ومكونات سلطوية بالهللات، وتنسق الريال للعرض فقط؛ لا تحتوي على تقرير S8 أو تصدير.</p></section><section class="card" style="margin-top:1rem"><div class="toolbar"><div><h2>فترة التسوية</h2><p>المعاينة لا تعدل أي سجل. الإقفال يحفظ نسخة عند عدم وجود حد غير محسوم.</p></div></div><form id="s7-settlement-period-form" class="form-grid"><div class="field"><label>الشهر</label><input class="input" name="period_key" type="month" value="${escapeHtml(period)}" required/></div><div class="form-actions"><button class="button secondary" type="submit" ${state.busy ? 'disabled' : ''}>تحديث المعاينة</button></div></form></section><section class="card" style="margin-top:1rem" data-settlement-current-state><h2>الحالة السلطوية الحالية للفترة</h2><p><strong>${escapeHtml(settlementStateLabel(periodState))}</strong> — مشتقة من نسخ الإقفال وسجل إعادة الفتح المعتمدين بعد إعادة الجلب.</p></section><section class="grid grid-3" style="margin-top:1rem"><article class="card"><h2>تحويل بين الطرفين</h2><form id="s7-transfer-form" class="form-grid"><div class="field"><label>المبلغ بالريال</label><input class="input" name="amount_riyals" inputmode="decimal" required/></div><div class="field"><label>من</label><select class="select" name="from_party"><option value="person_1">خالد</option><option value="person_2">وليد</option></select></div><div class="field"><label>إلى</label><select class="select" name="to_party"><option value="person_2">وليد</option><option value="person_1">خالد</option></select></div><div class="field"><label>رسوم بالريال</label><input class="input" name="fee_riyals" inputmode="decimal" value="0.00" required/></div><div class="field full"><label>التاريخ الفعلي</label><input class="input" name="effective_at" type="datetime-local" required/></div><div class="form-actions full"><button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تسجيل التحويل</button></div></form></article><article class="card"><h2>الاشتراك المجمع</h2><p class="hint">لا تفترض الواجهة أسماء أو تفصيلًا لقيمتي الاشتراك.</p><form id="s7-subscription-form" class="form-grid"><div class="field"><label>الحالة</label><select class="select" name="state"><option value="ACTIVE">فعّال</option><option value="CANCELLED">ملغى</option></select></div><div class="field"><label>الإجمالي بالريال</label><input class="input" name="aggregate_amount_riyals" inputmode="decimal" value="136.50" required/></div><div class="field full"><label>تاريخ تسجيل التغيير</label><input class="input" name="effective_at" type="datetime-local" required/><span class="hint">يطبق من تسوية الشهر التالي؛ لا يسري داخل شهر التسجيل.</span></div><div class="form-actions full"><button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تسجيل التغيير</button></div></form></article><article class="card"><h2>مصروف مشترك</h2><p class="hint">يحفظ المصروف ودافعه. لا تنشئ الواجهة قاعدة توزيع عامة غير معتمدة.</p><form id="s7-expense-form" class="form-grid"><div class="field"><label>المبلغ بالريال</label><input class="input" name="amount_riyals" inputmode="decimal" required/></div><div class="field"><label>الفئة</label><input class="input" name="category" required/></div><div class="field"><label>الدافع</label><input class="input" value="الحساب الحالي" readonly/><input type="hidden" name="paid_by_uid" value="${escapeHtml(state.auth.uid || '')}"/></div><div class="field full"><label>التاريخ الفعلي</label><input class="input" name="effective_at" type="datetime-local" required/></div><div class="form-actions full"><button class="button" type="submit" ${state.busy ? 'disabled' : ''}>تسجيل المصروف</button></div></form></article></section><section class="grid grid-2" style="margin-top:1rem"><article class="card"><h2>معاينة ${escapeHtml(period)}</h2>${settlementPreviewMarkup(preview)}<form id="s7-settlement-close-form" class="form-actions" style="margin-top:1rem"><button class="button" type="submit" ${state.busy || !preview || preview.unresolved_code ? 'disabled' : ''}>إقفال نسخة التسوية</button></form></article><article class="card"><h2>إعادة فتح استثنائية</h2><p class="hint">الطلب المعلق لا يفتح الفترة. يعتمد الحساب الآخر فقط.</p><form id="s7-reopen-form" class="form-grid"><div class="field full"><label>السبب</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button secondary" type="submit" ${state.busy ? 'disabled' : ''}>طلب إعادة الفتح</button></div></form>${settlementRows(requests, request => { const pending = request.state === 'PENDING'; const self = request.requested_by === state.auth.uid; return `<li><strong>${pending ? 'طلب معلق' : 'طلب معتمد'}</strong><span>السبب: ${escapeHtml(request.reason)} — الطالب: ${escapeHtml(roleLabel(request.requested_by))}</span><span>طُلب: ${dateTimeLabel(request.requested_at)}${request.approved_at ? ` — اعتُمد: ${dateTimeLabel(request.approved_at)}` : ''}</span>${pending ? (self ? '<span class="badge warn">لا يمكنك اعتماد طلبك</span>' : `<button class="button secondary" data-action="approve-settlement-reopen" data-request-id="${escapeHtml(request.id)}" ${state.busy ? 'disabled' : ''}>اعتماد إعادة الفتح</button>`) : `<span class="badge ok">اعتمده: ${escapeHtml(roleLabel(request.approved_by))}</span>`}</li>`; }, 'لا توجد طلبات إعادة فتح لهذه الفترة.')}</article></section><section class="grid grid-3" style="margin-top:1rem"><article class="card"><h2>سجل التحويلات</h2>${settlementRows(financial.transfers || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))}: ${escapeHtml(partyLabel(item.from_party))} ← ${escapeHtml(partyLabel(item.to_party))}</strong><span>الرسوم: ${escapeHtml(moneyLabel(item.fee_halalas))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد تحويلات.')}</article><article class="card"><h2>تاريخ الاشتراكات</h2>${settlementRows(financial.subscriptions || [], item => `<li><strong>${escapeHtml(item.state === 'CANCELLED' ? 'ملغى' : moneyLabel(item.aggregate_amount_halalas))}</strong><span>سُجل التغيير: ${dateTimeLabel(item.effective_at)} — يطبق من تسوية ${escapeHtml(nextSettlementMonth(item.effective_at))} — الدافع الفعلي: ${escapeHtml(roleLabel(item.paid_by_uid))}</span></li>`, 'لا توجد تغييرات اشتراك.')}</article><article class="card"><h2>سجل المصروفات</h2>${settlementRows(financial.expenses || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))} — ${escapeHtml(item.category)}</strong><span>الدافع: ${escapeHtml(roleLabel(item.paid_by_uid))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد مصروفات.')}</article></section><section class="card" style="margin-top:1rem"><h2>نسخ التسوية المغلقة</h2>${settlementRows(snapshots, item => `<li><strong>نسخة الإقفال — ${escapeHtml(settlementStateLabel(item.state))}</strong><span>الرصيد النهائي: ${escapeHtml(moneyLabel(item.final_balance_halalas))} — أُغلقت/أُنشئت: ${dateTimeLabel(item.created_at)}</span></li>`, 'لا توجد نسخة مغلقة لهذه الفترة.')}</section>`;
   }
   const S8_EXPORT_LABELS = Object.freeze({ WORK: 'تقرير عمل واحد', MONTH: 'تقرير شهر', FOLLOW_UP: 'سجل المتابعة', CUSTOMER: 'تقرير عميل', CLASSIFICATION: 'تحليل التصنيف' });
-  const S8_COLLECTION_LABELS = Object.freeze({ PRICE_UNSET: 'السعر غير محدد', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', FINANCIALLY_CLOSED: 'مغلق ماليًا', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم' });
+  const S8_COLLECTION_LABELS = Object.freeze({ PRICE_UNSET: 'السعر غير محدد', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', FINANCIALLY_CLOSED: 'مغلق ماليًا', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم', CANCELLED_ZERO_BALANCE: 'ملغى — الرصيد على العميل صفر' });
   function s8FilterParams() { const filters = state.s8.filters; return { ...filters, include_archived: filters.include_archived ? 'true' : 'false', page: state.s8.search.page || 1, page_size: state.s8.search.page_size || 25 }; }
   function s8Options(kind, selected) { return `<option value="">الكل</option>${(state.catalogs[kind] || []).map(item => `<option value="${escapeHtml(item.value_key)}" ${item.value_key === selected ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}`; }
   function s8SearchRows() { const items = state.s8.search.items || []; if (!items.length) return empty('لا توجد نتائج مطابقة للمرشحات الحالية.'); return `<div class="table-wrap"><table data-s8-results><thead><tr><th>العنوان</th><th>العميل</th><th>التصنيف</th><th>الحالة</th><th>التحصيل</th><th>السعر</th><th>الأرشيف</th><th></th></tr></thead><tbody>${items.map(item => `<tr data-s8-work-row="${escapeHtml(item.id)}" data-archived="${item.is_archived ? 'true' : 'false'}"><td><strong>${escapeHtml(item.title)}</strong><br/></td><td>${escapeHtml(item.customer_name || customerName(item.customer_id))}</td><td>${escapeHtml(workTypeLabel(item.work_type_key))}</td><td>${escapeHtml(WORK_STATUS_LABELS[item.status] || item.status || 'غير متاح')}</td><td>${escapeHtml(S8_COLLECTION_LABELS[item.collection_status] || item.collection_status || 'غير متاح')}</td><td>${escapeHtml(item.current_price_halalas === null ? 'السعر غير محدد' : moneyLabel(item.current_price_halalas))}</td><td><span class="badge ${item.is_archived ? 'ok' : 'unset'}">${item.is_archived ? 'تاريخي مؤرشف' : 'نشط'}</span></td><td><button class="row-action" data-work="${escapeHtml(item.id)}" type="button">فتح</button></td></tr>`).join('')}</tbody></table></div>`; }
@@ -451,6 +475,7 @@ function customerPage() {
 function workPage() {
   const work = state.selectedWork; if (!work) return loading(); const similar = work.similar || [];
   const statusText = WORK_STATUS_LABELS[work.status] || work.status;
+  const cancelled = work.is_cancelled || ['CANCELLED_BEFORE_EXECUTION', 'PARTIALLY_STOPPED'].includes(work.status);
 
   // Sort events chronologically: effective_at ASC, created_at ASC, id ASC
   const sortedEvents = [...(work.events || [])].sort((a, b) => {
@@ -485,10 +510,10 @@ function workPage() {
         <span class="badge ${work.confirmed_at ? 'ok' : 'unset'}">تاريخ التأكيد: ${escapeHtml(work.confirmed_at ? dateTimeLabel(work.confirmed_at) : 'غير مؤكد')}</span>
       </div>
     </div>
-    <button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button>
+    ${cancelled ? '' : '<button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button>'}
   </section>
   ${softWarningsMarkup(work)}
-  ${work.is_cancelled || ['CANCELLED_BEFORE_EXECUTION', 'PARTIALLY_STOPPED'].includes(work.status) ? '<section class="notice warning" data-cancelled-work-notice><strong>ملغى — الرصيد على العميل صفر</strong><p>حُفظ السعر والتاريخ والمدفوعات السابقة كما هي. توقفت العمليات العادية؛ المتاح هو القراءة والتصحيح التاريخي الموثق فقط.</p></section>' : ''}
+  ${cancelled ? '<section class="notice warning" data-cancelled-work-notice><strong>ملغى — الرصيد على العميل صفر</strong><p>حُفظ السعر والتاريخ والمدفوعات السابقة كما هي. توقفت العمليات العادية؛ المتاح هو القراءة والتصحيح التاريخي الموثق والأرشفة فقط.</p></section>' : ''}
   ${financialMarkup(work)}
   ${s7WorkFinancialMarkup(work)}
 
@@ -529,7 +554,7 @@ function workPage() {
     <article class="card">
       <h2>أحداث العمل</h2>
       <p>تسجيل زمني لكافة الأنشطة والاتصالات المرتبطة بالعمل.</p>
-      <form id="s5-event-form" class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
+      <form id="s5-event-form" ${cancelled ? 'hidden' : ''}  class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
         <div class="field">
           <label>النوع <span class="required">*</span></label>
           <input class="input" name="event_type" required placeholder="مثال: اتصال، اجتماع، استلام" />
@@ -568,7 +593,7 @@ function workPage() {
       <!-- TITLE SECTION -->
       <h2>تغيير العنوان وتاريخه</h2>
       <p>يتطلب سببًا إلزاميًا لحفظ التغيير وتسجيله تاريخيًا.</p>
-      <form id="s5-title-form" class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
+      <form id="s5-title-form" ${cancelled ? 'hidden' : ''}  class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
         <div class="field">
           <label>العنوان الجديد <span class="required">*</span></label>
           <input class="input" name="new_title" required placeholder="أدخل العنوان الجديد..." />
@@ -603,7 +628,7 @@ function workPage() {
       <!-- STATUS SECTION -->
       <h2>تغيير حالة التنفيذ العادية</h2>
       <p>المسارات المباشرة للمراحل العادية للتنفيذ (تستثنى منها حالات الإلغاء).</p>
-      <form id="s5-status-form" class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
+      <form id="s5-status-form" ${cancelled ? 'hidden' : ''}  class="form-grid" style="margin-top: 1rem; margin-bottom: 1.5rem;">
         <div class="field">
           <label>الحالة العادية <span class="required">*</span></label>
           <select class="select" name="status" required>
@@ -647,7 +672,7 @@ function workPage() {
       <!-- CANCEL REQUEST FORM -->
       <div style="background: var(--canvas); padding: 1rem; border-radius: 12px; margin-top: 1rem;">
         <h3>تقديم طلب إلغاء</h3>
-        <form id="s5-cancel-form" class="form-grid" style="margin-top: 0.5rem;">
+        <form id="s5-cancel-form" ${cancelled ? 'hidden' : ''}  class="form-grid" style="margin-top: 0.5rem;">
           <div class="field">
             <label>الحالة المستهدفة لطلب الإلغاء <span class="required">*</span></label>
             <select class="select" name="target_execution_status" required>

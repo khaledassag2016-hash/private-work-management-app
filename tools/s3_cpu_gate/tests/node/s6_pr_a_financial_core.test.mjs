@@ -348,7 +348,7 @@ test('S6 API envelope is consumed by the existing private Worker route', { skip:
     assert.equal(approvePricePayload.ok, true);
     assert.ok(approvePricePayload.requestId);
     assert.equal(approvePricePayload.data.financials.current_price_halalas, 150000);
-    assert.deepEqual(approvePricePayload.data.financials.shares, { person_1_halalas: 45000, person_2_halalas: 105000 });
+    assert.deepEqual(approvePricePayload.data.financials.shares, { person_1_halalas: 105000, person_2_halalas: 45000 });
     assert.equal(approvePricePayload.data.financials.remaining_halalas, 150000);
     const refreshedFinancials = await worker.fetch(new Request(`https://example.test/api/works/${work.id}/financials`, { headers: { authorization: `Bearer ${tokenTwo}`, 'x-s3-run-id': 'run-s6', 'x-s3-request-id': 's6-financial-refresh' } }), env);
     assert.equal(refreshedFinancials.status, 200);
