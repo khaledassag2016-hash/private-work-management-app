@@ -5,6 +5,9 @@ import * as worker from '../../src/worker/src/index.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+// datetime-local values are interpreted in the product's configured Riyadh timezone.
+process.env.TZ = 'Asia/Riyadh';
+
 const appPath = fileURLToPath(new URL('../../src/worker/assets/app.js', import.meta.url));
 const appContent = readFileSync(appPath, 'utf8');
 const appRoot = { _html: '', set innerHTML(value) { this._html = value; }, get innerHTML() { return this._html; } };
