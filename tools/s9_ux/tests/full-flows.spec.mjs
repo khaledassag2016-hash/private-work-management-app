@@ -10,14 +10,17 @@ test.beforeEach(async ({ page }) => {
   await openApp(page);
 });
 
-function handleNextDialog(page, action, pattern = /تأكيد إجراء حساس/) {
-  page.once('dialog', async dialog => { expect(dialog.message()).toMatch(pattern); await dialog[action](); });
+async function handleNextDialog(page, action, pattern = /لن يُرسل الطلب قبل اختيار/) {
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(pattern);
+  await dialog.getByRole('button', { name: action === 'accept' ? 'تأكيد' : 'إلغاء' }).click();
 }
 
 async function submitConfirmed(page, form, path) {
   const before = api.count('POST', path);
-  handleNextDialog(page, 'accept');
   await page.locator(`${form} button[type="submit"]`).click();
+  await handleNextDialog(page, 'accept');
   await expect.poll(() => api.count('POST', path)).toBe(before + 1);
 }
 
@@ -54,9 +57,10 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await page.locator('#s5-archive-form input[name="reason"]').fill('سبب أرشفة اصطناعي');
   const archivePath = `/api/works/${work.id}/requests`;
   const archiveBefore = api.count('POST', archivePath);
-  handleNextDialog(page, 'dismiss');
   await page.locator('#s5-archive-form button[type="submit"]').click();
+  await handleNextDialog(page, 'dismiss');
   expect(api.count('POST', archivePath)).toBe(archiveBefore);
+  await page.locator('#s5-archive-form input[name="reason"]').fill('سبب أرشفة اصطناعي');
   await submitConfirmed(page, '#s5-archive-form', archivePath);
 
   await page.locator('#s6-price-form input[name="amount_riyals"]').fill('100.00');
@@ -71,7 +75,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
     ['[data-action="approve-ratio-request"]', `/api/works/${work.id}/ratio-requests/ratio-request-1/approve`],
     ['[data-action="approve-payment-reversal"]', `/api/works/${work.id}/payment-reversal-requests/reversal-1/approve`],
   ]) {
-    const before = api.count('POST', path); handleNextDialog(page, 'accept'); await page.locator(selector).click(); await expect.poll(() => api.count('POST', path)).toBe(before + 1);
+    const before = api.count('POST', path); await page.locator(selector).click(); await handleNextDialog(page, 'accept'); await expect.poll(() => api.count('POST', path)).toBe(before + 1);
   }
 
   await page.locator('[data-action="request-payment-reversal"]').click();
@@ -93,7 +97,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await page.locator('#s7-reopen-form input[name="reason"]').fill('إعادة فتح اصطناعية');
   await submitConfirmed(page, '#s7-reopen-form', `/api/settlements/${settlementPeriod}/reopen-requests`);
   const reopenApprove = `/api/settlements/${settlementPeriod}/reopen-requests/reopen-1/approve`;
-  const beforeApprove = api.count('POST', reopenApprove); handleNextDialog(page, 'accept'); await page.locator('[data-action="approve-settlement-reopen"]').click(); await expect.poll(() => api.count('POST', reopenApprove)).toBe(beforeApprove + 1);
+  const beforeApprove = api.count('POST', reopenApprove); await page.locator('[data-action="approve-settlement-reopen"]').click(); await handleNextDialog(page, 'accept'); await expect.poll(() => api.count('POST', reopenApprove)).toBe(beforeApprove + 1);
 });
 
 test('double click, double tap, repeated Enter, and click while pending send one mutation', async ({ page }, testInfo) => {
@@ -103,8 +107,8 @@ test('double click, double tap, repeated Enter, and click while pending send one
   await form.locator('input[name="effective_at"]').fill('2026-08-13T12:00');
   const path = `/api/works/${work.id}/payments`;
   const release = api.holdNext('POST', path);
-  page.on('dialog', dialog => dialog.accept());
   await page.evaluate(() => { const formElement = document.querySelector('#s7-payment-form'); formElement.requestSubmit(); formElement.requestSubmit(); });
+  await handleNextDialog(page, 'accept');
   await expect.poll(() => api.count('POST', path)).toBe(1);
   await expect(form.locator('button[type="submit"]')).toBeDisabled();
   await expect(form.locator('button[type="submit"]')).toHaveAttribute('aria-busy', 'true');
@@ -144,16 +148,16 @@ test('D-017 confirmation and all five local XLSX triggers complete', async ({ pa
   await page.locator('[data-nav="s8"]').click();
   const alertPath = '/api/alerts/settings';
   const alertBefore = api.count('POST', alertPath);
-  handleNextDialog(page, 'dismiss');
   await page.locator('#s8-alert-settings-form button[type="submit"]').click();
+  await handleNextDialog(page, 'dismiss');
   expect(api.count('POST', alertPath)).toBe(alertBefore);
-  handleNextDialog(page, 'accept');
   await page.locator('#s8-alert-settings-form button[type="submit"]').click();
+  await handleNextDialog(page, 'accept');
   await expect.poll(() => api.count('POST', alertPath)).toBe(alertBefore + 3);
 
   const exportForm = page.locator('#s8-export-form');
-  await exportForm.locator('input[name="work_id"]').fill(work.id);
-  await exportForm.locator('input[name="customer_id"]').fill('customer-1');
+  await exportForm.locator('select[name="work_id"]').selectOption(work.id);
+  await exportForm.locator('select[name="customer_id"]').selectOption('customer-1');
   for (const type of ['WORK', 'MONTH', 'FOLLOW_UP', 'CUSTOMER', 'CLASSIFICATION']) {
     await exportForm.locator('select[name="export_type"]').selectOption(type);
     const downloadPromise = page.waitForEvent('download');
