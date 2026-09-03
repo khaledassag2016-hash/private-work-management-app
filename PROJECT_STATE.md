@@ -366,15 +366,20 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 
 ## UAT Remediation after S11
 
-- Activation base: `68af792607fd7abf879ca0c2d25a7e65a6ddd041` (current `origin/main` and dedicated UAT worktree HEAD).
-- This round is tracked in `docs/UAT_REMEDIATION_MATRIX.md`; it is not named S12 and is not closed.
+- Activation base: `68af792607fd7abf879ca0c2d25a7e65a6ddd041`.
+- This round is tracked in `docs/UAT_REMEDIATION_MATRIX.md`; it is not named S12 and does not create new product scope.
 - Governing decisions added: D-023..D-026 in `docs/DECISION_LOG.md`.
-- Remediation checkpoint `505e2819e9c86b837ca6aba27f9e738a83da2d55` was committed and pushed to `codex/uat-remediation-after-s11`; no merge or main write has occurred.
-- Corrected technical head before this administrative state update: `2315a948755728cd77aaafb48885a83866969ec0`.
-- Applicable CI on `2315a948755728cd77aaafb48885a83866969ec0` is fully green: Foundation `33786658047`, S2 `33786658053`, S3 static `33786658031`, S9 UX `33786658009`, S10 integration/backup/restore `33786658142`, S11 historical import `33786658247` — all `SUCCESS`.
-- The technical remediation at that head therefore has no active CI blocker. This administrative state update changes HEAD and must itself receive applicable final-head CI before supervisory approval.
-- UAT remediation status: `PENDING_FINAL_ADMIN_CI_THEN_SUPERVISORY_REVIEW`; not COMPLETE and not merged.
-- No deploy, Cloud write, Billing, resource creation, production reset, real account mutation or direct `main` write is authorized by this update.
+- Remediation checkpoint: `505e2819e9c86b837ca6aba27f9e738a83da2d55`.
+- Corrected technical head: `2315a948755728cd77aaafb48885a83866969ec0`.
+- Final reviewed PR #118 head: `e22b3601ce7366074bf43d43504869f01e6870ae`.
+- Final-head CI on that exact head: Foundation `33789918510`, S2 `33789918515`, S3 static `33789918522`, S9 UX `33789918496`, S10 integration/backup/restore `33789918552`, S11 historical import `33789918518` — all `SUCCESS`.
+- General supervisory review of PR #118 found no unresolved blocker or regression within scope.
+- PR #118 was Squash merged to `main` at `e4ffd6c1c2e5ff4ae49b1e9d1bf6ed8bd0a8212b`; Issue #117 closed completed.
+- Post-merge CI on that exact `main` SHA: Foundation `33792750356`, S3 static `33792750267`, S10 integration/backup/restore `33792750285`, S11 historical import `33792750597` — all workflows applicable to the push completed `SUCCESS`.
+- `UAT_REMEDIATION_ACCEPTANCE = PASS_POST_MERGE_VERIFIED`.
+- Administrative closure becomes effective after this independent documentation/state PR passes applicable final-head CI, receives general supervisory approval, is Squash merged, and its `main` result is post-merge verified.
+- This closure PR changes documentation/state only; it does not modify application or Worker logic.
+- No deploy, Cloud write, Billing, resource creation, production reset, real account mutation or direct `main` write is authorized by this closure record.
 
 ## Permanent rules
 
