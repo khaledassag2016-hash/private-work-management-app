@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-## governing authority
+## Governing authority
 
 - Project: **Private Work Management App**.
 - Official repository: `khaledassag2016-hash/private-work-management-app`.
