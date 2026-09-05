@@ -124,21 +124,36 @@ test('S7 PR-C payment and reversal handlers post governed payloads then refetch 
   assert.equal(state.busy, false);
 });
 
-test('S7 PR-C financial workspace displays all settlement components, pending reopen safety, and disables close for unresolved truth', () => {
+test('S7 PR-C financial workspace keeps full details while Wave 2 summary and period actions follow the current state', () => {
   setup({ uid: 'uid-one' });
   state.view = 'financial';
-  state.financial = { periodKey: '2026-08', preview: preview({ unresolved_code: 'S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED' }), snapshots: [{ version: 1, state: 'CLOSED', final_balance_halalas: 26000, created_at: '2026-08-31T00:00:00.000Z' }], reopenRequests: [{ id: 'reopen-self', state: 'PENDING', reason: 'سبب', requested_by: 'uid-one' }], transfers: [{ amount_halalas: 5000, from_party: 'person_1', to_party: 'person_2', fee_halalas: 100, effective_at: '2026-08-15T00:00:00.000Z' }], subscriptions: [{ state: 'ACTIVE', aggregate_amount_halalas: 13650, effective_at: '2026-08-01T00:00:00.000Z', paid_by_uid: 'uid-two' }], expenses: [{ amount_halalas: 2000, category: 'مصروف تجريبي', paid_by_uid: 'uid-one', effective_at: '2026-08-20T00:00:00.000Z' }] };
-  const html = ui.financialPage();
-  assert.match(html, /عدد الأعمال/);
-  assert.match(html, /المتحصل من العميل/);
-  assert.match(html, /الرصيد السابق/);
-  assert.match(html, /الرصيد النهائي/);
-  assert.match(html, /المعاينة تعرض المكونات الموضوعية فقط/);
-  assert.match(html, /<button[^>]*disabled[^>]*>إقفال نسخة التسوية/);
-  assert.match(html, /لا يمكنك اعتماد طلبك/);
-  assert.doesNotMatch(html, /approve-settlement-reopen" data-request-id="reopen-self/);
-  assert.doesNotMatch(html, /Worker|تقرير S8/);
-  assert.match(html, /المعلومات المالية المعروضة مأخوذة من السجل المعتمد/);
+  const common = { periodKey: '2026-08', preview: preview({ unresolved_code: 'S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED' }), transfers: [{ amount_halalas: 5000, from_party: 'person_1', to_party: 'person_2', fee_halalas: 100, effective_at: '2026-08-15T00:00:00.000Z' }], subscriptions: [{ state: 'ACTIVE', aggregate_amount_halalas: 13650, effective_at: '2026-08-01T00:00:00.000Z', paid_by_uid: 'uid-two' }], expenses: [{ amount_halalas: 2000, category: 'مصروف تجريبي', paid_by_uid: 'uid-one', effective_at: '2026-08-20T00:00:00.000Z' }] };
+
+  const historicalRequest = { id: 'reopen-other', state: 'PENDING', reason: 'سبب تاريخي للمراجعة', requested_by: 'uid-two', requested_at: '2026-08-30T00:00:00.000Z' };
+  state.financial = { ...common, snapshots: [{ version: 1, state: 'CLOSED', final_balance_halalas: 26000, created_at: '2026-08-31T00:00:00.000Z' }], reopenRequests: [historicalRequest] };
+  const closedHtml = ui.financialPage();
+  assert.match(closedHtml, /data-settlement-summary/);
+  for (const label of ['إجمالي قيمة أعمال الشهر', 'حصة خالد', 'حصة وليد', 'إجمالي الاشتراكات', 'رسوم التحويل']) assert.match(closedHtml, new RegExp(label));
+  assert.match(closedHtml, /عدد الأعمال/);
+  assert.match(closedHtml, /المتحصل من العميل/);
+  assert.match(closedHtml, /الرصيد السابق/);
+  assert.match(closedHtml, /الرصيد النهائي/);
+  assert.match(closedHtml, /التسوية تحتاج مراجعة قبل الإقفال/);
+  assert.match(closedHtml, /حالة الفترة: مغلقة/);
+  assert.doesNotMatch(closedHtml, /id="s7-settlement-close-form"/);
+  assert.match(closedHtml, /id="s7-reopen-form"/);
+  assert.match(closedHtml, /سبب تاريخي للمراجعة/);
+  assert.match(closedHtml, /data-action="approve-settlement-reopen" data-request-id="reopen-other"/);
+  assert.match(closedHtml, /يسري من تسوية .*سبتمبر/);
+  assert.doesNotMatch(closedHtml, /2026-09|September 2026|سلطوية بالهللات|الحالة السلطوية|الخادم|لا تفترض الواجهة|لا تنشئ الواجهة/);
+
+  state.financial = { ...common, preview: preview(), snapshots: [], reopenRequests: [historicalRequest] };
+  const openHtml = ui.financialPage();
+  assert.match(openHtml, /حالة الفترة: مفتوحة/);
+  assert.match(openHtml, /id="s7-settlement-close-form"/);
+  assert.doesNotMatch(openHtml, /id="s7-reopen-form"/);
+  assert.match(openHtml, /سبب تاريخي للمراجعة/);
+  assert.doesNotMatch(openHtml, /data-action="approve-settlement-reopen"/);
 });
 
 test('S7 PR-C transfer, subscription, expense, settlement close and reopen workflows call only authoritative APIs and refetch workspace state', async () => {
@@ -263,7 +278,7 @@ test('S7 PR-C integrated UI plus Worker/DB acceptance covers confirmation, C/F/H
     let financial = await worker.getWorkFinancials(env, work.id); assert.equal(financial.remaining_halalas, 0); assert.equal(financial.payments.length, 2); assert.equal(financial.payments[0].recorded_by, 'uid-one'); assert.equal(financial.payments[0].received_by, 'uid-two'); assert.notEqual(state.selectedWork.payments[0].received_by, state.selectedWork.payments[0].recorded_by); assert.match(ui.workPage(), /استلمها:/); assert.match(ui.workPage(), /سُجلت بواسطة:/);
     const firstPayment = financial.payments[0]; await ui.submitPaymentReversalRequest(integratedForm({ payment_id: firstPayment.id, reason: 'Integrated correction' })); assert.equal((await worker.getWorkFinancials(env, work.id)).approved_payments_total_halalas, 170000); state.auth.uid = 'uid-two'; state.auth.role = 'person_2'; await ui.handleApprovePaymentReversal(state.selectedWork.reversalRequests[0].id); financial = await worker.getWorkFinancials(env, work.id); assert.equal(financial.approved_payments_total_halalas, 70000); await ui.submitPayment(integratedForm({ amount_riyals: '1000.00', effective_at: '2026-08-16T12:00', payment_method: 'BANK_TRANSFER', received_by: 'uid-one', note: 'corrected new payment' })); assert.equal((await worker.getWorkFinancials(env, work.id)).remaining_halalas, 0);
     state.auth.uid = 'uid-one'; state.auth.role = 'person_1'; await ui.loadFinancialWorkspace('2026-08'); const beforeTransfer = state.financial.preview.final_balance_halalas; await ui.submitTransfer(integratedForm({ amount_riyals: '100.00', fee_riyals: '1.01', effective_at: '2026-08-18T10:00', from_party: 'person_1', to_party: 'person_2' })); assert.notEqual(state.financial.preview.final_balance_halalas, beforeTransfer); assert.equal(state.financial.preview.transfer_fee_halalas, 101);
-    state.auth.uid = 'uid-two'; state.auth.role = 'person_2'; await ui.submitSubscription(integratedForm({ state: 'ACTIVE', aggregate_amount_riyals: '200.00', effective_at: '2026-08-20T10:00' })); await ui.loadFinancialWorkspace('2026-08'); assert.equal(state.financial.preview.subscription_total_halalas, 13650); await ui.loadFinancialWorkspace('2026-09'); assert.equal(state.financial.preview.subscription_total_halalas, 20000); assert.match(ui.financialPage(), /يطبق من تسوية الشهر التالي/); await ui.submitSubscription(integratedForm({ state: 'CANCELLED', aggregate_amount_riyals: '', effective_at: '2026-09-20T10:00' })); await ui.loadFinancialWorkspace('2026-09'); assert.equal(state.financial.preview.subscription_total_halalas, 20000); await ui.loadFinancialWorkspace('2026-10'); assert.equal(state.financial.preview.subscription_total_halalas, 0);
+    state.auth.uid = 'uid-two'; state.auth.role = 'person_2'; await ui.submitSubscription(integratedForm({ state: 'ACTIVE', aggregate_amount_riyals: '200.00', effective_at: '2026-08-20T10:00' })); await ui.loadFinancialWorkspace('2026-08'); assert.equal(state.financial.preview.subscription_total_halalas, 13650); await ui.loadFinancialWorkspace('2026-09'); assert.equal(state.financial.preview.subscription_total_halalas, 20000); assert.match(ui.financialPage(), /يسري التغيير من تسوية الشهر التالي/); await ui.submitSubscription(integratedForm({ state: 'CANCELLED', aggregate_amount_riyals: '', effective_at: '2026-09-20T10:00' })); await ui.loadFinancialWorkspace('2026-09'); assert.equal(state.financial.preview.subscription_total_halalas, 20000); await ui.loadFinancialWorkspace('2026-10'); assert.equal(state.financial.preview.subscription_total_halalas, 0);
     state.auth.uid = 'uid-one'; state.auth.role = 'person_1'; await ui.loadFinancialWorkspace('2026-08'); await ui.submitSettlementClose(integratedForm({})); const closedWork = await worker.getWork(env, work.id); const confirmedBeforeBlockedRemoval = closedWork.confirmed_at; await ui.submitWork(integratedForm({ id: work.id, version: closedWork.version, customer_id: customer.id, title: closedWork.title, country: closedWork.country, university: closedWork.university, specialty_key: closedWork.specialty_key, work_type_key: closedWork.work_type_key, subject_or_course_code: closedWork.subject_or_course_code || '', status: closedWork.status, quantity: closedWork.quantity || '', relationship_kind: closedWork.relationship_kind, parent_work_id: closedWork.parent_work_id || '', description: closedWork.description || '', confirmed_at: '' })); assert.equal((await worker.getWork(env, work.id)).confirmed_at, confirmedBeforeBlockedRemoval); assert.match(ui.errorMessage('CLOSED_PERIOD_MUTATION_FORBIDDEN'), /إعادة فتح معتمدة/); const transferCountBeforeBlocked = (await worker.listInterPartyTransfers(env)).length; await ui.submitTransfer(integratedForm({ amount_riyals: '1.00', fee_riyals: '0.00', effective_at: '2026-08-20T10:00', from_party: 'person_1', to_party: 'person_2' })); assert.equal((await worker.listInterPartyTransfers(env)).length, transferCountBeforeBlocked);
     await ui.submitSettlementReopen(integratedForm({ reason: 'Integrated U1 to U2 reopen' })); state.auth.uid = 'uid-two'; state.auth.role = 'person_2'; await ui.handleApproveSettlementReopen(state.financial.reopenRequests[0].id); await ui.submitTransfer(integratedForm({ amount_riyals: '1.00', fee_riyals: '0.00', effective_at: '2026-08-20T10:00', from_party: 'person_1', to_party: 'person_2' })); await ui.submitSettlementClose(integratedForm({})); state.auth.uid = 'uid-two'; await ui.submitSettlementReopen(integratedForm({ reason: 'Integrated U2 to U1 reopen' })); state.auth.uid = 'uid-one'; state.auth.role = 'person_1'; await ui.handleApproveSettlementReopen(state.financial.reopenRequests.filter(item => item.state === 'PENDING')[0].id); await ui.submitTransfer(integratedForm({ amount_riyals: '2.00', fee_riyals: '0.00', effective_at: '2026-08-21T10:00', from_party: 'person_1', to_party: 'person_2' })); await ui.submitSettlementClose(integratedForm({}));
     state.selectedWork = null; state.financial = { periodKey: '2026-08', preview: null, snapshots: [], reopenRequests: [], transfers: [], subscriptions: [], expenses: [], participants: [] }; trace.length = 0; await ui.openWork(work.id); trace.length = 0; database.readQueries = 0; database.bindingWidths = []; await ui.loadFinancialWorkspace('2026-08'); const snapshots = await worker.listSettlementSnapshots(env, '2026-08'); const reopenHistory = await worker.listSettlementReopenRequests(env, '2026-08'); assert.equal(snapshots.length, 3); assert.equal(reopenHistory.filter(item => item.state === 'APPROVED').length, 2); assert.equal(ui.settlementPeriodState(snapshots, reopenHistory), 'CLOSED'); assert.match(ui.financialPage(), /نسخة الإقفال/); assert.match(ui.workPage(), /طلبات تصحيح الدفعات/); assert.ok(trace.every(call => !/^\/api\/works\//.test(call.path))); assert.equal(trace.length, 7); assert.ok(database.readQueries <= 40); assert.ok(Math.max(...database.bindingWidths, 0) <= 100);

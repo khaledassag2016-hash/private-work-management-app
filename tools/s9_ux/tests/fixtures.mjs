@@ -69,6 +69,10 @@ export async function installHarness(page) {
   const requestsLog = [];
   let nextFailure = null;
   let held = null;
+  const settlementHarness = {
+    snapshots: [],
+    reopenRequests: reopenRequests.map(item => ({ ...item })),
+  };
   await page.route('**/private/ping', route => handle(route));
   await page.route('**/api/**', route => handle(route));
   async function handle(route) {
@@ -80,7 +84,29 @@ export async function installHarness(page) {
       await route.fulfill({ status: failure.status, contentType: 'application/json', body: JSON.stringify({ ok: false, code: failure.code }) }); return;
     }
     if (held && held.path === entry.path && held.method === entry.method) await held.promise;
-    const data = dataFor(entry.path, entry.method);
+    let data;
+    const closeMatch = entry.path.match(/^\/api\/settlements\/([^/]+)\/close$/);
+    const reopenMatch = entry.path.match(/^\/api\/settlements\/([^/]+)\/reopen-requests$/);
+    const approveReopenMatch = entry.path.match(/^\/api\/settlements\/([^/]+)\/reopen-requests\/([^/]+)\/approve$/);
+    if (entry.method === 'POST' && closeMatch) {
+      const snapshot = { period_key: closeMatch[1], version: settlementHarness.snapshots.length + 1, state: 'CLOSED', final_balance_halalas: preview.final_balance_halalas, created_at: '2026-08-31T00:00:00.000Z' };
+      settlementHarness.snapshots.push(snapshot);
+      data = snapshot;
+    } else if (entry.method === 'POST' && reopenMatch) {
+      const requestItem = { id: `reopen-self-${settlementHarness.reopenRequests.length + 1}`, period_key: reopenMatch[1], state: 'PENDING', reason: entry.body?.reason || 'إعادة فتح', requested_by: 'uid-one', requested_at: '2026-08-31T12:00:00.000Z' };
+      settlementHarness.reopenRequests.push(requestItem);
+      data = requestItem;
+    } else if (entry.method === 'POST' && approveReopenMatch) {
+      const requestItem = settlementHarness.reopenRequests.find(item => item.id === approveReopenMatch[2]);
+      if (requestItem) Object.assign(requestItem, { state: 'APPROVED', approved_by: 'uid-one', approved_at: '2026-09-01T00:00:00.000Z' });
+      data = requestItem || {};
+    } else if (entry.method === 'GET' && entry.path === '/api/settlements') {
+      data = settlementHarness.snapshots;
+    } else if (entry.method === 'GET' && /^\/api\/settlements\/[^/]+\/reopen-requests$/.test(entry.path)) {
+      data = settlementHarness.reopenRequests;
+    } else {
+      data = dataFor(entry.path, entry.method);
+    }
     await route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ ok: true, data }) });
   }
   return {
