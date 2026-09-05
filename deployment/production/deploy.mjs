@@ -9,7 +9,8 @@ export const repositoryRoot = path.resolve(scriptDirectory, '..', '..');
 export const manifestPath = path.join(scriptDirectory, 'production-manifest.json');
 const distributionRoot = path.join(repositoryRoot, '.deployment-dist');
 const generatedConfigPath = path.join(distributionRoot, 'wrangler.jsonc');
-const candidateStatePath = path.join(distributionRoot, 'production-candidate-state.json');
+const candidateStateRoot = path.join(repositoryRoot, '.deployment-state');
+export const candidateStatePath = path.join(candidateStateRoot, 'production-candidate-state.json');
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function invariant(condition, message) {
@@ -163,8 +164,25 @@ export async function validateSourceContracts(manifest) {
   invariant(!Object.hasOwn(incompleteConfig, 'firebaseConfig'), 'partial Firebase config must fail closed');
 }
 
-function generatedWranglerConfig(manifest) {
+export function assertSubdomainSettings(settings) {
+  invariant(object(settings), 'remote Worker subdomain settings are unavailable');
+  invariant(typeof settings.enabled === 'boolean', 'remote workers.dev setting is unavailable');
+  invariant(typeof settings.previews_enabled === 'boolean', 'remote preview URL setting is unavailable');
   return {
+    enabled: settings.enabled,
+    previews_enabled: settings.previews_enabled,
+  };
+}
+
+export function assertSubdomainParity(actual, expected) {
+  const current = assertSubdomainSettings(actual);
+  const locked = assertSubdomainSettings(expected);
+  invariant(current.enabled === locked.enabled, 'workers.dev setting differs from staged state');
+  invariant(current.previews_enabled === locked.previews_enabled, 'preview URL setting differs from staged state');
+}
+
+function generatedWranglerConfig(manifest, subdomainSettings = null) {
+  const config = {
     name: manifest.worker.name,
     main: `../${manifest.source.worker}`,
     compatibility_date: manifest.worker.compatibilityDate,
@@ -199,9 +217,15 @@ function generatedWranglerConfig(manifest) {
     logpush: manifest.logpush,
     tail_consumers: manifest.tailConsumers,
   };
+  if (subdomainSettings !== null) {
+    const locked = assertSubdomainSettings(subdomainSettings);
+    config.workers_dev = locked.enabled;
+    config.preview_urls = locked.previews_enabled;
+  }
+  return config;
 }
 
-export async function buildPackage(manifest) {
+export async function buildPackage(manifest, { subdomainSettings = null } = {}) {
   const outputDirectory = resolveInside(repositoryRoot, manifest.assets.outputDirectory);
   await rm(distributionRoot, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
@@ -214,18 +238,17 @@ export async function buildPackage(manifest) {
     await copyFile(source, destination);
     await assertExactFile(source, destination, asset.url);
   }
-  await writeFile(generatedConfigPath, `${JSON.stringify(generatedWranglerConfig(manifest), null, 2)}\n`, 'utf8');
+  await writeFile(generatedConfigPath, `${JSON.stringify(generatedWranglerConfig(manifest, subdomainSettings), null, 2)}\n`, 'utf8');
   return { outputDirectory, configPath: generatedConfigPath };
 }
 
-export async function validateAll() {
+export async function validateAll({ subdomainSettings = null } = {}) {
   const manifest = validateManifest(await loadManifest());
   await validateSourceContracts(manifest);
-  const built = await buildPackage(manifest);
+  const built = await buildPackage(manifest, { subdomainSettings });
   console.log('DEPLOYMENT_GUARDS: PASS');
   return { manifest, ...built };
 }
-
 function runWrangler(manifest, args, { display = false } = {}) {
   const binary = process.env.WRANGLER_BIN || (process.platform === 'win32' ? 'wrangler.cmd' : 'wrangler');
   const output = execFileSync(binary, args, {
@@ -238,6 +261,22 @@ function runWrangler(manifest, args, { display = false } = {}) {
   return output;
 }
 
+function runGit(args) {
+  return execFileSync('git', args, {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+export function assertCleanGitHead({ gitRunner = runGit } = {}) {
+  const sourceSha = String(gitRunner(['rev-parse', '--verify', 'HEAD']) || '').trim().toLowerCase();
+  invariant(/^[0-9a-f]{40}$/.test(sourceSha), 'exact Git HEAD could not be resolved');
+  const status = String(gitRunner(['status', '--porcelain=v1', '--untracked-files=all']) || '').trim();
+  invariant(status.length === 0, 'working tree must be clean before production staging or promotion');
+  return sourceSha;
+}
+
 export function assertLocalOAuthOnly() {
   invariant(process.env.GITHUB_ACTIONS !== 'true', 'production execution is local only; GitHub Actions is validation only');
   invariant(!process.env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN is forbidden; use the existing local Wrangler OAuth session');
@@ -245,7 +284,9 @@ export function assertLocalOAuthOnly() {
 
 function readLocalOAuthToken(manifest) {
   const credentials = readJsonCommand(manifest, ['auth', 'token', '--json']);
-  const token = credentials?.token || credentials?.result?.token;
+  const resolved = object(credentials?.result) ? credentials.result : credentials;
+  invariant(resolved?.type === 'oauth', 'Wrangler authentication must be the existing local OAuth session');
+  const token = resolved?.token;
   invariant(typeof token === 'string' && token.length > 0, 'local Wrangler OAuth did not return an API token');
   return token;
 }
@@ -288,6 +329,26 @@ export async function assertRemoteObservabilityParity(manifest, { tokenProvider 
   }
   invariant(payload?.success === true && object(payload.result), 'remote script-settings response is unsuccessful');
   assertScriptSettingsParity(payload.result, manifest);
+}
+
+export async function readRemoteSubdomainSettings(manifest, { tokenProvider = readLocalOAuthToken, fetchImpl = fetch } = {}) {
+  const token = tokenProvider(manifest);
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${manifest.accountId}/workers/scripts/${encodeURIComponent(manifest.worker.name)}/subdomain`;
+  let response;
+  try {
+    response = await fetchImpl(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    invariant(false, 'remote Worker subdomain read failed');
+  }
+  invariant(response?.ok, `remote Worker subdomain read returned HTTP ${response?.status || 'unknown'}`);
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    invariant(false, 'remote Worker subdomain response is not JSON');
+  }
+  invariant(payload?.success === true && object(payload.result), 'remote Worker subdomain response is unsuccessful');
+  return assertSubdomainSettings(payload.result);
 }
 
 function assertWranglerVersion(manifest) {
@@ -407,48 +468,111 @@ async function browserSmoke(manifest, candidateVersion = '') {
   await smoke.verifyLogin(manifest, candidateVersion);
 }
 
-async function saveCandidateState(manifest, previousVersion, candidateVersion) {
+export async function clearCandidateState() {
+  await rm(candidateStatePath, { force: true });
+}
+
+export async function saveCandidateState(manifest, previousVersion, candidateVersion, sourceSha, subdomainSettings) {
+  invariant(/^[0-9a-f]{40}$/.test(sourceSha || ''), 'candidate source SHA is invalid');
+  const lockedSubdomain = assertSubdomainSettings(subdomainSettings);
+  await mkdir(candidateStateRoot, { recursive: true });
   await writeFile(candidateStatePath, `${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     worker: manifest.worker.name,
     previousVersion,
     candidateVersion,
+    sourceSha,
+    subdomain: lockedSubdomain,
     stagedAt: new Date().toISOString(),
   }, null, 2)}\n`, 'utf8');
 }
 
-async function loadCandidateState(manifest) {
+export async function loadCandidateState(manifest) {
   let state;
   try {
     state = JSON.parse(await readFile(candidateStatePath, 'utf8'));
   } catch {
     invariant(false, 'no locally saved candidate state; stage and verify a candidate first');
   }
-  invariant(state?.schemaVersion === 1, 'saved candidate state schema is invalid');
+  invariant(state?.schemaVersion === 2, 'saved candidate state schema is invalid');
   invariant(state.worker === manifest.worker.name, 'saved candidate state targets a different Worker');
   invariant(uuidPattern.test(state.previousVersion || ''), 'saved rollback version is invalid');
   invariant(uuidPattern.test(state.candidateVersion || ''), 'saved candidate version is invalid');
   invariant(state.previousVersion !== state.candidateVersion, 'saved candidate state is invalid');
+  invariant(/^[0-9a-f]{40}$/.test(state.sourceSha || ''), 'saved candidate source SHA is invalid');
+  state.subdomain = assertSubdomainSettings(state.subdomain);
   return state;
+}
+
+export async function verifyStagedCandidateWithRecovery({
+  manifest,
+  configPath,
+  previousVersion,
+  candidateVersion,
+  sourceSha,
+  subdomainSettings,
+  deployTrafficFn = (versions, message) => runWrangler(manifest, [
+    'versions', 'deploy',
+    ...versions,
+    '--config', configPath,
+    '--name', manifest.worker.name,
+    '--yes',
+    '--message', message,
+  ], { display: true }),
+  deploymentStatusFn = () => deploymentStatus(manifest),
+  httpSmokeFn = httpSmoke,
+  browserSmokeFn = browserSmoke,
+  saveCandidateStateFn = saveCandidateState,
+  clearCandidateStateFn = clearCandidateState,
+} = {}) {
+  try {
+    deployTrafficFn(
+      [`${previousVersion}@100%`, `${candidateVersion}@0%`],
+      `Stage ${candidateVersion} at zero traffic; rollback ${previousVersion}`,
+    );
+    assertSplit(deploymentStatusFn(), new Map([[previousVersion, 100], [candidateVersion, 0]]));
+    await httpSmokeFn(manifest, candidateVersion);
+    await browserSmokeFn(manifest, candidateVersion);
+    await saveCandidateStateFn(manifest, previousVersion, candidateVersion, sourceSha, subdomainSettings);
+  } catch (error) {
+    try {
+      deployTrafficFn(
+        [`${previousVersion}@100%`],
+        `Automatic stage recovery after failed verification of ${candidateVersion}`,
+      );
+      assertSplit(deploymentStatusFn(), new Map([[previousVersion, 100]]));
+      await clearCandidateStateFn();
+    } catch (recoveryError) {
+      throw new AggregateError(
+        [error, recoveryError],
+        'Candidate verification failed and recovery to the previous 100% version also failed',
+      );
+    }
+    throw error;
+  }
 }
 
 async function stage() {
   assertLocalOAuthOnly();
-  const { manifest, configPath } = await validateAll();
-  await assertRemoteObservabilityParity(manifest);
-  assertWranglerVersion(manifest);
+  const sourceSha = assertCleanGitHead();
+  const initialManifest = validateManifest(await loadManifest());
+  assertWranglerVersion(initialManifest);
+  const oauthToken = readLocalOAuthToken(initialManifest);
+  await assertRemoteObservabilityParity(initialManifest, { tokenProvider: () => oauthToken });
+  const subdomainSettings = await readRemoteSubdomainSettings(initialManifest, { tokenProvider: () => oauthToken });
+  const { manifest, configPath } = await validateAll({ subdomainSettings });
+  await clearCandidateState();
   const currentDeployment = deploymentStatus(manifest);
   const previousVersion = extractSingleActiveVersion(currentDeployment);
   const activeVersion = versionView(manifest, previousVersion);
   assertBindingContract(activeVersion, manifest);
   runWrangler(manifest, ['versions', 'upload', '--config', configPath, '--keep-vars', '--strict', '--dry-run', '--outdir', path.join(distributionRoot, 'dry-run')], { display: true });
-  const revision = (process.env.GITHUB_SHA || 'local').slice(0, 12).toLowerCase();
+  const revision = sourceSha.slice(0, 12);
   const upload = runWrangler(manifest, [
     'versions', 'upload',
     '--config', configPath,
     '--keep-vars',
     '--strict',
-    '--preview-alias', `candidate-${revision}`,
     '--tag', `production-${revision}`,
     '--message', `Production candidate ${revision}; zero traffic`,
   ], { display: true });
@@ -456,23 +580,18 @@ async function stage() {
   invariant(uuidPattern.test(candidateVersion), 'Wrangler did not return a candidate version ID');
   const candidate = versionView(manifest, candidateVersion);
   assertCandidateParity(activeVersion, candidate, manifest);
-  runWrangler(manifest, [
-    'versions', 'deploy',
-    `${previousVersion}@100%`,
-    `${candidateVersion}@0%`,
-    '--config', configPath,
-    '--name', manifest.worker.name,
-    '--yes',
-    '--message', `Stage ${candidateVersion} at zero traffic; rollback ${previousVersion}`,
-  ], { display: true });
-  assertSplit(deploymentStatus(manifest), new Map([[previousVersion, 100], [candidateVersion, 0]]));
-  await httpSmoke(manifest, candidateVersion);
-  await browserSmoke(manifest, candidateVersion);
-  await saveCandidateState(manifest, previousVersion, candidateVersion);
+  await verifyStagedCandidateWithRecovery({
+    manifest,
+    configPath,
+    previousVersion,
+    candidateVersion,
+    sourceSha,
+    subdomainSettings,
+  });
   console.log(`CANDIDATE_READY: ${candidateVersion}`);
   console.log(`ROLLBACK_TARGET: ${previousVersion}`);
+  console.log(`SOURCE_SHA: ${sourceSha}`);
 }
-
 function readOption(name) {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : '';
@@ -480,13 +599,19 @@ function readOption(name) {
 
 async function promote() {
   assertLocalOAuthOnly();
-  const { manifest, configPath } = await validateAll();
-  await assertRemoteObservabilityParity(manifest);
-  const state = await loadCandidateState(manifest);
+  const sourceSha = assertCleanGitHead();
+  const initialManifest = validateManifest(await loadManifest());
+  const state = await loadCandidateState(initialManifest);
+  invariant(state.sourceSha === sourceSha, 'current Git HEAD differs from the staged candidate source SHA');
   const previousVersion = state.previousVersion;
   const candidateVersion = state.candidateVersion;
   invariant(readOption('approve') === candidateVersion, 'explicit local approval must be --approve <saved-candidate-version>');
-  assertWranglerVersion(manifest);
+  assertWranglerVersion(initialManifest);
+  const oauthToken = readLocalOAuthToken(initialManifest);
+  await assertRemoteObservabilityParity(initialManifest, { tokenProvider: () => oauthToken });
+  const subdomainSettings = await readRemoteSubdomainSettings(initialManifest, { tokenProvider: () => oauthToken });
+  assertSubdomainParity(subdomainSettings, state.subdomain);
+  const { manifest, configPath } = await validateAll({ subdomainSettings });
   const active = versionView(manifest, previousVersion);
   const candidate = versionView(manifest, candidateVersion);
   assertCandidateParity(active, candidate, manifest);

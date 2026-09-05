@@ -1,18 +1,25 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import {
   assertBindingContract,
   assertCandidateParity,
+  assertCleanGitHead,
   assertRemoteObservabilityParity,
   assertScriptSettingsParity,
+  assertSubdomainParity,
   buildPackage,
+  candidateStatePath,
   extractSingleActiveVersion,
+  loadCandidateState,
   loadManifest,
+  readRemoteSubdomainSettings,
   repositoryRoot,
+  saveCandidateState,
   validateManifest,
   validateSourceContracts,
+  verifyStagedCandidateWithRecovery,
 } from './deploy.mjs';
 
 function remoteVersion(manifest) {
@@ -133,6 +140,93 @@ test('remote script-settings parity covers observability, Logpush, and tail cons
   }), /script-settings read returned HTTP 403/);
 });
 
+test('Worker subdomain settings are read-only and explicit in the generated config', async () => {
+  const manifest = validateManifest(await loadManifest());
+  const locked = { enabled: false, previews_enabled: false };
+  const remote = await readRemoteSubdomainSettings(manifest, {
+    tokenProvider: () => 'in-memory-test-token',
+    fetchImpl: async () => new Response(JSON.stringify({ success: true, result: locked })),
+  });
+  assert.deepEqual(remote, locked);
+  assert.doesNotThrow(() => assertSubdomainParity(remote, locked));
+  const changed = { ...locked, previews_enabled: true };
+  assert.throws(() => assertSubdomainParity(changed, locked), /preview URL setting differs/);
+  const { configPath } = await buildPackage(manifest, { subdomainSettings: remote });
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.equal(config.workers_dev, false);
+  assert.equal(config.preview_urls, false);
+  await assert.rejects(() => readRemoteSubdomainSettings(manifest, {
+    tokenProvider: () => 'in-memory-test-token',
+    fetchImpl: async () => new Response(JSON.stringify({ success: false }), { status: 403 }),
+  }), /subdomain read returned HTTP 403/);
+});
+
+test('candidate state survives package rebuild and locks the exact source SHA', async () => {
+  const manifest = validateManifest(await loadManifest());
+  const previousVersion = '3020f65e-4ffd-47e3-b373-1c053ffe1297';
+  const candidateVersion = 'e3dce50a-c0c9-49ca-b2e6-d5f4404c4f05';
+  const sourceSha = 'a'.repeat(40);
+  const subdomain = { enabled: false, previews_enabled: false };
+  await rm(path.dirname(candidateStatePath), { recursive: true, force: true });
+  try {
+    await saveCandidateState(manifest, previousVersion, candidateVersion, sourceSha, subdomain);
+    await buildPackage(manifest, { subdomainSettings: subdomain });
+    const state = await loadCandidateState(manifest);
+    assert.equal(state.previousVersion, previousVersion);
+    assert.equal(state.candidateVersion, candidateVersion);
+    assert.equal(state.sourceSha, sourceSha);
+    assert.deepEqual(state.subdomain, subdomain);
+  } finally {
+    await rm(path.dirname(candidateStatePath), { recursive: true, force: true });
+  }
+});
+
+test('production staging and promotion require one exact clean Git HEAD', () => {
+  const sourceSha = 'b'.repeat(40);
+  assert.equal(assertCleanGitHead({
+    gitRunner: (args) => args[0] === 'rev-parse' ? `${sourceSha}\n` : '',
+  }), sourceSha);
+  assert.throws(() => assertCleanGitHead({
+    gitRunner: (args) => args[0] === 'rev-parse' ? `${sourceSha}\n` : ' M deployment/production/deploy.mjs\n',
+  }), /working tree must be clean/);
+});
+
+test('failed Candidate smoke restores the previous version to 100 percent', async () => {
+  const manifest = validateManifest(await loadManifest());
+  const previousVersion = '3020f65e-4ffd-47e3-b373-1c053ffe1297';
+  const candidateVersion = 'e3dce50a-c0c9-49ca-b2e6-d5f4404c4f05';
+  let deployed = new Map([[previousVersion, 100]]);
+  const deployCalls = [];
+  const deployTrafficFn = (versions) => {
+    deployCalls.push([...versions]);
+    deployed = new Map(versions.map((item) => {
+      const [versionId, rawPercentage] = item.split('@');
+      return [versionId, Number(rawPercentage.replace('%', ''))];
+    }));
+  };
+  const deploymentStatusFn = () => ({
+    versions: [...deployed].map(([version_id, percentage]) => ({ version_id, percentage })),
+  });
+  await assert.rejects(() => verifyStagedCandidateWithRecovery({
+    manifest,
+    configPath: '/synthetic/wrangler.jsonc',
+    previousVersion,
+    candidateVersion,
+    sourceSha: 'c'.repeat(40),
+    subdomainSettings: { enabled: false, previews_enabled: false },
+    deployTrafficFn,
+    deploymentStatusFn,
+    httpSmokeFn: async () => { throw new Error('synthetic candidate smoke failure'); },
+    browserSmokeFn: async () => {},
+    saveCandidateStateFn: async () => { throw new Error('state save should not be reached'); },
+    clearCandidateStateFn: async () => {},
+  }), /synthetic candidate smoke failure/);
+  assert.equal(deployCalls.length, 2);
+  assert.deepEqual(deployCalls[0], [`${previousVersion}@100%`, `${candidateVersion}@0%`]);
+  assert.deepEqual(deployCalls[1], [`${previousVersion}@100%`]);
+  assert.deepEqual([...deployed], [[previousVersion, 100]]);
+});
+
 test('GitHub is validation-only; production execution is local OAuth only', async () => {
   const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'production-deployment.yml'), 'utf8');
   assert.match(workflow, /pull_request:/);
@@ -142,4 +236,6 @@ test('GitHub is validation-only; production execution is local OAuth only', asyn
   const executable = await readFile(path.join(repositoryRoot, 'deployment', 'production', 'deploy.mjs'), 'utf8');
   assert.match(executable, /auth', 'token', '--json/);
   assert.match(executable, /workers\/scripts\/\$\{encodeURIComponent\(manifest\.worker\.name\)\}\/script-settings/);
+  assert.match(executable, /workers\/scripts\/\$\{encodeURIComponent\(manifest\.worker\.name\)\}\/subdomain/);
+  assert.doesNotMatch(executable, /--preview-alias/);
 });
