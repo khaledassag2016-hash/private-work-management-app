@@ -413,27 +413,30 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - Wave 1 implementation closure becomes effective only after this state-only final PR head passes all applicable CI, PR #124 is Squash merged, the resulting `main` SHA passes applicable post-merge CI, and Issue #123 is closed completed. When those conditions are met, execution may transition to Wave 2 under a new Issue, branch and PR without reopening Wave 1 implementation.
 
 
-## UAT Wave 2 — Issue #125 / PR #126 — implementation candidate
+## UAT Wave 2 — Issue #125 / PR #126 — implementation closure
 
 - Governing frozen base on `main`: `a32d997c1255c0f1d6f0b14d25d7349dae6df7ab`.
 - Dedicated implementation branch: `wave2-financial-presentation-125`; dedicated Issue #125 and PR #126.
+- Sequential ownership is explicit: after the execution session stopped and handed off the verified final correction, the user explicitly authorized general supervision to perform only the final state synchronization/review/closure work on the same PR; no concurrent writer is authorized.
 - Exclusive Wave 2 UAT scope: `UAT-014, UAT-015, UAT-016, UAT-018, UAT-019, UAT-020, UAT-021, UAT-052`.
+- Final independently reviewed Wave 2 implementation head before this state-only closure update: `43254cc27b1acbe9eb032d0fac413a6de32e4d76`.
 - Product implementation remains frontend presentation only and is confined to the byte-identical `tools/s3_cpu_gate/src/worker/assets/app.js` and `tools/s3_cpu_gate/worker/assets/app.js` pair. No CSS change was required.
 - Wave 2 keeps D-016 and all settlement/business rules unchanged: subscription changes remain monthly aggregate changes effective from the following settlement month; no daily prorating or recalculation of previously closed settlements was introduced.
 - Financial presentation uses user-facing wording, Arabic Gregorian month labels for subscription applicability, direct OPEN/CLOSED period state wording, and one shared `periodState` gate.
-- Final UAT-021 correction: when the period is OPEN, settlement close remains available, the reopen-request form is hidden, reopen-request history remains visible, and every pending reopen request is review-only with no `approve-settlement-reopen` action. When the period is CLOSED, the reopen-request form is visible and a pending request can be approved only by the other account under the existing UI/backend authorization behavior.
+- Final UAT-021 behavior is verified: when the period is OPEN, settlement close remains available, the reopen-request form is hidden, reopen-request history remains visible, and every pending reopen request is review-only with no `approve-settlement-reopen` action. When the period is CLOSED, the reopen-request form is visible and a pending request can be approved only by the other account under the existing UI/backend authorization behavior.
 - Shared-expense behavior remains fail-closed when no approved allocation rule exists; no allocation rule was invented.
 - UAT-052 retains the top financial summary containing only total monthly work value, Khalid share, Waleed share, total subscriptions, and transfer fees. Full settlement/accounting detail remains below it.
-- Product/test files changed for the final UAT-021 correction: the mirrored `app.js` pair, `tools/s3_cpu_gate/tests/node/s7_pr_c_ui_acceptance.test.mjs`, and `tools/s9_ux/tests/full-flows.spec.mjs`. The explicitly authorized test-only `tools/s9_ux/tests/fixtures.mjs` was added to the Wave 2 changed-file set solely to model OPEN→CLOSED→reopen lifecycle in browser tests. No other fixture was changed.
-- Browser-level coverage preserves the reopen workflow: CLOSED request submission + confirmation dialog, then approval of a pending request from the other account + confirmation dialog; after approval the period returns OPEN and no reopen approval action is exposed.
-- Corrected technical implementation head before this administrative state update: `1edca972c7650539fc6d3bbcd4933362a41751ee`.
-- CI on that exact technical head: Foundation integrity `33992374315` SUCCESS; S2 architecture validation `33992374370` SUCCESS; Production deployment guardrails `33992374298` SUCCESS; S3 CPU Gate Static `33992374325` SUCCESS; S9 UX Acceptance `33992374356` SUCCESS; S10 Integration Backup Restore `33992374297` SUCCESS; S11 Historical Import `33992374565` SUCCESS.
-- Regression evidence on the corrected technical head: S3 Full Node `146 PASS / 0 FAIL`; S10 Full Node `146 PASS / 0 FAIL`; S11 Full Node `156 PASS / 0 FAIL`; S9 Level A `10 PASS`; S9 Level B `34 PASS`.
-- Wave 1 and the previously CLOSED UAT regression protections remain passing under the repository regression suites; no Wave 1 product code was intentionally reopened.
-- `WAVE2_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED_CANDIDATE`.
-- No Wave 2 UAT is recorded as `CLOSED` by this implementation record; closure remains subject to independent supervisory/UAT validation.
-- No Worker backend business logic, schema, migration, permission, role, role mapping, Firebase, D1, binding, deployment, Cloud, DNS, Role Remap, Wave 3, Merge or Deploy action is authorized or performed here.
-- This `PROJECT_STATE.md` synchronization creates a new final PR head; that exact final head must pass all applicable CI before supervisory handoff.
+- Browser-level coverage verifies CLOSED request submission + confirmation dialog, approval of a pending request from the other account + confirmation dialog, return to OPEN after approval, preservation of history, and disappearance of reopen actions while OPEN.
+- The final Wave 2 changed-file set is limited to `PROJECT_STATE.md`, the mirrored `app.js` pair, `tools/s3_cpu_gate/tests/node/s7_pr_c_ui_acceptance.test.mjs`, `tools/s9_ux/tests/full-flows.spec.mjs`, and the explicitly authorized test-only `tools/s9_ux/tests/fixtures.mjs`.
+- Mirror parity on the final implementation head: both `app.js` blobs are `f6d2b0a0f0af37606c4611612d1464012006e6c1`.
+- Final-head CI on exact implementation head `43254cc27b1acbe9eb032d0fac413a6de32e4d76`: Foundation integrity `33992681269` SUCCESS; S2 architecture validation `33992681305` SUCCESS; Production deployment guardrails `33992681262` SUCCESS; S3 CPU Gate Static `33992681271` SUCCESS; S9 UX Acceptance `33992681264` SUCCESS; S10 Integration Backup Restore `33992681321` SUCCESS; S11 Historical Import `33992681334` SUCCESS.
+- Regression evidence on that head: focused S7 `12 PASS / 0 FAIL`; S3 Full Node `146 PASS / 0 FAIL`; S10 Full Node `146 PASS / 0 FAIL`; S11 Full Node `156 PASS / 0 FAIL`; S9 Level A `10 PASS`; S9 Level B `34 PASS + 6 intentional skips`.
+- Wave 1 and the previously CLOSED UAT regression protections remain passing under the repository regression suites.
+- The accidental unused branch `wave2-financial-presentation-undefined` remains at the frozen base only and contains no Wave 2 changes; it is not part of PR #126 or the closure evidence.
+- `WAVE2_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED`.
+- No Wave 2 UAT is recorded as `CLOSED` by this implementation wave. UAT closure remains subject to independent UAT validation; implementation verification is not UAT closure.
+- `SCOPE_DEVIATIONS = NONE` for product implementation; no Worker backend business logic, schema, migration, permission, role, role mapping, Firebase, D1, binding, deployment, Cloud, DNS, Role Remap, or Wave 3 product work was performed.
+- Wave 2 implementation closure becomes effective only after this state-only final PR head passes all applicable CI, PR #126 is Squash merged, the resulting `main` SHA passes applicable post-merge CI, and Issue #125 is closed completed. When those conditions are met, execution may transition to Wave 3 under a new Issue, branch and PR without reopening Wave 1 or Wave 2 implementation.
 
 ## Permanent rules
 
