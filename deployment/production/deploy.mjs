@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +9,7 @@ export const repositoryRoot = path.resolve(scriptDirectory, '..', '..');
 export const manifestPath = path.join(scriptDirectory, 'production-manifest.json');
 const distributionRoot = path.join(repositoryRoot, '.deployment-dist');
 const generatedConfigPath = path.join(distributionRoot, 'wrangler.jsonc');
+const candidateStatePath = path.join(distributionRoot, 'production-candidate-state.json');
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function invariant(condition, message) {
@@ -238,8 +238,56 @@ function runWrangler(manifest, args, { display = false } = {}) {
   return output;
 }
 
-function requireCloudAuthorization() {
-  invariant(typeof process.env.CLOUDFLARE_API_TOKEN === 'string' && process.env.CLOUDFLARE_API_TOKEN.length > 0, 'CLOUDFLARE_API_TOKEN is required');
+export function assertLocalOAuthOnly() {
+  invariant(process.env.GITHUB_ACTIONS !== 'true', 'production execution is local only; GitHub Actions is validation only');
+  invariant(!process.env.CLOUDFLARE_API_TOKEN, 'CLOUDFLARE_API_TOKEN is forbidden; use the existing local Wrangler OAuth session');
+}
+
+function readLocalOAuthToken(manifest) {
+  const credentials = readJsonCommand(manifest, ['auth', 'token', '--json']);
+  const token = credentials?.token || credentials?.result?.token;
+  invariant(typeof token === 'string' && token.length > 0, 'local Wrangler OAuth did not return an API token');
+  return token;
+}
+
+export function assertScriptSettingsParity(settings, manifest) {
+  invariant(object(settings), 'remote script settings are unavailable');
+  invariant(settings.logpush === manifest.logpush, 'remote logpush setting differs from the manifest');
+  invariant(Array.isArray(settings.tail_consumers), 'remote tail consumers are unavailable');
+  invariant(JSON.stringify(settings.tail_consumers) === JSON.stringify(manifest.tailConsumers), 'remote tail consumers differ from the manifest');
+  const observability = settings.observability;
+  invariant(object(observability), 'remote observability setting is unavailable');
+  invariant(observability.enabled === manifest.observability.enabled, 'remote observability enabled setting differs from the manifest');
+  invariant(observability.head_sampling_rate === manifest.observability.headSamplingRate, 'remote observability sampling rate differs from the manifest');
+  invariant(object(observability.logs), 'remote observability logs setting is unavailable');
+  invariant(observability.logs.enabled === manifest.observability.logs.enabled, 'remote observability logs enabled setting differs from the manifest');
+  invariant(observability.logs.head_sampling_rate === manifest.observability.logs.headSamplingRate, 'remote observability logs sampling rate differs from the manifest');
+  invariant(observability.logs.persist === manifest.observability.logs.persist, 'remote observability logs persist setting differs from the manifest');
+  invariant(observability.logs.invocation_logs === manifest.observability.logs.invocationLogs, 'remote observability invocation logs setting differs from the manifest');
+  invariant(object(observability.traces), 'remote observability traces setting is unavailable');
+  invariant(observability.traces.enabled === manifest.observability.traces.enabled, 'remote observability traces enabled setting differs from the manifest');
+  invariant(observability.traces.head_sampling_rate === manifest.observability.traces.headSamplingRate, 'remote observability traces sampling rate differs from the manifest');
+  invariant(observability.traces.persist === manifest.observability.traces.persist, 'remote observability traces persist setting differs from the manifest');
+}
+
+export async function assertRemoteObservabilityParity(manifest, { tokenProvider = readLocalOAuthToken, fetchImpl = fetch } = {}) {
+  const token = tokenProvider(manifest);
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${manifest.accountId}/workers/scripts/${encodeURIComponent(manifest.worker.name)}/script-settings`;
+  let response;
+  try {
+    response = await fetchImpl(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    invariant(false, 'remote script-settings read failed');
+  }
+  invariant(response?.ok, `remote script-settings read returned HTTP ${response?.status || 'unknown'}`);
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    invariant(false, 'remote script-settings response is not JSON');
+  }
+  invariant(payload?.success === true && object(payload.result), 'remote script-settings response is unsuccessful');
+  assertScriptSettingsParity(payload.result, manifest);
 }
 
 function assertWranglerVersion(manifest) {
@@ -359,21 +407,35 @@ async function browserSmoke(manifest, candidateVersion = '') {
   await smoke.verifyLogin(manifest, candidateVersion);
 }
 
-function writeWorkflowOutput(name, value) {
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`, 'utf8');
+async function saveCandidateState(manifest, previousVersion, candidateVersion) {
+  await writeFile(candidateStatePath, `${JSON.stringify({
+    schemaVersion: 1,
+    worker: manifest.worker.name,
+    previousVersion,
+    candidateVersion,
+    stagedAt: new Date().toISOString(),
+  }, null, 2)}\n`, 'utf8');
 }
 
-function appendSummary(lines) {
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`, 'utf8');
+async function loadCandidateState(manifest) {
+  let state;
+  try {
+    state = JSON.parse(await readFile(candidateStatePath, 'utf8'));
+  } catch {
+    invariant(false, 'no locally saved candidate state; stage and verify a candidate first');
+  }
+  invariant(state?.schemaVersion === 1, 'saved candidate state schema is invalid');
+  invariant(state.worker === manifest.worker.name, 'saved candidate state targets a different Worker');
+  invariant(uuidPattern.test(state.previousVersion || ''), 'saved rollback version is invalid');
+  invariant(uuidPattern.test(state.candidateVersion || ''), 'saved candidate version is invalid');
+  invariant(state.previousVersion !== state.candidateVersion, 'saved candidate state is invalid');
+  return state;
 }
 
 async function stage() {
-  if (process.env.GITHUB_ACTIONS === 'true') {
-    invariant(process.env.GITHUB_EVENT_NAME === 'workflow_dispatch', 'Cloud writes are allowed only from workflow_dispatch');
-    invariant(process.env.GITHUB_REF === 'refs/heads/main', 'Cloud writes are allowed only from main');
-  }
-  requireCloudAuthorization();
+  assertLocalOAuthOnly();
   const { manifest, configPath } = await validateAll();
+  await assertRemoteObservabilityParity(manifest);
   assertWranglerVersion(manifest);
   const currentDeployment = deploymentStatus(manifest);
   const previousVersion = extractSingleActiveVersion(currentDeployment);
@@ -406,15 +468,7 @@ async function stage() {
   assertSplit(deploymentStatus(manifest), new Map([[previousVersion, 100], [candidateVersion, 0]]));
   await httpSmoke(manifest, candidateVersion);
   await browserSmoke(manifest, candidateVersion);
-  writeWorkflowOutput('previous_version', previousVersion);
-  writeWorkflowOutput('candidate_version', candidateVersion);
-  appendSummary([
-    '## Production candidate verified at 0%',
-    `- Candidate: \`${candidateVersion}\``,
-    `- Rollback target: \`${previousVersion}\``,
-    '- Bindings and plain-text values: exact parity',
-    '- Assets, /app-config.js, and login form: verified with Version Override',
-  ]);
+  await saveCandidateState(manifest, previousVersion, candidateVersion);
   console.log(`CANDIDATE_READY: ${candidateVersion}`);
   console.log(`ROLLBACK_TARGET: ${previousVersion}`);
 }
@@ -425,17 +479,13 @@ function readOption(name) {
 }
 
 async function promote() {
-  if (process.env.GITHUB_ACTIONS === 'true') {
-    invariant(process.env.GITHUB_EVENT_NAME === 'workflow_dispatch', 'Cloud writes are allowed only from workflow_dispatch');
-    invariant(process.env.GITHUB_REF === 'refs/heads/main', 'Cloud writes are allowed only from main');
-  }
-  requireCloudAuthorization();
-  const previousVersion = readOption('previous');
-  const candidateVersion = readOption('candidate');
-  invariant(uuidPattern.test(previousVersion), 'invalid rollback version');
-  invariant(uuidPattern.test(candidateVersion), 'invalid candidate version');
-  invariant(previousVersion !== candidateVersion, 'candidate and rollback versions must differ');
+  assertLocalOAuthOnly();
   const { manifest, configPath } = await validateAll();
+  await assertRemoteObservabilityParity(manifest);
+  const state = await loadCandidateState(manifest);
+  const previousVersion = state.previousVersion;
+  const candidateVersion = state.candidateVersion;
+  invariant(readOption('approve') === candidateVersion, 'explicit local approval must be --approve <saved-candidate-version>');
   assertWranglerVersion(manifest);
   const active = versionView(manifest, previousVersion);
   const candidate = versionView(manifest, candidateVersion);
@@ -471,12 +521,6 @@ async function promote() {
     }
     throw error;
   }
-  appendSummary([
-    '## Production deployment complete',
-    `- Active version: \`${candidateVersion}\` at 100%`,
-    `- Saved rollback target: \`${previousVersion}\``,
-    '- Post-deployment assets, /app-config.js, and login form: verified',
-  ]);
   console.log(`PRODUCTION_ACTIVE: ${candidateVersion}`);
   console.log(`ROLLBACK_TARGET: ${previousVersion}`);
 }

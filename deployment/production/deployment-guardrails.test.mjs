@@ -5,6 +5,8 @@ import test from 'node:test';
 import {
   assertBindingContract,
   assertCandidateParity,
+  assertRemoteObservabilityParity,
+  assertScriptSettingsParity,
   buildPackage,
   extractSingleActiveVersion,
   loadManifest,
@@ -96,14 +98,48 @@ test('staging requires one and only one production version at 100 percent', () =
   assert.throws(() => extractSingleActiveVersion({ versions: [] }), /exactly one active version/);
 });
 
-test('the sole production workflow gates promotion and cannot write from a PR', async () => {
+test('remote script-settings parity covers observability, Logpush, and tail consumers', async () => {
+  const manifest = validateManifest(await loadManifest());
+  const settings = {
+    logpush: manifest.logpush,
+    tail_consumers: manifest.tailConsumers,
+    observability: {
+      enabled: manifest.observability.enabled,
+      head_sampling_rate: manifest.observability.headSamplingRate,
+      logs: {
+        enabled: manifest.observability.logs.enabled,
+        head_sampling_rate: manifest.observability.logs.headSamplingRate,
+        persist: manifest.observability.logs.persist,
+        invocation_logs: manifest.observability.logs.invocationLogs,
+      },
+      traces: {
+        enabled: manifest.observability.traces.enabled,
+        head_sampling_rate: manifest.observability.traces.headSamplingRate,
+        persist: manifest.observability.traces.persist,
+      },
+    },
+  };
+  assert.doesNotThrow(() => assertScriptSettingsParity(settings, manifest));
+  const wrong = structuredClone(settings);
+  wrong.observability.logs.persist = false;
+  assert.throws(() => assertScriptSettingsParity(wrong, manifest), /logs persist setting differs/);
+  await assert.doesNotReject(() => assertRemoteObservabilityParity(manifest, {
+    tokenProvider: () => 'in-memory-test-token',
+    fetchImpl: async () => new Response(JSON.stringify({ success: true, result: settings })),
+  }));
+  await assert.rejects(() => assertRemoteObservabilityParity(manifest, {
+    tokenProvider: () => 'in-memory-test-token',
+    fetchImpl: async () => new Response(JSON.stringify({ success: false }), { status: 403 }),
+  }), /script-settings read returned HTTP 403/);
+});
+
+test('GitHub is validation-only; production execution is local OAuth only', async () => {
   const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'production-deployment.yml'), 'utf8');
   assert.match(workflow, /pull_request:/);
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'/);
-  assert.match(workflow, /environment: production/);
-  assert.match(workflow, /PRODUCTION_APPROVAL_GUARD/);
-  assert.match(workflow, /deploy\.mjs stage/);
-  assert.match(workflow, /deploy\.mjs promote/);
+  assert.match(workflow, /node deployment\/production\/deploy\.mjs validate/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:|CLOUDFLARE_API_TOKEN|environment: production|deploy\.mjs (?:stage|promote)|versions (?:upload|deploy)/);
   assert.doesNotMatch(workflow, /d1 (?:execute|migrations apply)/);
+  const executable = await readFile(path.join(repositoryRoot, 'deployment', 'production', 'deploy.mjs'), 'utf8');
+  assert.match(executable, /auth', 'token', '--json/);
+  assert.match(executable, /workers\/scripts\/\$\{encodeURIComponent\(manifest\.worker\.name\)\}\/script-settings/);
 });
