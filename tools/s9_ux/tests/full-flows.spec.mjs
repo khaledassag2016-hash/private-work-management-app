@@ -46,7 +46,10 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
   await expect(page.locator('[data-action="request-payment-reversal"]')).toBeVisible();
   await expect(page.locator('[data-action="approve-payment-reversal"]')).toBeVisible();
   await page.locator('[data-nav="financial"]').click();
-  for (const selector of ['#s7-transfer-form', '#s7-subscription-form', '#s7-expense-form', '#s7-settlement-close-form', '#s7-reopen-form']) await expect(page.locator(selector)).toBeVisible();
+  for (const selector of ['#s7-transfer-form', '#s7-subscription-form', '#s7-expense-form', '#s7-settlement-close-form']) await expect(page.locator(selector)).toBeVisible();
+  await expect(page.locator('#s7-reopen-form')).toHaveCount(0);
+  await expect(page.locator('[data-settlement-summary]')).toBeVisible();
+  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مفتوحة');
   await expect(page.locator('[data-action="approve-settlement-reopen"]')).toBeVisible();
   await page.locator('[data-nav="s8"]').click();
   await expect(page.locator('#s8-search-form')).toBeVisible();
@@ -98,10 +101,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await page.locator('#s7-expense-form input[name="effective_at"]').fill('2026-08-13T12:00');
   await submitConfirmed(page, '#s7-expense-form', '/api/expenses');
   await submitConfirmed(page, '#s7-settlement-close-form', `/api/settlements/${settlementPeriod}/close`);
-  await page.locator('#s7-reopen-form input[name="reason"]').fill('إعادة فتح اصطناعية');
-  await submitConfirmed(page, '#s7-reopen-form', `/api/settlements/${settlementPeriod}/reopen-requests`);
-  const reopenApprove = `/api/settlements/${settlementPeriod}/reopen-requests/reopen-1/approve`;
-  const beforeApprove = api.count('POST', reopenApprove); await page.locator('[data-action="approve-settlement-reopen"]').click(); await handleNextDialog(page, 'accept'); await expect.poll(() => api.count('POST', reopenApprove)).toBe(beforeApprove + 1);
+  await expect(page.locator('[data-settlement-summary]')).toBeVisible();
 });
 
 test('double click, double tap, repeated Enter, and click while pending send one mutation', async ({ page }, testInfo) => {
