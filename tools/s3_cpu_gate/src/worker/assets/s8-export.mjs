@@ -1,101 +1,47 @@
 import * as XLSX from './vendor/xlsx-0.20.3.mjs';
 
-const MONEY_FORMAT = '0.00';
+const MONEY_FORMAT = '0.##';
+const USER_DATE_LOCALE = 'ar-SA-u-ca-gregory';
+const WORK_STATUS_LABELS = Object.freeze({
+  NEW_REQUEST: 'طلب جديد', REQUIREMENT_REVIEW: 'مراجعة المتطلبات', NEEDS_PRICING: 'يحتاج تسعير',
+  WAITING_CLIENT_RESPONSE: 'بانتظار رد العميل', NEEDS_FOLLOW_UP: 'يحتاج متابعة', AGREED: 'تم الاتفاق',
+  IN_PROGRESS: 'قيد التنفيذ', WAITING_CUSTOMER_INFO: 'بانتظار معلومات العميل', WAITING_REVIEW: 'بانتظار المراجعة',
+  REVISION_REQUIRED: 'تعديل مطلوب', PAUSED: 'متوقف مؤقتًا', CANCELLED_BEFORE_EXECUTION: 'ملغى قبل التنفيذ',
+  PARTIALLY_STOPPED: 'متوقف بعد تنفيذ جزئي', COMPLETED: 'مكتمل', DELIVERED: 'مسلم',
+});
+const COLLECTION_LABELS = Object.freeze({ PRICE_UNSET: 'السعر غير محدد', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', FINANCIALLY_CLOSED: 'مغلق ماليًا', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم', CANCELLED_ZERO_BALANCE: 'ملغى — الرصيد على العميل صفر' });
+const PAYMENT_METHOD_LABELS = Object.freeze({ BANK_TRANSFER: 'تحويل بنكي', CASH: 'نقدي', CARD: 'بطاقة', OTHER: 'أخرى' });
+const WARNING_LABELS = Object.freeze({ NON_PAYMENT: 'عدم دفع', DELAY: 'تأخر', BLOCKED: 'حظر أو انقطاع', DISPUTE: 'نزاع' });
+const EVENT_LABELS = Object.freeze({ FOLLOW_UP: 'متابعة', NOTE: 'ملاحظة', CONTACT: 'تواصل', MEETING: 'اجتماع', DELIVERY: 'تسليم' });
+const EXPORT_FILE_LABELS = Object.freeze({ WORK: 'عمل', MONTH: 'شهر', FOLLOW_UP: 'متابعة', CUSTOMER: 'عميل', CLASSIFICATION: 'تصنيفات' });
 
 function safeText(value) { return value === null || value === undefined ? '' : String(value); }
 function textCell(value) { return { t: 's', v: safeText(value) }; }
-function exactSarText(halalas) {
-  const amount = BigInt(halalas); const negative = amount < 0n; const absolute = negative ? -amount : amount;
-  return `${negative ? '-' : ''}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
-}
-function moneyCell(halalas) {
-  if (halalas === null || halalas === undefined) return textCell('');
-  const amount = Number(halalas); if (!Number.isSafeInteger(amount)) throw new Error('MONEY_OVERFLOW');
-  const sar = amount / 100;
-  return Number.isSafeInteger(Math.round(sar * 100)) && Math.round(sar * 100) === amount ? { t: 'n', v: sar, z: MONEY_FORMAT } : textCell(exactSarText(amount));
-}
+function exactSarText(halalas) { const amount = BigInt(halalas); const negative = amount < 0n; const absolute = negative ? -amount : amount; const whole = absolute / 100n; const fraction = absolute % 100n; return `${negative ? '-' : ''}${whole}${fraction ? `.${String(fraction).padStart(2, '0')}` : ''}`; }
+function moneyCell(halalas) { if (halalas === null || halalas === undefined) return textCell(''); const amount = Number(halalas); if (!Number.isSafeInteger(amount)) throw new Error('MONEY_OVERFLOW'); const sar = amount / 100; return Number.isSafeInteger(Math.round(sar * 100)) && Math.round(sar * 100) === amount ? { t: 'n', v: sar, z: MONEY_FORMAT } : textCell(exactSarText(amount)); }
 function countCell(value) { return { t: 'n', v: Number(value || 0), z: '0' }; }
-function rowRange(columnCount, rowCount) {
-  return XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: Math.max(0, columnCount - 1), r: Math.max(0, rowCount) } });
-}
-function appendSheet(workbook, name, headers, rows, widths = []) {
-  const worksheet = XLSX.utils.aoa_to_sheet([headers.map(textCell), ...rows]);
-  worksheet['!autofilter'] = { ref: rowRange(headers.length, rows.length) };
-  worksheet['!cols'] = headers.map((_, index) => ({ wch: widths[index] || 18 }));
-  XLSX.utils.book_append_sheet(workbook, worksheet, name);
-}
-function createWorkbook() {
-  const workbook = XLSX.utils.book_new();
-  workbook.Workbook = { Views: [{ RTL: true }] };
-  workbook.Props = { Title: 'S8 Export', Subject: 'Authoritative synthetic export', Author: 'Private Work Management App', Company: 'Private Work Management App', Comments: 'No external links, macros, credentials, or active content.' };
-  return workbook;
-}
-function workRow(work) {
-  return [
-    textCell(work.id), textCell(work.customer_name), textCell(work.title), textCell(work.status), textCell(work.work_type_key || 'UNSPECIFIED'),
-    textCell(work.specialty_key || 'UNSPECIFIED'), textCell(work.country || 'UNSPECIFIED'), textCell(work.university || 'UNSPECIFIED'),
-    textCell(work.created_at), textCell(work.confirmed_at || ''), textCell(work.is_archived ? 'مؤرشف' : 'نشط'),
-    moneyCell(work.current_price_halalas), moneyCell(work.approved_paid_halalas), moneyCell(work.remaining_halalas), textCell(work.collection_status),
-  ];
-}
-const WORK_HEADERS = ['معرف العمل', 'العميل', 'العنوان', 'الحالة', 'نوع العمل', 'التخصص', 'الدولة', 'الجامعة', 'تاريخ الإنشاء UTC', 'تاريخ التأكيد UTC', 'حالة الأرشفة', 'السعر SAR', 'المدفوع SAR', 'المتبقي SAR', 'حالة التحصيل'];
-function classificationRows(groups) {
-  return groups.map(row => [textCell(row.bucket), countCell(row.work_count), countCell(row.active_work_count), countCell(row.archived_work_count), countCell(row.price_unset_work_count), moneyCell(row.current_price_halalas), moneyCell(row.approved_paid_halalas), moneyCell(row.remaining_halalas)]);
-}
-const CLASSIFICATION_HEADERS = ['الفئة', 'عدد الأعمال', 'أعمال نشطة', 'أعمال مؤرشفة', 'سعر غير محدد', 'إجمالي السعر SAR', 'إجمالي المدفوع SAR', 'إجمالي المتبقي SAR'];
-
-function buildWorkWorkbook(dto) {
-  const workbook = createWorkbook(); const { work } = dto;
-  appendSheet(workbook, 'ملخص العمل', ['المعرف', 'العميل', 'العنوان', 'الحالة', 'نوع العمل', 'التخصص', 'الدولة', 'الجامعة', 'تاريخ الإنشاء UTC', 'تاريخ التأكيد UTC', 'الأرشفة', 'السعر SAR', 'المدفوع SAR', 'المتبقي SAR', 'التحصيل'], [workRow(work)], [22, 24, 36, 20, 20, 20, 16, 24, 25, 25, 14, 14, 14, 14, 22]);
-  appendSheet(workbook, 'سجل العناوين', ['المعرف', 'العنوان السابق', 'العنوان الجديد', 'السبب', 'التاريخ UTC', 'المسجل'], dto.title_history.map(row => [textCell(row.id), textCell(row.old_title), textCell(row.new_title), textCell(row.reason), textCell(row.changed_at), textCell(row.changed_by)]), [22, 32, 32, 28, 25, 22]);
-  appendSheet(workbook, 'سجل الحالة', ['المعرف', 'الحالة السابقة', 'الحالة الجديدة', 'السبب', 'التاريخ UTC', 'المسجل'], dto.status_history.map(row => [textCell(row.id), textCell(row.old_status), textCell(row.new_status), textCell(row.reason), textCell(row.changed_at), textCell(row.changed_by)]), [22, 24, 24, 28, 25, 22]);
-  appendSheet(workbook, 'متابعة', ['المعرف', 'نوع الحدث', 'الوصف', 'التاريخ الفعلي UTC', 'تاريخ التسجيل UTC', 'المسجل'], dto.events.map(row => [textCell(row.id), textCell(row.event_type), textCell(row.description), textCell(row.effective_at), textCell(row.created_at), textCell(row.actor_uid)]), [22, 20, 42, 25, 25, 22]);
-  appendSheet(workbook, 'التحصيل', ['معرف الدفعة', 'المبلغ SAR', 'التاريخ الفعلي UTC', 'الطريقة', 'ملاحظة', 'المستلم', 'المسجل', 'معرف العكس', 'مبلغ العكس SAR', 'تاريخ العكس UTC'], dto.payments.map(row => [textCell(row.id), moneyCell(row.amount_halalas), textCell(row.effective_at), textCell(row.payment_method), textCell(row.note), textCell(row.received_by), textCell(row.recorded_by), textCell(row.reversal_id || ''), moneyCell(row.reversal_amount_halalas), textCell(row.reversal_approved_at || '')]), [22, 14, 25, 18, 30, 20, 20, 22, 16, 25]);
-  return workbook;
-}
-function buildMonthWorkbook(dto) {
-  const workbook = createWorkbook();
-  appendSheet(workbook, 'أعمال الشهر', WORK_HEADERS, dto.works.map(workRow), [22, 24, 36, 20, 20, 20, 16, 24, 25, 25, 14, 14, 14, 14, 22]);
-  appendSheet(workbook, 'التحصيل', ['معرف العمل', 'العنوان', 'حالة التحصيل', 'المدفوع SAR', 'المتبقي SAR'], dto.works.map(row => [textCell(row.id), textCell(row.title), textCell(row.collection_status), moneyCell(row.approved_paid_halalas), moneyCell(row.remaining_halalas)]), [22, 36, 22, 16, 16]);
-  appendSheet(workbook, 'التسوية', ['المعرف', 'الفترة', 'الإصدار', 'الحالة', 'أساس الفترة', 'عدد الأعمال', 'قيمة الأعمال SAR', 'حصة الشخص 1 من الأعمال SAR', 'حصة الشخص 2 من الأعمال SAR', 'التحصيل المعتمد SAR', 'إجمالي التحويلات SAR (غير موقّع؛ لا يُستنتج منه الاتجاه)', 'صافي التحويل للشخص 2 SAR (غير محفوظ في snapshot)', 'رسوم التحويل SAR', 'الاشتراكات SAR', 'المصروفات المحكومة SAR', 'الرصيد السابق SAR', 'الرصيد النهائي SAR (الموجب: الشخص 1 مدين للشخص 2)', 'حالة عدم الحسم'], dto.settlement_snapshots.map(row => [textCell(row.id), textCell(row.period_key), countCell(row.version), textCell(row.state), textCell(row.period_basis), countCell(row.work_count), moneyCell(row.total_work_value_halalas), moneyCell(row.person_1_work_share_halalas), moneyCell(row.person_2_work_share_halalas), moneyCell(row.approved_receipts_halalas), moneyCell(row.transfer_amount_halalas), row.transfer_net_person_2_halalas === null ? textCell('غير متاح؛ غير محفوظ في snapshot') : moneyCell(row.transfer_net_person_2_halalas), moneyCell(row.transfer_fee_halalas), moneyCell(row.subscription_total_halalas), moneyCell(row.governed_expense_total_halalas), moneyCell(row.prior_balance_halalas), moneyCell(row.final_balance_halalas), textCell(row.unresolved_code || '')]), [22, 15, 12, 16, 20, 14, 18, 22, 22, 18, 40, 40, 18, 18, 22, 18, 40, 36]);
-  return workbook;
-}
-function buildFollowUpWorkbook(dto) {
-  const workbook = createWorkbook();
-  appendSheet(workbook, 'سجل المتابعة', ['معرف الحدث', 'معرف العمل', 'العنوان', 'العميل', 'نوع الحدث', 'الوصف', 'التاريخ الفعلي UTC', 'تاريخ التسجيل UTC', 'المسجل', 'الأرشفة'], dto.events.map(row => [textCell(row.id), textCell(row.work_id), textCell(row.work_title), textCell(row.customer_name), textCell(row.event_type), textCell(row.description), textCell(row.effective_at), textCell(row.created_at), textCell(row.actor_uid), textCell(row.is_archived ? 'مؤرشف' : 'نشط')]), [22, 22, 36, 24, 20, 42, 25, 25, 22, 14]);
-  return workbook;
-}
-function buildCustomerWorkbook(dto) {
-  const workbook = createWorkbook();
-  const totals = dto.totals || dto.page_totals;
-  appendSheet(workbook, 'تقرير العميل', ['معرف العميل', 'الاسم', 'عدد الأعمال', 'أعمال نشطة', 'أعمال مؤرشفة', 'سعر غير محدد', 'إجمالي المدفوع SAR', 'إجمالي المتبقي SAR'], [[textCell(dto.customer.id), textCell(dto.customer.name), countCell(totals.work_count), countCell(totals.active_work_count), countCell(totals.archived_work_count), countCell(totals.price_unset_work_count), moneyCell(totals.approved_paid_halalas), moneyCell(totals.remaining_halalas)]], [22, 32, 18, 14, 16, 16, 24, 24]);
-  appendSheet(workbook, 'أعمال العميل', WORK_HEADERS, dto.works.map(workRow), [22, 24, 36, 20, 20, 20, 16, 24, 25, 25, 14, 14, 14, 14, 22]);
-  appendSheet(workbook, 'التحصيل', ['معرف العمل', 'العنوان', 'حالة التحصيل', 'المدفوع SAR', 'المتبقي SAR'], dto.works.map(row => [textCell(row.id), textCell(row.title), textCell(row.collection_status), moneyCell(row.approved_paid_halalas), moneyCell(row.remaining_halalas)]), [22, 36, 22, 16, 16]);
-  appendSheet(workbook, 'التحذيرات', ['معرف الحقيقة', 'معرف العمل', 'نوع التحذير', 'المرجع', 'التاريخ UTC', 'التفاصيل'], dto.warnings.map(row => [textCell(row.fact_id), textCell(row.work_id || ''), textCell(row.warning_type), textCell(row.source_ref), textCell(row.happened_at), textCell(row.details_json)]), [22, 22, 20, 28, 25, 42]);
-  return workbook;
-}
-function buildClassificationWorkbook(dto) {
-  const workbook = createWorkbook();
-  const sheets = [['WORK_TYPE', 'حسب النوع'], ['SPECIALTY', 'حسب التخصص'], ['COUNTRY', 'حسب الدولة'], ['UNIVERSITY', 'حسب الجامعة'], ['PERIOD', 'حسب الفترة']];
-  for (const [key, name] of sheets) appendSheet(workbook, name, CLASSIFICATION_HEADERS, classificationRows(dto.groups[key] || []), [28, 16, 16, 16, 16, 20, 20, 20]);
-  return workbook;
-}
-function normalizeExportType(value) {
-  const type = String(value || '').toUpperCase();
-  if (!['WORK', 'MONTH', 'FOLLOW_UP', 'CUSTOMER', 'CLASSIFICATION'].includes(type)) throw new Error('S8_EXPORT_TYPE_INVALID');
-  return type;
-}
-export function safeS8ExportFilename(type, identifier = '') {
-  const safe = String(identifier || '').normalize('NFKD').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'export';
-  return `s8-${normalizeExportType(type).toLowerCase()}-${safe}.xlsx`;
-}
-export function generateS8Workbook(dto) {
-  const type = normalizeExportType(dto?.export_type);
-  const workbook = type === 'WORK' ? buildWorkWorkbook(dto)
-    : type === 'MONTH' ? buildMonthWorkbook(dto)
-      : type === 'FOLLOW_UP' ? buildFollowUpWorkbook(dto)
-        : type === 'CUSTOMER' ? buildCustomerWorkbook(dto)
-          : buildClassificationWorkbook(dto);
-  return new Uint8Array(XLSX.write(workbook, { type: 'array', bookType: 'xlsx', bookSST: true, compression: true }));
-}
+function dateTimeText(value) { if (!value) return ''; const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(USER_DATE_LOCALE, { dateStyle: 'medium', timeStyle: 'short' }).format(date); }
+function periodText(value) { const match = String(value || '').match(/^(\d{4})-(\d{2})$/); if (!match) return safeText(value); return new Intl.DateTimeFormat(USER_DATE_LOCALE, { month: 'long', year: 'numeric' }).format(new Date(Number(match[1]), Number(match[2]) - 1, 1)); }
+function catalogText(catalogs, kind, value) { if (!value || value === 'UNSPECIFIED') return 'غير محدد'; return catalogs?.[kind]?.find(item => item.value_key === value)?.label || 'قيمة محفوظة'; }
+function statusText(value) { return WORK_STATUS_LABELS[value] || 'حالة محفوظة'; }
+function collectionText(value) { return COLLECTION_LABELS[value] || 'حالة تحصيل محفوظة'; }
+function paymentMethodText(value) { return PAYMENT_METHOD_LABELS[value] || 'طريقة دفع أخرى'; }
+function warningText(value) { return WARNING_LABELS[value] || 'تنبيه مسجل'; }
+function eventText(value) { return EVENT_LABELS[value] || (value ? 'حدث مسجل' : 'غير محدد'); }
+function detailsText(value) { if (!value) return ''; if (typeof value === 'object') return safeText(value.note || ''); try { const parsed = JSON.parse(String(value)); return parsed && typeof parsed === 'object' ? safeText(parsed.note || '') : safeText(parsed); } catch { return 'تفاصيل مسجلة'; } }
+function rowRange(columnCount, rowCount) { return XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: Math.max(0, columnCount - 1), r: Math.max(0, rowCount) } }); }
+function appendSheet(workbook, name, headers, rows, widths = []) { const worksheet = XLSX.utils.aoa_to_sheet([headers.map(textCell), ...rows]); worksheet['!autofilter'] = { ref: rowRange(headers.length, rows.length) }; worksheet['!cols'] = headers.map((_, index) => ({ wch: widths[index] || 18 })); XLSX.utils.book_append_sheet(workbook, worksheet, name); }
+function createWorkbook() { const workbook = XLSX.utils.book_new(); workbook.Workbook = { Views: [{ RTL: true }] }; workbook.Props = { Title: 'تقرير إدارة الأعمال الخاصة', Subject: 'تقرير من بيانات التطبيق', Author: 'تطبيق إدارة الأعمال الخاصة', Company: 'إدارة الأعمال الخاصة', Comments: 'ملف Excel منظم للقراءة والمراجعة.' }; return workbook; }
+function workRow(work, catalogs) { return [textCell(work.customer_name), textCell(work.title), textCell(statusText(work.status)), textCell(catalogText(catalogs, 'work_type', work.work_type_key)), textCell(catalogText(catalogs, 'specialty', work.specialty_key)), textCell(catalogText(catalogs, 'country', work.country)), textCell(work.university || 'غير محدد'), textCell(dateTimeText(work.created_at)), textCell(work.confirmed_at ? dateTimeText(work.confirmed_at) : 'غير مؤكد'), textCell(work.is_archived ? 'مؤرشف' : 'نشط'), moneyCell(work.current_price_halalas), moneyCell(work.approved_paid_halalas), moneyCell(work.remaining_halalas), textCell(collectionText(work.collection_status))]; }
+const WORK_HEADERS = ['العميل', 'العنوان', 'الحالة', 'نوع العمل', 'التخصص', 'الدولة', 'الجامعة', 'تاريخ الإنشاء', 'تاريخ التأكيد', 'حالة الأرشفة', 'السعر بالريال', 'المدفوع بالريال', 'المتبقي بالريال', 'حالة التحصيل'];
+function classificationRows(groups, kind, catalogs) { return groups.map(row => [textCell(kind === 'PERIOD' ? periodText(row.bucket) : kind === 'UNIVERSITY' ? (row.bucket === 'UNSPECIFIED' ? 'غير محدد' : row.bucket) : catalogText(catalogs, kind === 'WORK_TYPE' ? 'work_type' : kind.toLowerCase(), row.bucket)), countCell(row.work_count), countCell(row.active_work_count), countCell(row.archived_work_count), countCell(row.price_unset_work_count), moneyCell(row.current_price_halalas), moneyCell(row.approved_paid_halalas), moneyCell(row.remaining_halalas)]); }
+const CLASSIFICATION_HEADERS = ['الفئة', 'عدد الأعمال', 'أعمال نشطة', 'أعمال مؤرشفة', 'سعر غير محدد', 'إجمالي السعر بالريال', 'إجمالي المدفوع بالريال', 'إجمالي المتبقي بالريال'];
+function buildWorkWorkbook(dto) { const workbook = createWorkbook(); const { work } = dto; const catalogs = dto.presentation_catalogs || {}; appendSheet(workbook, 'ملخص العمل', WORK_HEADERS, [workRow(work, catalogs)], [24,36,20,20,20,16,24,25,25,14,16,16,16,22]); appendSheet(workbook, 'سجل العناوين', ['العنوان السابق','العنوان الجديد','السبب','التاريخ'], dto.title_history.map(row => [textCell(row.old_title),textCell(row.new_title),textCell(row.reason),textCell(dateTimeText(row.changed_at))]), [32,32,28,25]); appendSheet(workbook, 'سجل الحالة', ['الحالة السابقة','الحالة الجديدة','السبب','التاريخ'], dto.status_history.map(row => [textCell(statusText(row.old_status)),textCell(statusText(row.new_status)),textCell(row.reason),textCell(dateTimeText(row.changed_at))]), [24,24,28,25]); appendSheet(workbook, 'متابعة', ['نوع الحدث','الوصف','التاريخ الفعلي','تاريخ التسجيل'], dto.events.map(row => [textCell(eventText(row.event_type)),textCell(row.description),textCell(dateTimeText(row.effective_at)),textCell(dateTimeText(row.created_at))]), [20,42,25,25]); appendSheet(workbook, 'التحصيل', ['المبلغ بالريال','التاريخ الفعلي','الطريقة','ملاحظة','التصحيح المعتمد بالريال','تاريخ التصحيح'], dto.payments.map(row => [moneyCell(row.amount_halalas),textCell(dateTimeText(row.effective_at)),textCell(paymentMethodText(row.payment_method)),textCell(row.note),moneyCell(row.reversal_amount_halalas),textCell(dateTimeText(row.reversal_approved_at))]), [16,25,18,30,20,25]); return workbook; }
+function buildMonthWorkbook(dto) { const workbook = createWorkbook(); const catalogs = dto.presentation_catalogs || {}; appendSheet(workbook, 'أعمال الشهر', WORK_HEADERS, dto.works.map(row => workRow(row, catalogs)), [24,36,20,20,20,16,24,25,25,14,16,16,16,22]); appendSheet(workbook, 'التحصيل', ['العنوان','حالة التحصيل','المدفوع بالريال','المتبقي بالريال'], dto.works.map(row => [textCell(row.title),textCell(collectionText(row.collection_status)),moneyCell(row.approved_paid_halalas),moneyCell(row.remaining_halalas)]), [36,22,18,18]); appendSheet(workbook, 'التسوية', ['الفترة','الحالة','أساس الفترة','عدد الأعمال','قيمة الأعمال بالريال','حصة الطرف الأول من الأعمال بالريال','حصة الطرف الثاني من الأعمال بالريال','التحصيل المعتمد بالريال','إجمالي التحويلات بالريال','رسوم التحويل بالريال','الاشتراكات بالريال','المصروفات بالريال','الرصيد السابق بالريال','الرصيد النهائي بالريال'], dto.settlement_snapshots.map(row => [textCell(periodText(row.period_key)),textCell(row.state === 'CLOSED' ? 'مغلقة' : row.state === 'OPEN' ? 'مفتوحة' : 'حالة محفوظة'),textCell(row.period_basis === 'CONFIRMED_AT' ? 'تاريخ التأكيد' : row.period_basis === 'CREATED_AT' ? 'تاريخ الإنشاء' : 'أساس فترة محفوظ'),countCell(row.work_count),moneyCell(row.total_work_value_halalas),moneyCell(row.person_1_work_share_halalas),moneyCell(row.person_2_work_share_halalas),moneyCell(row.approved_receipts_halalas),moneyCell(row.transfer_amount_halalas),moneyCell(row.transfer_fee_halalas),moneyCell(row.subscription_total_halalas),moneyCell(row.governed_expense_total_halalas),moneyCell(row.prior_balance_halalas),moneyCell(row.final_balance_halalas)]), [18,16,20,14,20,24,24,22,22,20,18,18,20,20]); return workbook; }
+function buildFollowUpWorkbook(dto) { const workbook = createWorkbook(); appendSheet(workbook, 'سجل المتابعة', ['العنوان','العميل','نوع الحدث','الوصف','التاريخ الفعلي','تاريخ التسجيل','حالة العمل'], dto.events.map(row => [textCell(row.work_title),textCell(row.customer_name),textCell(eventText(row.event_type)),textCell(row.description),textCell(dateTimeText(row.effective_at)),textCell(dateTimeText(row.created_at)),textCell(row.is_archived ? 'مؤرشف' : 'نشط')]), [36,24,20,42,25,25,14]); return workbook; }
+function buildCustomerWorkbook(dto) { const workbook = createWorkbook(); const totals = dto.totals || dto.page_totals; const catalogs = dto.presentation_catalogs || {}; appendSheet(workbook, 'تقرير العميل', ['الاسم','عدد الأعمال','أعمال نشطة','أعمال مؤرشفة','سعر غير محدد','إجمالي المدفوع بالريال','إجمالي المتبقي بالريال'], [[textCell(dto.customer.name),countCell(totals.work_count),countCell(totals.active_work_count),countCell(totals.archived_work_count),countCell(totals.price_unset_work_count),moneyCell(totals.approved_paid_halalas),moneyCell(totals.remaining_halalas)]], [32,18,14,16,16,24,24]); appendSheet(workbook, 'أعمال العميل', WORK_HEADERS, dto.works.map(row => workRow(row, catalogs)), [24,36,20,20,20,16,24,25,25,14,16,16,16,22]); appendSheet(workbook, 'التحصيل', ['العنوان','حالة التحصيل','المدفوع بالريال','المتبقي بالريال'], dto.works.map(row => [textCell(row.title),textCell(collectionText(row.collection_status)),moneyCell(row.approved_paid_halalas),moneyCell(row.remaining_halalas)]), [36,22,18,18]); appendSheet(workbook, 'التحذيرات', ['نوع التحذير','المرجع','التاريخ','التفاصيل'], dto.warnings.map(row => [textCell(warningText(row.warning_type)),textCell(row.source_ref),textCell(dateTimeText(row.happened_at)),textCell(detailsText(row.details_json))]), [24,28,25,42]); return workbook; }
+function buildClassificationWorkbook(dto) { const workbook = createWorkbook(); const catalogs = dto.presentation_catalogs || {}; const sheets = [['WORK_TYPE','حسب النوع'],['SPECIALTY','حسب التخصص'],['COUNTRY','حسب الدولة'],['UNIVERSITY','حسب الجامعة'],['PERIOD','حسب الفترة']]; for (const [key,name] of sheets) appendSheet(workbook,name,CLASSIFICATION_HEADERS,classificationRows(dto.groups[key] || [],key,catalogs),[28,16,16,16,16,20,20,20]); return workbook; }
+function normalizeExportType(value) { const type = String(value || '').toUpperCase(); if (!['WORK','MONTH','FOLLOW_UP','CUSTOMER','CLASSIFICATION'].includes(type)) throw new Error('S8_EXPORT_TYPE_INVALID'); return type; }
+export function safeS8ExportFilename(type, identifier = '') { const normalizedType = normalizeExportType(type); const safe = String(identifier || '').normalize('NFKC').replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'تقرير'; return `تقرير-${EXPORT_FILE_LABELS[normalizedType]}-${safe}.xlsx`; }
+export function generateS8Workbook(dto) { const type = normalizeExportType(dto?.export_type); const workbook = type === 'WORK' ? buildWorkWorkbook(dto) : type === 'MONTH' ? buildMonthWorkbook(dto) : type === 'FOLLOW_UP' ? buildFollowUpWorkbook(dto) : type === 'CUSTOMER' ? buildCustomerWorkbook(dto) : buildClassificationWorkbook(dto); return new Uint8Array(XLSX.write(workbook, { type: 'array', bookType: 'xlsx', bookSST: true, compression: true })); }
 export function parseS8Workbook(bytes) { return XLSX.read(bytes, { type: 'array', cellStyles: true, cellNF: true }); }

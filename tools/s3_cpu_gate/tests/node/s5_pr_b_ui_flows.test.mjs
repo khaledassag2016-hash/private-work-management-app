@@ -535,4 +535,26 @@ describe('S5 PR-B UI Flows', () => {
     const pkgContent = readFileSync(fileURLToPath(new URL('../../worker/assets/app.js', import.meta.url)), 'utf8');
     assert.equal(srcContent, pkgContent);
   });
+
+  it('23. Wave 1 presentation guard keeps closed UI behavior while removing targeted implementation copy', () => {
+    const srcContent = readFileSync(fileURLToPath(new URL('../../src/worker/assets/app.js', import.meta.url)), 'utf8');
+    assert.match(srcContent, /\['s8', 'البحث والتحليلات'\]/);
+    assert.match(srcContent, /function pageSubtitle\(/);
+    assert.match(srcContent, /name="confirmed_at" type="text"/);
+    assert.match(srcContent, /function auditValueMarkup\(/);
+    for (const leaked of [
+      'واجهة عربية واضحة؛ السجل المالي والتنفيذي محفوظان كما هما.',
+      'القائمة مضبوطة؛ لا تنشئ هذه القائمة تاريخ انتقالات.',
+      'التحقق النهائي من العلاقة يتم على الخادم.',
+      'لا تمثل الواجهة السعر غير المحدد برقم صفر',
+      'يعرض الوقائع التي وفرها backend فقط.',
+      'مؤشر التوافق للحالة',
+      'غير authoritative',
+      'workflow جديد',
+      'سيُنشئ الخادم معرفًا داخليًا ثابتًا وآمنًا لهذه القيمة.',
+      'تأكيد العملية',
+      'لن يُرسل الطلب قبل اختيار «تأكيد».',
+    ]) assert.equal(srcContent.includes(leaked), false, leaked);
+    assert.equal(/auditValueLabel\(value\).*JSON\.stringify/.test(srcContent), false);
+  });
 });

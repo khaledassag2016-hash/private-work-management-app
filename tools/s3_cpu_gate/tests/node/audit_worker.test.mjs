@@ -168,9 +168,11 @@ test('audit UI and packaged Worker mirror expose only the required read-only sur
   assert.match(app, /\/api\/audit\?limit=50/);
   assert.match(app, /data-audit-log/);
   assert.match(app, /actor_role/);
-  assert.match(app, /auditValueLabel\(row\.before\)/);
-  assert.match(app, /auditValueLabel\(row\.after\)/);
-  assert.match(styles, /\.audit-json/);
+  assert.match(app, /auditValueMarkup\(row\.before\)/);
+  assert.match(app, /auditValueMarkup\(row\.after\)/);
+  assert.match(styles, /\.audit-values/);
+  assert.doesNotMatch(app, /auditValueLabel\(value\).*JSON\.stringify/);
+  assert.doesNotMatch(styles, /\.audit-json/);
   for (const relativePath of ['src/index.js', 'assets/app.js', 'assets/styles.css']) {
     assert.equal(readFileSync(join(sourceWorkerRoot, relativePath), 'utf8'), readFileSync(join(packagedWorkerRoot, relativePath), 'utf8'), `worker mirror mismatch: ${relativePath}`);
   }
