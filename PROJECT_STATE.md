@@ -418,20 +418,22 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - Governing frozen base on `main`: `a32d997c1255c0f1d6f0b14d25d7349dae6df7ab`.
 - Dedicated implementation branch: `wave2-financial-presentation-125`; dedicated Issue #125 and PR #126.
 - Exclusive Wave 2 UAT scope: `UAT-014, UAT-015, UAT-016, UAT-018, UAT-019, UAT-020, UAT-021, UAT-052`.
-- Product implementation is frontend presentation only and is confined to the byte-identical `tools/s3_cpu_gate/src/worker/assets/app.js` and `tools/s3_cpu_gate/worker/assets/app.js` pair. No CSS change was required.
+- Product implementation remains frontend presentation only and is confined to the byte-identical `tools/s3_cpu_gate/src/worker/assets/app.js` and `tools/s3_cpu_gate/worker/assets/app.js` pair. No CSS change was required.
 - Wave 2 keeps D-016 and all settlement/business rules unchanged: subscription changes remain monthly aggregate changes effective from the following settlement month; no daily prorating or recalculation of previously closed settlements was introduced.
-- Financial presentation now uses user-facing wording, Arabic Gregorian month labels for subscription applicability, direct OPEN/CLOSED period state wording, and one shared `periodState` gate: OPEN exposes settlement close and hides the reopen-request form; CLOSED hides a new close action and exposes exceptional reopen while retaining review history.
+- Financial presentation uses user-facing wording, Arabic Gregorian month labels for subscription applicability, direct OPEN/CLOSED period state wording, and one shared `periodState` gate.
+- Final UAT-021 correction: when the period is OPEN, settlement close remains available, the reopen-request form is hidden, reopen-request history remains visible, and every pending reopen request is review-only with no `approve-settlement-reopen` action. When the period is CLOSED, the reopen-request form is visible and a pending request can be approved only by the other account under the existing UI/backend authorization behavior.
 - Shared-expense behavior remains fail-closed when no approved allocation rule exists; no allocation rule was invented.
-- UAT-052 adds a top financial summary containing only total monthly work value, Khalid share, Waleed share, total subscriptions, and transfer fees. The full settlement/accounting detail remains below it.
-- Tests changed only where directly required: `tools/s3_cpu_gate/tests/node/s7_pr_c_ui_acceptance.test.mjs` and `tools/s9_ux/tests/full-flows.spec.mjs`. `tools/s9_ux/tests/structural.spec.mjs` required no Wave 2 modification.
-- Technical implementation head before this administrative state update: `82964be76ba12a343fc1c9495e6958c84f621da6`.
-- CI on that exact technical head: S2 architecture validation `33990828615` SUCCESS; Production deployment guardrails `33990828536` SUCCESS; S3 CPU Gate Static `33990828537` SUCCESS; S9 UX Acceptance `33990828550` SUCCESS; S10 Integration Backup Restore `33990828629` SUCCESS; S11 Historical Import `33990828586` SUCCESS.
-- Regression evidence on the technical head: S3 Full Node `146 PASS / 0 FAIL`; S10 Full Node `146 PASS / 0 FAIL`; S11 Full Node `156 PASS / 0 FAIL`; S9 Level A `10 PASS`; S9 Level B `34 PASS`.
+- UAT-052 retains the top financial summary containing only total monthly work value, Khalid share, Waleed share, total subscriptions, and transfer fees. Full settlement/accounting detail remains below it.
+- Product/test files changed for the final UAT-021 correction: the mirrored `app.js` pair, `tools/s3_cpu_gate/tests/node/s7_pr_c_ui_acceptance.test.mjs`, and `tools/s9_ux/tests/full-flows.spec.mjs`. The explicitly authorized test-only `tools/s9_ux/tests/fixtures.mjs` was added to the Wave 2 changed-file set solely to model OPEN→CLOSED→reopen lifecycle in browser tests. No other fixture was changed.
+- Browser-level coverage preserves the reopen workflow: CLOSED request submission + confirmation dialog, then approval of a pending request from the other account + confirmation dialog; after approval the period returns OPEN and no reopen approval action is exposed.
+- Corrected technical implementation head before this administrative state update: `1edca972c7650539fc6d3bbcd4933362a41751ee`.
+- CI on that exact technical head: Foundation integrity `33992374315` SUCCESS; S2 architecture validation `33992374370` SUCCESS; Production deployment guardrails `33992374298` SUCCESS; S3 CPU Gate Static `33992374325` SUCCESS; S9 UX Acceptance `33992374356` SUCCESS; S10 Integration Backup Restore `33992374297` SUCCESS; S11 Historical Import `33992374565` SUCCESS.
+- Regression evidence on the corrected technical head: S3 Full Node `146 PASS / 0 FAIL`; S10 Full Node `146 PASS / 0 FAIL`; S11 Full Node `156 PASS / 0 FAIL`; S9 Level A `10 PASS`; S9 Level B `34 PASS`.
 - Wave 1 and the previously CLOSED UAT regression protections remain passing under the repository regression suites; no Wave 1 product code was intentionally reopened.
 - `WAVE2_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED_CANDIDATE`.
 - No Wave 2 UAT is recorded as `CLOSED` by this implementation record; closure remains subject to independent supervisory/UAT validation.
 - No Worker backend business logic, schema, migration, permission, role, role mapping, Firebase, D1, binding, deployment, Cloud, DNS, Role Remap, Wave 3, Merge or Deploy action is authorized or performed here.
-- This `PROJECT_STATE.md` update creates a new final PR head; that exact final head must pass all applicable CI before supervisory handoff.
+- This `PROJECT_STATE.md` synchronization creates a new final PR head; that exact final head must pass all applicable CI before supervisory handoff.
 
 ## Permanent rules
 
