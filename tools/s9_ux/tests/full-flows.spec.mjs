@@ -50,7 +50,8 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
   await expect(page.locator('#s7-reopen-form')).toHaveCount(0);
   await expect(page.locator('[data-settlement-summary]')).toBeVisible();
   await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مفتوحة');
-  await expect(page.locator('[data-action="approve-settlement-reopen"]')).toBeVisible();
+  await expect(page.getByText('إعادة فتح اصطناعية')).toBeVisible();
+  await expect(page.locator('[data-action="approve-settlement-reopen"]')).toHaveCount(0);
   await page.locator('[data-nav="s8"]').click();
   await expect(page.locator('#s8-search-form')).toBeVisible();
   await expect(page.locator('[data-s8-results-panel]')).toContainText(work.title);
@@ -101,7 +102,27 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await page.locator('#s7-expense-form input[name="effective_at"]').fill('2026-08-13T12:00');
   await submitConfirmed(page, '#s7-expense-form', '/api/expenses');
   await submitConfirmed(page, '#s7-settlement-close-form', `/api/settlements/${settlementPeriod}/close`);
-  await expect(page.locator('[data-settlement-summary]')).toBeVisible();
+  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مغلقة');
+  await expect(page.locator('#s7-reopen-form')).toBeVisible();
+  await expect(page.getByText('إعادة فتح اصطناعية')).toBeVisible();
+  const reopenRequestPath = `/api/settlements/${settlementPeriod}/reopen-requests`;
+  const reopenBefore = api.count('POST', reopenRequestPath);
+  await page.locator('#s7-reopen-form input[name="reason"]').fill('إعادة فتح من المتصفح');
+  await page.locator('#s7-reopen-form button[type="submit"]').click();
+  await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('طلب إعادة فتح التسوية');
+  await handleNextDialog(page, 'accept');
+  await expect.poll(() => api.count('POST', reopenRequestPath)).toBe(reopenBefore + 1);
+  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مغلقة');
+
+  const reopenApprovePath = `/api/settlements/${settlementPeriod}/reopen-requests/reopen-1/approve`;
+  const approveBefore = api.count('POST', reopenApprovePath);
+  await page.locator('[data-action="approve-settlement-reopen"][data-request-id="reopen-1"]').click();
+  await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('اعتماد إعادة فتح التسوية');
+  await handleNextDialog(page, 'accept');
+  await expect.poll(() => api.count('POST', reopenApprovePath)).toBe(approveBefore + 1);
+  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مفتوحة');
+  await expect(page.locator('#s7-reopen-form')).toHaveCount(0);
+  await expect(page.locator('[data-action="approve-settlement-reopen"]')).toHaveCount(0);
 });
 
 test('double click, double tap, repeated Enter, and click while pending send one mutation', async ({ page }, testInfo) => {

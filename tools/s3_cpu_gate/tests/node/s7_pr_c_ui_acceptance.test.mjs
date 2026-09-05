@@ -129,7 +129,8 @@ test('S7 PR-C financial workspace keeps full details while Wave 2 summary and pe
   state.view = 'financial';
   const common = { periodKey: '2026-08', preview: preview({ unresolved_code: 'S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED' }), transfers: [{ amount_halalas: 5000, from_party: 'person_1', to_party: 'person_2', fee_halalas: 100, effective_at: '2026-08-15T00:00:00.000Z' }], subscriptions: [{ state: 'ACTIVE', aggregate_amount_halalas: 13650, effective_at: '2026-08-01T00:00:00.000Z', paid_by_uid: 'uid-two' }], expenses: [{ amount_halalas: 2000, category: 'مصروف تجريبي', paid_by_uid: 'uid-one', effective_at: '2026-08-20T00:00:00.000Z' }] };
 
-  state.financial = { ...common, snapshots: [{ version: 1, state: 'CLOSED', final_balance_halalas: 26000, created_at: '2026-08-31T00:00:00.000Z' }], reopenRequests: [{ id: 'reopen-self', state: 'PENDING', reason: 'سبب', requested_by: 'uid-one' }] };
+  const historicalRequest = { id: 'reopen-other', state: 'PENDING', reason: 'سبب تاريخي للمراجعة', requested_by: 'uid-two', requested_at: '2026-08-30T00:00:00.000Z' };
+  state.financial = { ...common, snapshots: [{ version: 1, state: 'CLOSED', final_balance_halalas: 26000, created_at: '2026-08-31T00:00:00.000Z' }], reopenRequests: [historicalRequest] };
   const closedHtml = ui.financialPage();
   assert.match(closedHtml, /data-settlement-summary/);
   for (const label of ['إجمالي قيمة أعمال الشهر', 'حصة خالد', 'حصة وليد', 'إجمالي الاشتراكات', 'رسوم التحويل']) assert.match(closedHtml, new RegExp(label));
@@ -141,15 +142,18 @@ test('S7 PR-C financial workspace keeps full details while Wave 2 summary and pe
   assert.match(closedHtml, /حالة الفترة: مغلقة/);
   assert.doesNotMatch(closedHtml, /id="s7-settlement-close-form"/);
   assert.match(closedHtml, /id="s7-reopen-form"/);
-  assert.match(closedHtml, /لا يمكنك اعتماد طلبك/);
+  assert.match(closedHtml, /سبب تاريخي للمراجعة/);
+  assert.match(closedHtml, /data-action="approve-settlement-reopen" data-request-id="reopen-other"/);
   assert.match(closedHtml, /يسري من تسوية .*سبتمبر/);
   assert.doesNotMatch(closedHtml, /2026-09|September 2026|سلطوية بالهللات|الحالة السلطوية|الخادم|لا تفترض الواجهة|لا تنشئ الواجهة/);
 
-  state.financial = { ...common, preview: preview(), snapshots: [], reopenRequests: [] };
+  state.financial = { ...common, preview: preview(), snapshots: [], reopenRequests: [historicalRequest] };
   const openHtml = ui.financialPage();
   assert.match(openHtml, /حالة الفترة: مفتوحة/);
   assert.match(openHtml, /id="s7-settlement-close-form"/);
   assert.doesNotMatch(openHtml, /id="s7-reopen-form"/);
+  assert.match(openHtml, /سبب تاريخي للمراجعة/);
+  assert.doesNotMatch(openHtml, /data-action="approve-settlement-reopen"/);
 });
 
 test('S7 PR-C transfer, subscription, expense, settlement close and reopen workflows call only authoritative APIs and refetch workspace state', async () => {
