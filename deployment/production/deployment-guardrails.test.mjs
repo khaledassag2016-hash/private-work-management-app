@@ -17,6 +17,7 @@ import {
   readRemoteSubdomainSettings,
   repositoryRoot,
   saveCandidateState,
+  promoteVerifiedCandidateWithRecovery,
   validateManifest,
   validateSourceContracts,
   verifyStagedCandidateWithRecovery,
@@ -224,6 +225,44 @@ test('failed Candidate smoke restores the previous version to 100 percent', asyn
   assert.equal(deployCalls.length, 2);
   assert.deepEqual(deployCalls[0], [`${previousVersion}@100%`, `${candidateVersion}@0%`]);
   assert.deepEqual(deployCalls[1], [`${previousVersion}@100%`]);
+  assert.deepEqual([...deployed], [[previousVersion, 100]]);
+});
+
+test('promotion transport failure after remote activation restores the previous version to 100 percent', async () => {
+  const manifest = validateManifest(await loadManifest());
+  const previousVersion = '3020f65e-4ffd-47e3-b373-1c053ffe1297';
+  const candidateVersion = 'e3dce50a-c0c9-49ca-b2e6-d5f4404c4f05';
+  let deployed = new Map([[previousVersion, 100], [candidateVersion, 0]]);
+  const deployCalls = [];
+  const deployTrafficFn = (versions) => {
+    deployCalls.push([...versions]);
+    deployed = new Map(versions.map((item) => {
+      const [versionId, rawPercentage] = item.split('@');
+      return [versionId, Number(rawPercentage.replace('%', ''))];
+    }));
+    if (versions.length === 1 && versions[0] === `${candidateVersion}@100%`) {
+      throw new Error('synthetic transport failure after Cloudflare activated candidate');
+    }
+  };
+  const deploymentStatusFn = () => ({
+    versions: [...deployed].map(([version_id, percentage]) => ({ version_id, percentage })),
+  });
+
+  await assert.rejects(() => promoteVerifiedCandidateWithRecovery({
+    manifest,
+    configPath: '/synthetic/wrangler.jsonc',
+    previousVersion,
+    candidateVersion,
+    deployTrafficFn,
+    deploymentStatusFn,
+    httpSmokeFn: async () => {},
+    browserSmokeFn: async () => {},
+  }), /synthetic transport failure after Cloudflare activated candidate/);
+
+  assert.deepEqual(deployCalls, [
+    [`${candidateVersion}@100%`],
+    [`${previousVersion}@100%`],
+  ]);
   assert.deepEqual([...deployed], [[previousVersion, 100]]);
 });
 

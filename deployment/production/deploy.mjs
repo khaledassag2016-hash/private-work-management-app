@@ -597,6 +597,87 @@ function readOption(name) {
   return index >= 0 ? process.argv[index + 1] : '';
 }
 
+function deploymentAlreadySafeForPrevious(deployment, previousVersion, candidateVersion) {
+  try {
+    assertSplit(deployment, new Map([[previousVersion, 100], [candidateVersion, 0]]));
+    return true;
+  } catch {}
+  try {
+    assertSplit(deployment, new Map([[previousVersion, 100]]));
+    return true;
+  } catch {}
+  return false;
+}
+
+export async function promoteVerifiedCandidateWithRecovery({
+  manifest,
+  configPath,
+  previousVersion,
+  candidateVersion,
+  deployTrafficFn = (versions, message) => runWrangler(manifest, [
+    'versions', 'deploy',
+    ...versions,
+    '--config', configPath,
+    '--name', manifest.worker.name,
+    '--yes',
+    '--message', message,
+  ], { display: true }),
+  deploymentStatusFn = () => deploymentStatus(manifest),
+  httpSmokeFn = httpSmoke,
+  browserSmokeFn = browserSmoke,
+} = {}) {
+  try {
+    deployTrafficFn(
+      [`${candidateVersion}@100%`],
+      `Promote verified candidate ${candidateVersion}; rollback ${previousVersion}`,
+    );
+    assertSplit(deploymentStatusFn(), new Map([[candidateVersion, 100]]));
+    await httpSmokeFn(manifest);
+    await browserSmokeFn(manifest);
+  } catch (error) {
+    try {
+      let safeWithoutRollback = false;
+      try {
+        safeWithoutRollback = deploymentAlreadySafeForPrevious(
+          deploymentStatusFn(),
+          previousVersion,
+          candidateVersion,
+        );
+      } catch {}
+
+      if (!safeWithoutRollback) {
+        let rollbackCommandError = null;
+        try {
+          deployTrafficFn(
+            [`${previousVersion}@100%`],
+            `Automatic rollback after failed promotion of ${candidateVersion}`,
+          );
+        } catch (rollbackError) {
+          rollbackCommandError = rollbackError;
+        }
+
+        try {
+          assertSplit(deploymentStatusFn(), new Map([[previousVersion, 100]]));
+        } catch (rollbackVerificationError) {
+          if (rollbackCommandError) {
+            throw new AggregateError(
+              [rollbackCommandError, rollbackVerificationError],
+              'Rollback command and rollback verification both failed',
+            );
+          }
+          throw rollbackVerificationError;
+        }
+      }
+    } catch (recoveryError) {
+      throw new AggregateError(
+        [error, recoveryError],
+        'Promotion failed and deterministic recovery to the previous 100% version also failed',
+      );
+    }
+    throw error;
+  }
+}
+
 async function promote() {
   assertLocalOAuthOnly();
   const sourceSha = assertCleanGitHead();
@@ -618,34 +699,12 @@ async function promote() {
   assertSplit(deploymentStatus(manifest), new Map([[previousVersion, 100], [candidateVersion, 0]]));
   await httpSmoke(manifest, candidateVersion);
   await browserSmoke(manifest, candidateVersion);
-  let activated = false;
-  try {
-    runWrangler(manifest, [
-      'versions', 'deploy',
-      `${candidateVersion}@100%`,
-      '--config', configPath,
-      '--name', manifest.worker.name,
-      '--yes',
-      '--message', `Promote verified candidate ${candidateVersion}; rollback ${previousVersion}`,
-    ], { display: true });
-    activated = true;
-    assertSplit(deploymentStatus(manifest), new Map([[candidateVersion, 100]]));
-    await httpSmoke(manifest);
-    await browserSmoke(manifest);
-  } catch (error) {
-    if (activated) {
-      runWrangler(manifest, [
-        'versions', 'deploy',
-        `${previousVersion}@100%`,
-        '--config', configPath,
-        '--name', manifest.worker.name,
-        '--yes',
-        '--message', `Automatic rollback after failed verification of ${candidateVersion}`,
-      ], { display: true });
-      assertSplit(deploymentStatus(manifest), new Map([[previousVersion, 100]]));
-    }
-    throw error;
-  }
+  await promoteVerifiedCandidateWithRecovery({
+    manifest,
+    configPath,
+    previousVersion,
+    candidateVersion,
+  });
   console.log(`PRODUCTION_ACTIVE: ${candidateVersion}`);
   console.log(`ROLLBACK_TARGET: ${previousVersion}`);
 }
