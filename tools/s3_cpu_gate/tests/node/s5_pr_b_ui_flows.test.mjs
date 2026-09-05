@@ -492,7 +492,7 @@ describe('S5 PR-B UI Flows', () => {
     assert.match(html, /data-collection-status/);
     assert.match(html, /ملخص التحصيل/);
     const collectionCard = html.split('data-collection-status')[1].split('</article>')[0];
-    assert.match(collectionCard, /قراءة تمهيدية من السجل المالي المعتمد/);
+    assert.match(collectionCard, /المتبقي يحسب من السعر والدفعات المعتمدة/);
     assert.match(collectionCard, /تعرض هذه المنطقة حالة التحصيل دون خلطها بحالة التنفيذ/);
     assert.doesNotMatch(collectionCard, /PRICE_UNSET|سعر غير محدد|سعر صفري/);
   });

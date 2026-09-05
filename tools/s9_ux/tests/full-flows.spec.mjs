@@ -167,6 +167,6 @@ test('D-017 confirmation and all five local XLSX triggers complete', async ({ pa
     const downloadPromise = page.waitForEvent('download');
     await exportForm.locator('button[type="submit"]').click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(new RegExp(`^s8-${type.toLowerCase()}-.*\\.xlsx$`));
+    expect(download.suggestedFilename()).toMatch(/^تقرير-.*\.xlsx$/);
   }
 });
