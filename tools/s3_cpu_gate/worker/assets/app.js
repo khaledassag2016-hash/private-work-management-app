@@ -214,19 +214,37 @@ const AUDIT_FIELD_LABELS = Object.freeze({
   kind: 'نوع القائمة', label: 'الاسم الظاهر', active: 'فعال', is_archived: 'مؤرشف',
   from_party: 'من', to_party: 'إلى', fee_payer: 'دافع الرسوم',
   requested_by: 'مقدم الطلب', approved_by: 'معتمد الطلب', created_by: 'من أنشأ السجل', updated_by: 'من حدّث السجل',
-  changed_by: 'من أجرى التغيير', actor_uid: 'من قام بالعملية', paid_by_uid: 'الدافع',
+  changed_by: 'من أجرى التغيير', actor_uid: 'من قام بالعملية', paid_by_uid: 'الدافع', received_by: 'مستلم الدفعة', recorded_by: 'سُجلت بواسطة',
   details_json: 'التفاصيل', value: 'القيمة',
   person_1_bps: 'نسبة الطرف الأول', person_2_bps: 'نسبة الطرف الثاني',
   old_person_1_bps: 'نسبة الطرف الأول السابقة', old_person_2_bps: 'نسبة الطرف الثاني السابقة',
   new_person_1_bps: 'نسبة الطرف الأول الجديدة', new_person_2_bps: 'نسبة الطرف الثاني الجديدة',
   work_count: 'عدد الأعمال', active_work_count: 'الأعمال النشطة', archived_work_count: 'الأعمال المؤرشفة',
-  price_unset_work_count: 'أعمال بلا سعر'
+  price_unset_work_count: 'أعمال بلا سعر',
+  amount_halalas: 'المبلغ', fee_halalas: 'الرسوم', aggregate_amount_halalas: 'إجمالي الاشتراك',
+  current_price_halalas: 'السعر الحالي', previous_price_halalas: 'السعر السابق', new_price_halalas: 'السعر الجديد',
+  resulting_price_halalas: 'السعر بعد الحركة', remaining_halalas: 'المتبقي', customer_remaining_halalas: 'المتبقي على العميل',
+  approved_paid_halalas: 'المدفوع المعتمد', approved_payments_total_halalas: 'إجمالي التحصيل المعتمد',
+  approved_receipts_halalas: 'المتحصل المعتمد', approved_receipts_person_1_halalas: 'استلام الطرف الأول',
+  approved_receipts_person_2_halalas: 'استلام الطرف الثاني', gross_paid_halalas: 'إجمالي المدفوع',
+  reversed_paid_halalas: 'الدفعات المصححة', reversal_amount_halalas: 'مبلغ التصحيح',
+  total_work_value_halalas: 'إجمالي قيمة الأعمال', person_1_work_share_halalas: 'حصة الطرف الأول من الأعمال',
+  person_2_work_share_halalas: 'حصة الطرف الثاني من الأعمال', person_1_halalas: 'حصة الطرف الأول', person_2_halalas: 'حصة الطرف الثاني',
+  prior_balance_halalas: 'الرصيد السابق', final_balance_halalas: 'الرصيد النهائي',
+  subscription_total_halalas: 'إجمالي الاشتراكات', governed_expense_total_halalas: 'إجمالي المصروفات المشتركة',
+  transfer_amount_halalas: 'إجمالي التحويلات', transfer_fee_halalas: 'رسوم التحويل',
+  subscription_effect_person_1_halalas: 'أثر الاشتراك على الطرف الأول', subscription_effect_person_2_halalas: 'أثر الاشتراك على الطرف الثاني',
+  transfer_fee_effect_person_1_halalas: 'أثر رسوم التحويل على الطرف الأول', transfer_fee_effect_person_2_halalas: 'أثر رسوم التحويل على الطرف الثاني',
+  settlement_adjustment_person_1_halalas: 'تعديل تسوية الطرف الأول', settlement_adjustment_person_2_halalas: 'تعديل تسوية الطرف الثاني',
+  recognized_person_1_before_halalas: 'المعتمد سابقًا للطرف الأول', recognized_person_2_before_halalas: 'المعتمد سابقًا للطرف الثاني',
+  corrected_person_1_after_halalas: 'المعتمد بعد التصحيح للطرف الأول', corrected_person_2_after_halalas: 'المعتمد بعد التصحيح للطرف الثاني',
+  person_1_delta_halalas: 'فرق الطرف الأول', person_2_delta_halalas: 'فرق الطرف الثاني',
+  governed_expense_net_effect_to_person_2_halalas: 'أثر المصروفات على الطرف الثاني', transfer_net_person_2_halalas: 'صافي أثر التحويل على الطرف الثاني'
 });
-const AUDIT_TECHNICAL_FIELD = /(^id$|_id$|request_id$|run_marker$|(^|_)version$|value_key$|price_minor_units$|approval_request_id$)/;
+const AUDIT_TECHNICAL_FIELD = /(^id$|_id$|request_id$|run_marker$|(^|_)version$|value_key$|price_minor_units$|approval_request_id$|internal_share_basis_halalas$)/;
 function auditFieldLabel(key) {
   if (AUDIT_TECHNICAL_FIELD.test(key)) return '';
   if (AUDIT_FIELD_LABELS[key]) return AUDIT_FIELD_LABELS[key];
-  if (key.endsWith('_halalas')) return 'قيمة مالية';
   if (key.endsWith('_at')) return 'التاريخ والوقت';
   return '';
 }
@@ -256,7 +274,7 @@ function auditFieldValue(key, value, row) {
   if (key.endsWith('_halalas')) return moneyLabel(Number(value));
   if (key.endsWith('_at')) return dateTimeLabel(value);
   if (key.endsWith('_bps')) return `${Number(value) / 100}%`;
-  if (['requested_by', 'approved_by', 'created_by', 'updated_by', 'changed_by', 'actor_uid', 'paid_by_uid'].includes(key)) return auditUserLabel(value, row);
+  if (['requested_by', 'approved_by', 'created_by', 'updated_by', 'changed_by', 'actor_uid', 'paid_by_uid', 'received_by', 'recorded_by'].includes(key)) return auditUserLabel(value, row);
   if (key === 'status' || key === 'old_status' || key === 'new_status' || key === 'target_execution_status') return workStatusLabel(value);
   if (key === 'relationship_kind') return value === 'CHILD' ? 'تابع لعمل أكبر' : value === 'INDEPENDENT' ? 'عمل مستقل' : 'علاقة محفوظة';
   if (key === 'country') return catalogLabel('country', value);
