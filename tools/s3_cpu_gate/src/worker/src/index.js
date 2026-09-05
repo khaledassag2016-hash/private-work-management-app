@@ -1365,6 +1365,24 @@ async function serveStaticAsset(request, env) {
   return response.status === 404 ? null : response;
 }
 
+function servePublicAppConfig(env) {
+  const firebaseConfig = {
+    apiKey: env.FIREBASE_API_KEY || "",
+    authDomain: env.FIREBASE_AUTH_DOMAIN || "",
+    projectId: env.FIREBASE_PROJECT_ID || "",
+    appId: env.FIREBASE_APP_ID || ""
+  };
+  const configured = Object.values(firebaseConfig).every((value) => typeof value === "string" && value.length > 0);
+  const publicConfig = configured ? { apiBaseUrl: "", firebaseConfig } : { apiBaseUrl: "" };
+  return new Response(`window.__PRIVATE_WORK_APP_CONFIG__ = Object.freeze(${JSON.stringify(publicConfig)});`, {
+    headers: {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff"
+    }
+  });
+}
+
 export default {
   async fetch(request, env) {
     const requestId = request.headers.get('x-s3-request-id') || crypto.randomUUID();
@@ -1372,6 +1390,7 @@ export default {
     const requestedRunId = request.headers.get('x-s3-run-id') || '';
     const runId = requestedRunId === env.RUN_MARKER ? requestedRunId : '';
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/app-config.js") return servePublicAppConfig(env);
     const isStaticAssetRequest = request.method === 'GET' && (url.pathname === '/' || url.pathname.startsWith('/assets/'));
     if (isStaticAssetRequest) {
       const staticResponse = await serveStaticAsset(request, env);

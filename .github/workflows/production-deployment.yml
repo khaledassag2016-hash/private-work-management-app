@@ -1,0 +1,129 @@
+name: Production deployment guardrails
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Approved release or hotfix reference"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assagwork-production-deployment
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      node: ${{ steps.versions.outputs.node }}
+      wrangler: ${{ steps.versions.outputs.wrangler }}
+    steps:
+      - name: Checkout tested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Read pinned tool versions
+        id: versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          tools=json.load(open('tools/s3_cpu_gate/src/version-manifest.json',encoding='utf-8'))['tools']
+          production=json.load(open('deployment/production/production-manifest.json',encoding='utf-8'))
+          if tools['wrangler']['version'] != production['wranglerVersion']:
+              raise SystemExit('Wrangler version manifests differ')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output:
+              output.write(f"node={tools['node']['version']}\n")
+              output.write(f"wrangler={production['wranglerVersion']}\n")
+          PY
+      - name: Use exact authoritative Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+      - name: Run deployment contract tests
+        run: node --test deployment/production/deployment-guardrails.test.mjs
+      - name: Build and validate exact production package
+        run: node deployment/production/deploy.mjs validate
+
+  stage-candidate:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      previous_version: ${{ steps.stage.outputs.previous_version }}
+      candidate_version: ${{ steps.stage.outputs.candidate_version }}
+    env:
+      CI: "true"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout approved main revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Use exact authoritative Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ needs.guard.outputs.node }}
+      - name: Install exact Wrangler
+        run: npm install --global --no-audit --no-fund wrangler@${{ needs.guard.outputs.wrangler }}
+      - name: Install pinned login-smoke runtime
+        working-directory: tools/s9_ux
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Upload and verify zero-traffic candidate
+        id: stage
+        run: node deployment/production/deploy.mjs stage
+
+  production-approval:
+    needs: stage-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      PRODUCTION_APPROVAL_GUARD: ${{ secrets.PRODUCTION_APPROVAL_GUARD }}
+    steps:
+      - name: Require the protected production environment
+        shell: bash
+        run: test "$PRODUCTION_APPROVAL_GUARD" = "enabled"
+      - name: Display the exact promotion pair
+        run: |
+          echo "Candidate: ${{ needs.stage-candidate.outputs.candidate_version }}"
+          echo "Rollback target: ${{ needs.stage-candidate.outputs.previous_version }}"
+
+  promote:
+    needs: [guard, stage-candidate, production-approval]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: "true"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout the staged revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Use exact authoritative Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ needs.guard.outputs.node }}
+      - name: Install exact Wrangler
+        run: npm install --global --no-audit --no-fund wrangler@${{ needs.guard.outputs.wrangler }}
+      - name: Install pinned login-smoke runtime
+        working-directory: tools/s9_ux
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Promote once, verify, or roll back once
+        run: >-
+          node deployment/production/deploy.mjs promote
+          --previous "${{ needs.stage-candidate.outputs.previous_version }}"
+          --candidate "${{ needs.stage-candidate.outputs.candidate_version }}"
