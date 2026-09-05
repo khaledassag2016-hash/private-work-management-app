@@ -168,10 +168,18 @@ test('audit UI and packaged Worker mirror expose only the required read-only sur
   assert.match(app, /\/api\/audit\?limit=50/);
   assert.match(app, /data-audit-log/);
   assert.match(app, /actor_role/);
-  assert.match(app, /auditValueMarkup\(row\.before\)/);
-  assert.match(app, /auditValueMarkup\(row\.after\)/);
+  assert.match(app, /auditValueMarkup\(row\.before, row\)/);
+  assert.match(app, /auditValueMarkup\(row\.after, row\)/);
+  assert.match(app, /requested_by: 'مقدم الطلب'/);
+  assert.match(app, /approved_by: 'معتمد الطلب'/);
+  assert.match(app, /person_1_bps: 'نسبة الطرف الأول'/);
+  assert.match(app, /event_type: 'نوع المتابعة'/);
+  assert.match(app, /amount_halalas|endsWith\('_halalas'\)/);
+  assert.match(app, /return 'الحساب الآخر المصرح'/);
   assert.match(styles, /\.audit-values/);
   assert.doesNotMatch(app, /auditValueLabel\(value\).*JSON\.stringify/);
+  assert.doesNotMatch(app, /data-audit-id=/);
+  assert.doesNotMatch(app, /auditValueMarkup\(row\.(before|after)\)\b/);
   assert.doesNotMatch(styles, /\.audit-json/);
   for (const relativePath of ['src/index.js', 'assets/app.js', 'assets/styles.css']) {
     assert.equal(readFileSync(join(sourceWorkerRoot, relativePath), 'utf8'), readFileSync(join(packagedWorkerRoot, relativePath), 'utf8'), `worker mirror mismatch: ${relativePath}`);

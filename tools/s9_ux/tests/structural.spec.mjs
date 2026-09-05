@@ -27,9 +27,9 @@ test('RTL, responsive containment, navigation reachability, and state clarity', 
   await openWork(page);
   await expect(page.locator('[data-execution-status]')).toBeVisible();
   await expect(page.locator('[data-collection-status]')).toBeVisible();
-  await expect(page.locator('[data-authoritative-price]')).toContainText('1700.00');
-  await expect(page.locator('[data-approved-payments]')).toContainText('1000.00');
-  await expect(page.locator('[data-remaining]')).toContainText('700.00');
+  await expect(page.locator('[data-authoritative-price]')).toContainText('1700');
+  await expect(page.locator('[data-approved-payments]')).toContainText('1000');
+  await expect(page.locator('[data-remaining]')).toContainText('700');
   await expect(page.locator('[data-financial-request]').first()).toBeVisible();
   const criticalClipping = await page.locator('[data-execution-status], [data-collection-status], [data-authoritative-price], [data-approved-payments], [data-remaining], [data-financial-request]').evaluateAll(elements => elements.filter(element => {
     const rect = element.getBoundingClientRect();

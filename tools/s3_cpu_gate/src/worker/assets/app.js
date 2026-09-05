@@ -189,42 +189,103 @@ function catalogLabel(kind, value) {
 }
 function workStatusLabel(value) { return WORK_STATUS_LABELS[value] || 'حالة محفوظة'; }
 function customerFactLabel(value) { return ({ NON_PAYMENT: 'عدم دفع', DELAY: 'تأخر', BLOCKED: 'حظر أو انقطاع', DISPUTE: 'نزاع' }[value] || 'واقعة مسجلة'); }
-function entityTypeLabel(value) { return ({ customer: 'عميل', work: 'عمل', work_event: 'حدث عمل', title_history: 'تاريخ عنوان', status_history: 'تاريخ حالة', financial_request: 'طلب مالي', payment: 'دفعة', payment_reversal_request: 'طلب تصحيح دفعة', settlement: 'تسوية', settlement_snapshot: 'تسوية', settlement_reopen_request: 'طلب إعادة فتح', account_admin: 'إدارة حساب' }[value] || 'سجل'); }
+function entityTypeLabel(value) {
+  return ({
+    customer: 'عميل', work: 'عمل', work_event: 'متابعة عمل', title_history: 'تغيير عنوان', status_history: 'تغيير حالة',
+    documented_fact: 'واقعة عميل', catalog_value: 'قيمة قائمة', s8_alert_setting: 'إعداد تنبيه',
+    financial_request: 'طلب مالي', price_change_request: 'طلب تغيير سعر', price_movement: 'حركة سعر',
+    ratio_change_request: 'طلب تغيير نسبة', ratio_history: 'تغيير نسبة', payment: 'دفعة', client_payment: 'دفعة',
+    payment_reversal_request: 'طلب تصحيح دفعة', payment_reversal: 'تصحيح دفعة', inter_party_transfer: 'تحويل بين الطرفين',
+    subscription_history: 'اشتراك', common_expense: 'مصروف مشترك', cancel_archive_request: 'طلب إلغاء أو أرشفة',
+    settlement: 'تسوية', settlement_snapshot: 'تسوية', settlement_reopen_request: 'طلب إعادة فتح التسوية',
+    settlement_adjustment: 'تعديل تسوية', account_admin: 'إدارة حساب'
+  }[value] || 'سجل');
+}
 function auditActionLabel(action) { return ({ CREATE: 'إنشاء', UPDATE: 'تعديل', DELETE: 'حذف', APPROVE: 'اعتماد', REVERSE: 'تصحيح' }[action] || 'عملية'); }
 const AUDIT_FIELD_LABELS = Object.freeze({
   name: 'الاسم', title: 'العنوان', old_title: 'العنوان السابق', new_title: 'العنوان الجديد',
   contact: 'رقم التواصل', country: 'الدولة', university: 'الجامعة', specialty: 'التخصص', specialty_key: 'التخصص',
-  work_type_key: 'نوع العمل', status: 'الحالة', old_status: 'الحالة السابقة', new_status: 'الحالة الجديدة',
-  relationship_kind: 'علاقة العمل', description: 'الوصف', quantity: 'الكمية', notes: 'ملاحظات',
-  confirmed_at: 'تاريخ التأكيد', effective_at: 'التاريخ الفعلي', happened_at: 'تاريخ الواقعة',
-  created_at: 'تاريخ الإنشاء', updated_at: 'تاريخ التحديث', requested_at: 'تاريخ الطلب', approved_at: 'تاريخ الاعتماد',
-  reason: 'السبب', state: 'الحالة', payment_method: 'طريقة الدفع', category: 'الفئة',
-  fact_type: 'نوع الواقعة', source_ref: 'المرجع', movement_type: 'نوع حركة السعر', collection_status: 'حالة التحصيل',
-  amount_halalas: 'المبلغ', current_price_halalas: 'السعر', remaining_halalas: 'المتبقي',
-  aggregate_amount_halalas: 'إجمالي الاشتراك', fee_halalas: 'الرسوم'
+  work_type_key: 'نوع العمل', subject_or_course_code: 'المادة أو الرمز', status: 'الحالة', old_status: 'الحالة السابقة', new_status: 'الحالة الجديدة',
+  target_execution_status: 'حالة التنفيذ بعد الإجراء', relationship_kind: 'علاقة العمل', description: 'الوصف', quantity: 'الكمية',
+  notes: 'ملاحظات', note: 'ملاحظة', reason: 'السبب', category: 'الفئة', source_ref: 'المرجع',
+  event_type: 'نوع المتابعة', fact_type: 'نوع الواقعة', movement_type: 'نوع حركة السعر', collection_status: 'حالة التحصيل',
+  payment_method: 'طريقة الدفع', action: 'الإجراء', state: 'الحالة', price_state: 'حالة السعر',
+  period_key: 'الفترة', period_basis: 'أساس الفترة', alert_type: 'نوع التنبيه', threshold_days: 'المدة بالأيام',
+  kind: 'نوع القائمة', label: 'الاسم الظاهر', active: 'فعال', is_archived: 'مؤرشف',
+  from_party: 'من', to_party: 'إلى', fee_payer: 'دافع الرسوم',
+  requested_by: 'مقدم الطلب', approved_by: 'معتمد الطلب', created_by: 'من أنشأ السجل', updated_by: 'من حدّث السجل',
+  changed_by: 'من أجرى التغيير', actor_uid: 'من قام بالعملية', paid_by_uid: 'الدافع',
+  details_json: 'التفاصيل', value: 'القيمة',
+  person_1_bps: 'نسبة الطرف الأول', person_2_bps: 'نسبة الطرف الثاني',
+  old_person_1_bps: 'نسبة الطرف الأول السابقة', old_person_2_bps: 'نسبة الطرف الثاني السابقة',
+  new_person_1_bps: 'نسبة الطرف الأول الجديدة', new_person_2_bps: 'نسبة الطرف الثاني الجديدة',
+  work_count: 'عدد الأعمال', active_work_count: 'الأعمال النشطة', archived_work_count: 'الأعمال المؤرشفة',
+  price_unset_work_count: 'أعمال بلا سعر'
 });
-function auditFieldValue(key, value) {
+const AUDIT_TECHNICAL_FIELD = /(^id$|_id$|request_id$|run_marker$|(^|_)version$|value_key$|price_minor_units$|approval_request_id$)/;
+function auditFieldLabel(key) {
+  if (AUDIT_TECHNICAL_FIELD.test(key)) return '';
+  if (AUDIT_FIELD_LABELS[key]) return AUDIT_FIELD_LABELS[key];
+  if (key.endsWith('_halalas')) return 'قيمة مالية';
+  if (key.endsWith('_at')) return 'التاريخ والوقت';
+  return '';
+}
+function auditUserLabel(value, row) {
+  if (!value) return 'غير محدد';
+  if (value === row?.actor_uid) return roleLabel(row.actor_role);
+  if (value === state.auth.uid) return roleLabel(state.auth.role);
+  return 'الحساب الآخر المصرح';
+}
+function auditPartyLabel(value) { return value === 'person_1' ? 'الطرف الأول' : value === 'person_2' ? 'الطرف الثاني' : 'طرف مسجل'; }
+function auditEventTypeLabel(value) { return ({ FOLLOW_UP: 'متابعة', NOTE: 'ملاحظة', CONTACT: 'تواصل', MEETING: 'اجتماع', DELIVERY: 'تسليم' }[value] || 'متابعة مسجلة'); }
+function auditRequestActionLabel(value) { return ({ CANCEL: 'إلغاء العمل', ARCHIVE: 'أرشفة العمل' }[value] || 'إجراء مسجل'); }
+function auditPriceStateLabel(value) { return value === 'PRICE_UNSET' || value === 'UNSET' ? 'السعر غير محدد' : value === 'PRICED' || value === 'APPROVED' ? 'السعر معتمد' : 'حالة سعر محفوظة'; }
+function auditPeriodBasisLabel(value) { return value === 'CONFIRMED_AT' ? 'تاريخ التأكيد' : value === 'CREATED_AT' ? 'تاريخ الإنشاء' : 'أساس فترة محفوظ'; }
+function auditAlertTypeLabel(value) { return ({ NO_PRICE: 'بلا سعر', NO_REPLY: 'بانتظار رد العميل', NO_PAYMENT: 'دون تحصيل' }[value] || 'تنبيه مسجل'); }
+function auditCatalogKindLabel(value) { return ({ country: 'الدول', specialty: 'التخصصات', work_type: 'أنواع الأعمال' }[value] || 'قائمة'); }
+function auditMovementTypeLabel(value) { return ({ BASE: 'سعر أساسي', INCREASE: 'زيادة', DECREASE: 'نقصان', DISCOUNT: 'خصم' }[value] || 'حركة سعر'); }
+function auditCollectionStatusLabel(value) { return ({ PRICE_UNSET: 'السعر غير محدد', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', FINANCIALLY_CLOSED: 'مغلق ماليًا', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم', CANCELLED_ZERO_BALANCE: 'ملغى — الرصيد على العميل صفر' }[value] || 'حالة تحصيل محفوظة'); }
+function auditDetailsLabel(value) {
+  if (!value) return 'لا توجد تفاصيل';
+  if (typeof value === 'object' && !Array.isArray(value)) return String(value.note || 'تفاصيل مسجلة');
+  try { const parsed = JSON.parse(String(value)); return parsed && typeof parsed === 'object' ? String(parsed.note || 'تفاصيل مسجلة') : String(parsed); }
+  catch { return 'تفاصيل مسجلة'; }
+}
+function auditFieldValue(key, value, row) {
   if (value === null || value === undefined || value === '') return 'غير محدد';
   if (key.endsWith('_halalas')) return moneyLabel(Number(value));
   if (key.endsWith('_at')) return dateTimeLabel(value);
-  if (key === 'status' || key === 'old_status' || key === 'new_status') return workStatusLabel(value);
+  if (key.endsWith('_bps')) return `${Number(value) / 100}%`;
+  if (['requested_by', 'approved_by', 'created_by', 'updated_by', 'changed_by', 'actor_uid', 'paid_by_uid'].includes(key)) return auditUserLabel(value, row);
+  if (key === 'status' || key === 'old_status' || key === 'new_status' || key === 'target_execution_status') return workStatusLabel(value);
   if (key === 'relationship_kind') return value === 'CHILD' ? 'تابع لعمل أكبر' : value === 'INDEPENDENT' ? 'عمل مستقل' : 'علاقة محفوظة';
   if (key === 'country') return catalogLabel('country', value);
   if (key === 'specialty' || key === 'specialty_key') return catalogLabel('specialty', value);
   if (key === 'work_type_key') return catalogLabel('work_type', value);
   if (key === 'payment_method') return paymentMethodLabel(value);
   if (key === 'fact_type') return customerFactLabel(value);
-  if (key === 'movement_type') return movementLabel(value);
-  if (key === 'collection_status') return collectionLabel(value);
+  if (key === 'movement_type') return auditMovementTypeLabel(value);
+  if (key === 'collection_status') return auditCollectionStatusLabel(value);
+  if (key === 'event_type') return auditEventTypeLabel(value);
+  if (key === 'action') return auditRequestActionLabel(value);
+  if (key === 'price_state') return auditPriceStateLabel(value);
+  if (key === 'period_basis') return auditPeriodBasisLabel(value);
+  if (key === 'period_key') return periodBucketLabel(value);
+  if (key === 'alert_type') return auditAlertTypeLabel(value);
+  if (key === 'kind') return auditCatalogKindLabel(value);
   if (key === 'state') return requestStateLabel(value);
-  return typeof value === 'boolean' ? (value ? 'نعم' : 'لا') : String(value);
+  if (key === 'from_party' || key === 'to_party' || key === 'fee_payer') return auditPartyLabel(value);
+  if (key === 'details_json') return auditDetailsLabel(value);
+  if (typeof value === 'boolean') return value ? 'نعم' : 'لا';
+  if (typeof value === 'object') return 'تفاصيل مسجلة';
+  return String(value);
 }
-function auditValueMarkup(value) {
+function auditValueMarkup(value, row) {
   if (value === null) return '<span class="audit-empty">لا توجد قيمة سابقة.</span>';
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return `<span class="audit-empty">${escapeHtml(String(value ?? 'غير متاح'))}</span>`;
-  const entries = Object.entries(value).filter(([key]) => AUDIT_FIELD_LABELS[key]);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '<span class="audit-empty">قيمة مسجلة.</span>';
+  const entries = Object.entries(value).map(([key, item]) => [key, item, auditFieldLabel(key)]).filter(([, , label]) => label);
   return entries.length
-    ? `<dl class="audit-values">${entries.map(([key, item]) => `<div><dt>${escapeHtml(AUDIT_FIELD_LABELS[key])}</dt><dd>${escapeHtml(auditFieldValue(key, item))}</dd></div>`).join('')}</dl>`
+    ? `<dl class="audit-values">${entries.map(([key, item, label]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(auditFieldValue(key, item, row))}</dd></div>`).join('')}</dl>`
     : '<span class="audit-empty">لا توجد تفاصيل إضافية للعرض.</span>';
 }
 function requestId() { return crypto.randomUUID(); }
@@ -541,7 +602,7 @@ function catalogsPage() { return `<section class="grid grid-3">${['country', 'sp
 function catalogList(kind) { const values = state.catalogs[kind] || []; return values.length ? `<div class="fact-list">${values.map(value => `<li><strong>${escapeHtml(value.label)}</strong><span>${value.active ? 'متاحة للاختيار' : 'غير متاحة للاختيار'}</span></li>`).join('')}</div>` : empty('لا توجد قيم بعد.'); }
 function auditPage() {
   const rows = state.audit.rows || [];
-  return `<section class="card" data-audit-log><div class="toolbar"><div><h2>سجل التدقيق</h2><p>سجل قراءة فقط للتغييرات، مرتب من الأحدث إلى الأقدم.</p></div><button class="button secondary" data-action="audit-refresh" type="button" ${state.audit.loading ? 'disabled' : ''}>تحديث</button></div><p class="notice info">يعرض السجل ما تغير ومن قام بالتغيير ووقته، مع تفاصيل مفهومة للمراجعة.</p>${state.audit.loading ? loading() : rows.length ? `<div class="table-wrap"><table class="audit-table"><thead><tr><th>العملية</th><th>السجل</th><th>من قام بالعملية</th><th>التاريخ والوقت</th><th>قبل التغيير</th><th>بعد التغيير</th></tr></thead><tbody>${rows.map(row => `<tr data-audit-id="${escapeHtml(row.id)}"><td>${escapeHtml(auditActionLabel(row.action))}</td><td>${escapeHtml(entityTypeLabel(row.entity_type))}</td><td>${escapeHtml(roleLabel(row.actor_role))}</td><td>${escapeHtml(dateTimeLabel(row.created_at))}</td><td>${auditValueMarkup(row.before)}</td><td>${auditValueMarkup(row.after)}</td></tr>`).join('')}</tbody></table></div>` : empty('لا توجد سجلات تدقيق متاحة.')}</section>`;
+  return `<section class="card" data-audit-log><div class="toolbar"><div><h2>سجل التدقيق</h2><p>سجل قراءة فقط للتغييرات، مرتب من الأحدث إلى الأقدم.</p></div><button class="button secondary" data-action="audit-refresh" type="button" ${state.audit.loading ? 'disabled' : ''}>تحديث</button></div><p class="notice info">يعرض السجل ما تغير ومن قام بالتغيير ووقته، مع تفاصيل مفهومة للمراجعة.</p>${state.audit.loading ? loading() : rows.length ? `<div class="table-wrap"><table class="audit-table"><thead><tr><th>العملية</th><th>السجل</th><th>من قام بالعملية</th><th>التاريخ والوقت</th><th>قبل التغيير</th><th>بعد التغيير</th></tr></thead><tbody>${rows.map(row => `<tr><td>${escapeHtml(auditActionLabel(row.action))}</td><td>${escapeHtml(entityTypeLabel(row.entity_type))}</td><td>${escapeHtml(roleLabel(row.actor_role))}</td><td>${escapeHtml(dateTimeLabel(row.created_at))}</td><td>${auditValueMarkup(row.before, row)}</td><td>${auditValueMarkup(row.after, row)}</td></tr>`).join('')}</tbody></table></div>` : empty('لا توجد سجلات تدقيق متاحة.')}</section>`;
 }
 function customerPage() {
   const customer = state.selectedCustomer; if (!customer) return loading();
