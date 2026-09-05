@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "wranglerVersion": "4.118.0",
+  "accountId": "643bc11b8a70cc4cd723b12ad0330b76",
+  "worker": {
+    "name": "assagwork-app",
+    "customDomain": "https://app.assagwork.com",
+    "compatibilityDate": "2026-08-31",
+    "compatibilityFlags": [
+      "nodejs_compat"
+    ]
+  },
+  "d1": {
+    "binding": "DB",
+    "databaseName": "assagwork-production",
+    "databaseId": "15c9e94c-54e7-487a-9996-0d712b11dccf"
+  },
+  "firebase": {
+    "projectId": "assagwork-prod-be239c6980",
+    "runtimeConfigPath": "/app-config.js"
+  },
+  "fixedPlainText": {
+    "FIREBASE_PROJECT_ID": "assagwork-prod-be239c6980",
+    "TEST_CONTROLS": "disabled"
+  },
+  "requiredBindings": [
+    {
+      "name": "ASSETS",
+      "type": "assets"
+    },
+    {
+      "name": "DB",
+      "type": "d1",
+      "id": "15c9e94c-54e7-487a-9996-0d712b11dccf"
+    },
+    {
+      "name": "FIREBASE_API_KEY",
+      "type": "plain_text"
+    },
+    {
+      "name": "FIREBASE_APP_ID",
+      "type": "plain_text"
+    },
+    {
+      "name": "FIREBASE_AUTH_DOMAIN",
+      "type": "plain_text"
+    },
+    {
+      "name": "FIREBASE_PROJECT_ID",
+      "type": "plain_text"
+    },
+    {
+      "name": "RUN_MARKER",
+      "type": "plain_text"
+    },
+    {
+      "name": "TEST_CONTROLS",
+      "type": "plain_text"
+    }
+  ],
+  "source": {
+    "worker": "tools/s3_cpu_gate/src/worker/src/index.js",
+    "workerMirror": "tools/s3_cpu_gate/worker/src/index.js",
+    "assets": "tools/s3_cpu_gate/src/worker/assets",
+    "assetsMirror": "tools/s3_cpu_gate/worker/assets"
+  },
+  "assets": {
+    "outputDirectory": ".deployment-dist/public",
+    "indexSource": "index.html",
+    "required": [
+      {
+        "url": "/assets/app.js",
+        "source": "app.js"
+      },
+      {
+        "url": "/assets/styles.css",
+        "source": "styles.css"
+      },
+      {
+        "url": "/assets/s8-export.mjs",
+        "source": "s8-export.mjs"
+      },
+      {
+        "url": "/assets/vendor/xlsx-0.20.3.mjs",
+        "source": "vendor/xlsx-0.20.3.mjs"
+      },
+      {
+        "url": "/assets/vendor/XLSX-0.20.3-LICENSE.txt",
+        "source": "vendor/XLSX-0.20.3-LICENSE.txt"
+      },
+      {
+        "url": "/assets/vendor/XLSX-0.20.3-SHA256.txt",
+        "source": "vendor/XLSX-0.20.3-SHA256.txt"
+      }
+    ],
+    "binding": "ASSETS",
+    "htmlHandling": "auto-trailing-slash",
+    "notFoundHandling": "single-page-application",
+    "runWorkerFirst": false
+  },
+  "observability": {
+    "enabled": true,
+    "headSamplingRate": 1,
+    "logs": {
+      "enabled": true,
+      "headSamplingRate": 1,
+      "persist": true,
+      "invocationLogs": true
+    },
+    "traces": {
+      "enabled": false,
+      "headSamplingRate": 1,
+      "persist": true
+    }
+  },
+  "logpush": false,
+  "tailConsumers": []
+}

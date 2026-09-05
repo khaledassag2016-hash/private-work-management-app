@@ -1,0 +1,43 @@
+name: Production deployment guardrails
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      node: ${{ steps.versions.outputs.node }}
+      wrangler: ${{ steps.versions.outputs.wrangler }}
+    steps:
+      - name: Checkout tested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Read pinned tool versions
+        id: versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          tools=json.load(open('tools/s3_cpu_gate/src/version-manifest.json',encoding='utf-8'))['tools']
+          production=json.load(open('deployment/production/production-manifest.json',encoding='utf-8'))
+          if tools['wrangler']['version'] != production['wranglerVersion']:
+              raise SystemExit('Wrangler version manifests differ')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output:
+              output.write(f"node={tools['node']['version']}\n")
+              output.write(f"wrangler={production['wranglerVersion']}\n")
+          PY
+      - name: Use exact authoritative Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+      - name: Run deployment contract tests
+        run: node --test deployment/production/deployment-guardrails.test.mjs
+      - name: Build and validate exact production package
+        run: node deployment/production/deploy.mjs validate

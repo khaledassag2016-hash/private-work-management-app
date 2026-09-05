@@ -42,6 +42,8 @@ node_modules/
 dist/
 build/
 coverage/
+.deployment-dist/
+.deployment-state/
 .venv/
 venv/
 __pycache__/
