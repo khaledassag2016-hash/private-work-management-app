@@ -383,12 +383,13 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 
 ## Deployment Guardrails — Issue #120 / PR #121
 
-- Issue #120 tracks deployment guardrails only; it does not authorize functional application changes or Cloud writes.
-- PR #121 (`codex/deployment-guardrails-120`) is OPEN and awaiting supervisory re-review; it is not merged or closed.
-- GitHub is restricted to CI/validation. The executable production path is local Wrangler 4.118.0 OAuth only and rejects `CLOUDFLARE_API_TOKEN`.
-- Candidate staging remains `0% → Version Override verification → one explicit local approval → 100%`, with the prior active version saved locally for one rollback.
-- Remote binding and observability parity are fail-closed. Before any Cloud write the local executable obtains the existing Wrangler OAuth token in memory only, reads `script-settings`, and exactly compares observability, Logpush, and tail consumers with the manifest; read failure or mismatch stops before upload or traffic change.
-- This PR does not announce deployment completion, issue closure, or merge before final-head CI and supervisory review.
+- Issue #120 is CLOSED after successful completion of the Deployment Guardrails phase.
+- PR #121 (`codex/deployment-guardrails-120`) was approved after final independent review and merged using Squash into `main` at `fe2a769eb5b3b78dcea127fb89fb3ad61dae942d`.
+- Final reviewed PR head: `d94b7c663a74694488386f7a742ba69cea516a2a`; all final-head CI checks passed: Foundation integrity, S2 architecture validation, S3 CPU Gate Static, Production deployment guardrails, S9 UX Acceptance, S10 Integration Backup Restore, and S11 Historical Import.
+- GitHub remains restricted to CI/validation. The executable production path is local Wrangler 4.118.0 OAuth only and rejects `CLOUDFLARE_API_TOKEN`.
+- Candidate staging remains `0% → Version Override verification → one explicit local approval → 100%`, with the prior active version saved locally for deterministic rollback.
+- Remote binding, observability, and Worker subdomain parity are fail-closed before Cloud writes; Candidate state survives rebuilds, source SHA is locked to one clean Git HEAD, and failed staging/promotion paths restore the previous version to 100% or fail closed.
+- No Cloud write, production deployment, migration, Billing change, resource creation, or production data mutation was authorized or performed by this administrative closure.
 
 ## Permanent rules
 
