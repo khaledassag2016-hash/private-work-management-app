@@ -10,10 +10,11 @@ test.beforeEach(async ({ page }) => {
   await openApp(page);
 });
 
-async function handleNextDialog(page, action, pattern = /لن يُرسل الطلب قبل اختيار/) {
+async function handleNextDialog(page, action, pattern = null) {
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText(pattern);
+  await expect(dialog.getByRole('heading')).not.toHaveText('تأكيد العملية');
+  if (pattern) await expect(dialog).toContainText(pattern);
   await dialog.getByRole('button', { name: action === 'accept' ? 'تأكيد' : 'إلغاء' }).click();
 }
 
@@ -29,6 +30,8 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
   expect(capabilityMatrix.capabilities.map(item => item.id)).toEqual('ABCDEFGHIJKLM'.split(''));
   expect(capabilityMatrix.capabilities.every(item => item.mobile === 'required' && item.desktop === 'required')).toBe(true);
   await expect(page.locator('.nav-item')).toHaveCount(7);
+  await expect(page.locator('[data-nav="s8"]')).toHaveText('البحث والتحليلات');
+  await expect(page.locator('[data-nav="s8"]')).not.toContainText('S8');
   await expect(page.locator('[data-nav="audit"]')).toHaveCount(1);
   await page.locator('[data-nav="customers"]').click();
   await expect(page.locator(`[data-customer="customer-1"]`)).toBeVisible();
@@ -76,7 +79,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
     ['[data-action="approve-ratio-request"]', `/api/works/${work.id}/ratio-requests/ratio-request-1/approve`],
     ['[data-action="approve-payment-reversal"]', `/api/works/${work.id}/payment-reversal-requests/reversal-1/approve`],
   ]) {
-    const before = api.count('POST', path); await page.locator(selector).click(); await handleNextDialog(page, 'accept'); await expect.poll(() => api.count('POST', path)).toBe(before + 1);
+    const before = api.count('POST', path); await page.locator(selector).click(); if (selector.includes('approve-price-request')) { const dialog = page.getByRole('dialog'); await expect(dialog.getByRole('heading')).toHaveText('اعتماد حركة السعر'); await expect(dialog).toContainText('سيتم اعتماد طلب حركة السعر وتحديث السعر الحالي وفق الحركة المطلوبة.'); } await handleNextDialog(page, 'accept'); await expect.poll(() => api.count('POST', path)).toBe(before + 1);
   }
 
   await page.locator('[data-action="request-payment-reversal"]').click();
@@ -164,6 +167,6 @@ test('D-017 confirmation and all five local XLSX triggers complete', async ({ pa
     const downloadPromise = page.waitForEvent('download');
     await exportForm.locator('button[type="submit"]').click();
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(new RegExp(`^s8-${type.toLowerCase()}-.*\\.xlsx$`));
+    expect(download.suggestedFilename()).toMatch(/^تقرير-.*\.xlsx$/);
   }
 });

@@ -94,8 +94,8 @@ test('S7 PR-C Work UI shows authoritative collection truth separately from execu
   state.selectedWork.reversalRequests = [{ id: 'rev-1', amount_halalas: 100000, state: 'PENDING', reason: 'تصحيح تجريبي', requested_by: 'uid-one' }];
   const html = ui.workPage();
   assert.match(html, /إجمالي التحصيل المعتمد/);
-  assert.match(html, /1000\.00 ريال/);
-  assert.match(html, /700\.00 ريال/);
+  assert.match(html, /1000 ريال/);
+  assert.match(html, /700 ريال/);
   assert.match(html, /تحصيل جزئي/);
   assert.match(html, /حالة التنفيذ/);
   assert.match(html, /طلب تصحيح معلق — لا يغير التحصيل/);
@@ -137,7 +137,8 @@ test('S7 PR-C financial workspace displays all settlement components, pending re
   assert.match(html, /<button[^>]*disabled[^>]*>إقفال نسخة التسوية/);
   assert.match(html, /لا يمكنك اعتماد طلبك/);
   assert.doesNotMatch(html, /approve-settlement-reopen" data-request-id="reopen-self/);
-  assert.match(html, /لا تحتوي على تقرير S8 أو تصدير/);
+  assert.doesNotMatch(html, /Worker|تقرير S8/);
+  assert.match(html, /المعلومات المالية المعروضة مأخوذة من السجل المعتمد/);
 });
 
 test('S7 PR-C transfer, subscription, expense, settlement close and reopen workflows call only authoritative APIs and refetch workspace state', async () => {
@@ -175,10 +176,10 @@ test('S7 PR-C reload/reopen consumes payments and reversal requests from authori
 test('S7 PR-C collection display keeps completed execution independent across zero, full, PRICE_UNSET, and zero-price financial truth', () => {
   setup({ work: workPayload(financials({ paid: 0, collection: 'UNPAID' })) });
   let html = ui.workPage();
-  assert.match(html, /مكتمل/); assert.match(html, /غير محصل/); assert.match(html, /1700\.00 ريال/);
+  assert.match(html, /مكتمل/); assert.match(html, /غير محصل/); assert.match(html, /1700 ريال/);
   setup({ work: workPayload(financials({ paid: 170000, collection: 'FINANCIALLY_CLOSED' })) });
   html = ui.workPage();
-  assert.match(html, /مغلق ماليًا/); assert.match(html, /0\.00 ريال/);
+  assert.match(html, /مغلق ماليًا/); assert.match(html, /0 ريال/);
   const unset = financials(); unset.price_state = 'PRICE_UNSET'; unset.current_price_halalas = null; unset.remaining_halalas = null; unset.collection_status = 'PRICE_UNSET';
   setup({ work: workPayload(unset) }); html = ui.workPage();
   assert.match(html, /لا يمكن إدخال دفعة لأن السعر المعتمد غير محدد/); assert.doesNotMatch(html, /id="s7-payment-form"/);
@@ -253,7 +254,7 @@ test('S7 PR-C integrated UI plus Worker/DB acceptance covers confirmation, C/F/H
   const { database, env, customer, work } = await integratedFixture(); const trace = [];
   try {
     setup({ uid: 'uid-one', role: 'person_1', work: await worker.getWork(env, work.id) }); state.works = [state.selectedWork]; state.customers = [customer]; installIntegratedWorkerAdapter(env, database, trace);
-    await ui.submitWork(integratedForm({ id: work.id, version: 1, customer_id: customer.id, title: 'Integrated S7 Work', country: 'SA', university: 'Integrated University', specialty_key: 'IT', work_type_key: 'REPORT', subject_or_course_code: '', status: 'NEW_REQUEST', quantity: '', relationship_kind: 'INDEPENDENT', parent_work_id: '', description: '', confirmed_at: '2026-08-12T10:00' }));
+    await ui.submitWork(integratedForm({ id: work.id, version: 1, customer_id: customer.id, title: 'Integrated S7 Work', country: 'SA', university: 'Integrated University', specialty_key: 'IT', work_type_key: 'REPORT', subject_or_course_code: '', status: 'NEW_REQUEST', quantity: '', relationship_kind: 'INDEPENDENT', parent_work_id: '', description: '', confirmed_at: '12/08/2026 10:00' }));
     const confirmed = await worker.getWork(env, work.id); assert.equal(confirmed.confirmed_at, '2026-08-12T07:00:00.000Z'); assert.equal((await worker.getSettlementPreview(env, '2026-08', {})).work_count, 1); assert.match(ui.workPage(), /تاريخ التأكيد/);
     const priceRequest = await worker.createPriceChangeRequest(env, 'uid-one', 'integrated-price-request', work.id, { version: confirmed.version, movement_type: 'BASE', amount_riyals: '1700.00', reason: 'Integrated price', effective_at: '2026-08-12T10:00:00.000Z' }); await worker.approvePriceChangeRequest(env, 'uid-two', 'integrated-price-approve', work.id, priceRequest.id); await ui.openWork(work.id);
     await ui.loadFinancialWorkspace('2026-08'); assert.match(ui.s7WorkFinancialMarkup(state.selectedWork), /name="received_by"/); assert.match(ui.settlementPreviewMarkup(state.financial.preview), /استلام خالد/);

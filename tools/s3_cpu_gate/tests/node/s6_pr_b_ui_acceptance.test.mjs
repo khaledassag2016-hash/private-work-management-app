@@ -74,12 +74,12 @@ test('S6 UI detail shows authoritative price/ratio/shares and previous-new appro
   }});
   const html = testApp.workPage();
   assert.match(html, /السعر المعتمد/);
-  assert.match(html, /1700\.00 ريال/);
+  assert.match(html, /1700 ريال/);
   assert.match(html, /خالد/);
-  assert.match(html, /السابق: 1500\.00 ريال/);
-  assert.match(html, /الجديد: 1700\.00 ريال/);
+  assert.match(html, /السابق: 1500 ريال/);
+  assert.match(html, /الجديد: 1700 ريال/);
   assert.match(html, /معلق — لا يغير السعر المعتمد/);
-  assert.match(html, /السعر الحالي: 1500\.00 ريال/);
+  assert.match(html, /السعر الحالي: 1500 ريال/);
   assert.doesNotMatch(html, /السعر غير محدد<\/strong>/);
 });
 
@@ -151,5 +151,5 @@ test('S6 UI reload/reopen consumes the latest authoritative financial payload', 
   installOpenWorkFetch(financials({ price: 170000 }));
   await testApp.openWork('w1');
   assert.equal(state.selectedWork.financials.current_price_halalas, 170000);
-  assert.match(testApp.workPage(), /1700\.00 ريال/);
+  assert.match(testApp.workPage(), /1700 ريال/);
 });

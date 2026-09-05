@@ -168,12 +168,51 @@ test('audit UI and packaged Worker mirror expose only the required read-only sur
   assert.match(app, /\/api\/audit\?limit=50/);
   assert.match(app, /data-audit-log/);
   assert.match(app, /actor_role/);
-  assert.match(app, /auditValueLabel\(row\.before\)/);
-  assert.match(app, /auditValueLabel\(row\.after\)/);
-  assert.match(styles, /\.audit-json/);
+  assert.match(app, /auditValueMarkup\(row\.before, row\)/);
+  assert.match(app, /auditValueMarkup\(row\.after, row\)/);
+  assert.match(app, /requested_by: 'مقدم الطلب'/);
+  assert.match(app, /approved_by: 'معتمد الطلب'/);
+  assert.match(app, /person_1_bps: 'نسبة الطرف الأول'/);
+  assert.match(app, /event_type: 'نوع المتابعة'/);
+  assert.match(app, /amount_halalas: 'المبلغ'/);
+  assert.match(app, /fee_halalas: 'الرسوم'/);
+  assert.match(app, /aggregate_amount_halalas: 'إجمالي الاشتراك'/);
+  assert.match(app, /recorded_by: 'سُجلت بواسطة'/);
+  assert.doesNotMatch(app, /endsWith\('_halalas'\).*قيمة مالية|return 'قيمة مالية'/);
+  assert.match(app, /return 'الحساب الآخر المصرح'/);
+  assert.match(styles, /\.audit-values/);
+  assert.doesNotMatch(app, /auditValueLabel\(value\).*JSON\.stringify/);
+  assert.doesNotMatch(app, /data-audit-id=/);
+  assert.doesNotMatch(app, /auditValueMarkup\(row\.(before|after)\)\b/);
+  assert.doesNotMatch(styles, /\.audit-json/);
   for (const relativePath of ['src/index.js', 'assets/app.js', 'assets/styles.css']) {
     assert.equal(readFileSync(join(sourceWorkerRoot, relativePath), 'utf8'), readFileSync(join(packagedWorkerRoot, relativePath), 'utf8'), `worker mirror mismatch: ${relativePath}`);
   }
+});
+
+test('audit transfer rendering uses distinct business labels and hides raw identifiers', () => {
+  const app = readFileSync(join(sourceWorkerRoot, 'assets/app.js'), 'utf8');
+  const executable = app.replace(/authenticateExistingSession\(\);\s*$/, '');
+  const documentStub = { querySelector() { return null; } };
+  const windowStub = { __PRIVATE_WORK_APP_CONFIG__: {}, __PRIVATE_WORK_APP_TEST__: null };
+  const { auditValueMarkup } = new Function('document', 'window', `${executable}\nreturn { auditValueMarkup };`)(documentStub, windowStub);
+  const rawUid = 'uid-one-secret';
+  const rendered = auditValueMarkup({
+    id: 'transfer-secret-id',
+    request_id: 'request-secret-id',
+    version: 7,
+    value_key: 'internal-value-key',
+    amount_halalas: 10000,
+    fee_halalas: 250,
+    from_party: 'person_1',
+    to_party: 'person_2',
+    recorded_by: rawUid,
+  }, { actor_uid: rawUid, actor_role: 'person_1' });
+
+  assert.match(rendered, /<dt>المبلغ<\/dt><dd>100 ريال<\/dd>/);
+  assert.match(rendered, /<dt>الرسوم<\/dt><dd>2\.50 ريال<\/dd>/);
+  assert.match(rendered, /<dt>سُجلت بواسطة<\/dt><dd>خالد<\/dd>/);
+  assert.doesNotMatch(rendered, /uid-one-secret|transfer-secret-id|request-secret-id|internal-value-key|version/);
 });
 
 test('certificate cache is shared across separate Worker isolates in one data-center cache', async () => {
