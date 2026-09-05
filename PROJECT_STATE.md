@@ -392,23 +392,25 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - No Cloud write, production deployment, migration, Billing change, resource creation, or production data mutation was authorized or performed by this administrative closure.
 
 
-## UAT Wave 1 — Issue #123 / PR #124 — implementation candidate
+## UAT Wave 1 — Issue #123 / PR #124 — implementation closure
 
 - Frozen base on `main`: `61cf880fda17cfe6f0e41514e9542cb4f1ac9c47`.
 - Dedicated branch: `wave1-uat-presentation-123`; dedicated PR: #124; Issue #117 remains historical/closed and was not reused.
+- Sequential ownership is explicit: after the execution session stopped and handed off the verified implementation, the user explicitly authorized general supervision to perform only the final state synchronization/review/closure work on the same PR; no concurrent writer is authorized.
 - Exclusive Wave 1 UAT scope: `UAT-002, UAT-003, UAT-005, UAT-006, UAT-008, UAT-010, UAT-011, UAT-012, UAT-023, UAT-024, UAT-027, UAT-028, UAT-029, UAT-030, UAT-034, UAT-035, UAT-036, UAT-037, UAT-039, UAT-040, UAT-041, UAT-042`.
 - `UAT-002` was regression verification only; the visible navigation label remains `البحث والتحليلات` and internal `s8` identifiers were not refactored.
+- Final independently reviewed product/test implementation head before this state-only synchronization: `574b6d01edf801774ca08634ce4a79dfc8430901`.
 - Product changes are confined to the approved presentation/export assets and their byte-identical `src/worker` / `worker` mirrors; no Worker backend logic, schema, migration, role mapping, permission, Firebase, D1, binding, deployment or Cloud resource was changed.
-- Technical implementation/correction head before this administrative state update: `7319236fc93b646b961b2e1ef8cff07de231f240`.
 - Wave 1 presentation/export changes include user-facing copy cleanup, human catalog/analytics labels, Arabic Gregorian date/time presentation for the targeted paths, money display without forced `.00`, human Excel presentation, contextual confirmation copy, and Audit presentation without raw JSON/IDs/codes while preserving user-reviewable business fields.
-- UAT-041 remained presentation-only: Audit API permissions and role gates were not changed in Wave 1.
+- UAT-041 remained presentation-only: Audit API permissions and role gates were not changed. Its final rendering distinguishes financial business fields such as amount and fees, renders `recorded_by` as a human user label, and keeps raw technical identifiers hidden.
 - Supervisory test-scope expansion was limited to exactly `tools/s3_cpu_gate/tests/node/s4_gate2_ui.test.mjs` for the stale UAT-008 assertion and `tools/s9_ux/tests/structural.spec.mjs` for stale UAT-042 money assertions.
-- CI on exact technical head `7319236fc93b646b961b2e1ef8cff07de231f240`: S2 architecture validation `33987786935` SUCCESS; Production deployment guardrails `33987786964` SUCCESS; S3 CPU Gate Static `33987786960` SUCCESS; S9 UX Acceptance `33987786978` SUCCESS; S10 Integration Backup Restore `33987786970` SUCCESS; S11 Historical Import `33987786968` SUCCESS.
-- Regression evidence on that technical head includes S10 Full Node regression `145 PASS / 0 FAIL`; S11 Full Node regression `155 PASS / 0 FAIL`; S9 Level A `10 PASS`; S9 Level B `34 PASS`.
-- CLOSED-UAT regression guard for `UAT-001, UAT-004, UAT-007, UAT-009, UAT-017, UAT-022, UAT-025, UAT-026, UAT-031, UAT-038, UAT-043`: `PASS` on the technical-head CI.
-- `WAVE1_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED_CANDIDATE`; no Wave 1 UAT is recorded as `CLOSED` by this implementation record. UAT closure remains subject to independent supervisory/UAT review.
-- `SCOPE_DEVIATIONS = NONE`; no Wave 2 work, deploy, Cloud write, Billing change, production mutation or self-merge is authorized or performed.
-- This `PROJECT_STATE.md` update creates a new final PR head; that exact final head must pass applicable CI before supervisory handoff.
+- Final-head CI on exact implementation head `574b6d01edf801774ca08634ce4a79dfc8430901`: Foundation integrity `33989116870` SUCCESS; S2 architecture validation `33989116854` SUCCESS; Production deployment guardrails `33989116856` SUCCESS; S3 CPU Gate Static `33989116890` SUCCESS; S9 UX Acceptance `33989116869` SUCCESS; S10 Integration Backup Restore `33989116874` SUCCESS; S11 Historical Import `33989116902` SUCCESS.
+- Regression evidence on that head: S3 Full Node `146 PASS / 0 FAIL`; S10 Full Node `146 PASS / 0 FAIL`; S11 Full Node `156 PASS / 0 FAIL`; S9 Level A `10 PASS`; S9 Level B `34 PASS + 6 intentional skips`.
+- CLOSED-UAT regression guard for `UAT-001, UAT-004, UAT-007, UAT-009, UAT-017, UAT-022, UAT-025, UAT-026, UAT-031, UAT-038, UAT-043`: `PASS`.
+- `WAVE1_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED`.
+- No Wave 1 UAT is recorded as `CLOSED` by this implementation wave. UAT closure remains subject to independent UAT validation; implementation verification is not UAT closure.
+- `SCOPE_DEVIATIONS = NONE`; no Wave 2 product work, deploy, Cloud write, Billing change, production mutation or direct-main write is authorized or performed by Wave 1.
+- Wave 1 implementation closure becomes effective only after this state-only final PR head passes all applicable CI, PR #124 is Squash merged, the resulting `main` SHA passes applicable post-merge CI, and Issue #123 is closed completed. When those conditions are met, execution may transition to Wave 2 under a new Issue, branch and PR without reopening Wave 1 implementation.
 
 ## Permanent rules
 
