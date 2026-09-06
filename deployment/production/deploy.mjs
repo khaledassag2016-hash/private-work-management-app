@@ -319,8 +319,9 @@ function readLocalOAuthToken(manifest) {
 export function assertScriptSettingsParity(settings, manifest) {
   invariant(object(settings), 'remote script settings are unavailable');
   invariant(settings.logpush === manifest.logpush, 'remote logpush setting differs from the manifest');
-  invariant(Array.isArray(settings.tail_consumers), 'remote tail consumers are unavailable');
-  invariant(JSON.stringify(settings.tail_consumers) === JSON.stringify(manifest.tailConsumers), 'remote tail consumers differ from the manifest');
+  const tailConsumers = settings.tail_consumers === null ? [] : settings.tail_consumers;
+  invariant(Array.isArray(tailConsumers), 'remote tail consumers are unavailable');
+  invariant(JSON.stringify(tailConsumers) === JSON.stringify(manifest.tailConsumers), 'remote tail consumers differ from the manifest');
   const observability = settings.observability;
   invariant(object(observability), 'remote observability setting is unavailable');
   invariant(observability.enabled === manifest.observability.enabled, 'remote observability enabled setting differs from the manifest');
