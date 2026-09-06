@@ -461,6 +461,25 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - No Wave 3 UAT identity is marked `CLOSED` by this implementation closure; independent UAT validation remains separate from implementation verification.
 - Wave 3 implementation closure becomes effective only after this state-only final PR head passes all applicable CI, PR #128 is Squash merged, the resulting `main` SHA passes applicable post-merge CI, and Issue #127 is closed completed.
 
+## UAT-051 — Production Firebase Admin secret binding guardrails — Issue #129 / PR #130 — implementation verification
+
+- Frozen implementation base: `36f0d7b32deda00bae942dbab04a4a9070e92995`.
+- Dedicated branch: `uat-051-production-secret-guardrails-129`; no direct `main` change.
+- Scope is UAT-051 standalone production configuration/guardrails only. No UAT-013/UAT-050 Role Remap or Final Clean Cutover work is included.
+- Existing Worker account-management logic was not changed. It already consumes `env.FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL` and `env.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY`; source-contract validation now verifies those exact runtime dependencies remain present.
+- `deployment/production/production-manifest.json` now requires both Firebase Admin service-account bindings as `secret_text` identities only. No secret value is stored in the manifest or repository.
+- Generated Wrangler configuration declares the same names through `secrets.required`, so production staging fails closed before upload when either secret has not been configured on the Worker.
+- Existing remote binding-contract validation additionally requires both `secret_text` bindings on the active version, and Candidate parity requires them to remain present after version upload. Existing secrets are not written by this implementation.
+- Manifest guards reject embedded values on the required secret-binding entries and preserve all existing Worker identity, D1 identity, fixed plain-text, observability, subdomain, rollback, and local-OAuth-only deployment controls.
+- Final technical implementation head before this state-only synchronization: `ce12b008e409dff24b789c7c25dc64def18660c0`.
+- Technical changed-file set: `deployment/production/production-manifest.json`, `deployment/production/deploy.mjs`, and `deployment/production/deployment-guardrails.test.mjs`.
+- Exact technical-head verification: Production deployment guardrails workflow `34037535953` SUCCESS with `12 PASS / 0 FAIL / 0 skipped` plus `node deployment/production/deploy.mjs validate` => `DEPLOYMENT_GUARDS: PASS`; S2 architecture validation `34037535944` SUCCESS.
+- Independent supervisory diff review found no Worker business-rule, D1/schema/migration, role/permission, Role Remap, Firebase project, DNS, Billing, deployment, production data, or live-secret write.
+- `UAT051_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED`.
+- `UAT-051` is NOT recorded as `CLOSED`. Final closure still requires separately authorized Production secret configuration and live UAT.
+- No Deploy, Cloud/DNS/D1/Firebase write, live secret addition, Production traffic change, or merge was performed by this implementation verification.
+- Final PR-head acceptance requires all applicable CI to pass again after this state-only update before merge can be considered.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.

@@ -13,6 +13,11 @@ const candidateStateRoot = path.join(repositoryRoot, '.deployment-state');
 export const candidateStatePath = path.join(candidateStateRoot, 'production-candidate-state.json');
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+export const firebaseAdminSecretBindingNames = Object.freeze([
+  'FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL',
+  'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY',
+]);
+
 function invariant(condition, message) {
   if (!condition) throw new Error(`DEPLOYMENT_GUARD_FAILED: ${message}`);
 }
@@ -59,14 +64,21 @@ export function validateManifest(manifest) {
     'FIREBASE_APP_ID',
     'FIREBASE_AUTH_DOMAIN',
     'FIREBASE_PROJECT_ID',
+    ...firebaseAdminSecretBindingNames,
     'RUN_MARKER',
     'TEST_CONTROLS',
   ].sort()), 'binding allowlist changed');
   const d1 = manifest.requiredBindings.find((binding) => binding.name === 'DB');
   invariant(d1?.type === 'd1' && d1.id === manifest.d1.databaseId, 'D1 binding identity mismatch');
   invariant(manifest.requiredBindings.find((binding) => binding.name === 'ASSETS')?.type === 'assets', 'ASSETS binding is required');
+  const secretBindingNames = new Set(firebaseAdminSecretBindingNames);
   for (const name of bindingNames.filter((name) => !['ASSETS', 'DB'].includes(name))) {
-    invariant(manifest.requiredBindings.find((binding) => binding.name === name)?.type === 'plain_text', `${name} must be plain_text`);
+    const expectedType = secretBindingNames.has(name) ? 'secret_text' : 'plain_text';
+    invariant(manifest.requiredBindings.find((binding) => binding.name === name)?.type === expectedType, `${name} must be ${expectedType}`);
+  }
+  for (const name of firebaseAdminSecretBindingNames) {
+    const binding = manifest.requiredBindings.find((item) => item.name === name);
+    invariant(JSON.stringify(Object.keys(binding || {}).sort()) === JSON.stringify(['name', 'type']), `${name} manifest entry must contain binding identity only`);
   }
   invariant(manifest.source?.worker === 'tools/s3_cpu_gate/src/worker/src/index.js', 'canonical Worker path changed');
   invariant(manifest.source?.workerMirror === 'tools/s3_cpu_gate/worker/src/index.js', 'Worker mirror path changed');
@@ -85,7 +97,13 @@ export function validateManifest(manifest) {
   invariant(manifest.observability?.enabled === true, 'observability must remain enabled');
   invariant(manifest.logpush === false, 'logpush must remain disabled');
   invariant(Array.isArray(manifest.tailConsumers) && manifest.tailConsumers.length === 0, 'tail consumers must remain empty');
-  const serialized = JSON.stringify(manifest);
+  const credentialScanManifest = {
+    ...manifest,
+    requiredBindings: manifest.requiredBindings.map((binding) => secretBindingNames.has(binding.name)
+      ? { name: 'REQUIRED_SECRET_BINDING', type: binding.type }
+      : binding),
+  };
+  const serialized = JSON.stringify(credentialScanManifest);
   invariant(!/api[_-]?token|private[_-]?key|client[_-]?secret/i.test(serialized), 'manifest must not contain credentials');
   return manifest;
 }
@@ -145,6 +163,9 @@ export async function validateSourceContracts(manifest) {
   invariant(appSource.includes('initializeApp(appConfig.firebaseConfig)'), 'Firebase bootstrap does not use runtime config');
   const workerPath = resolveInside(repositoryRoot, manifest.source.worker);
   const workerSource = await readFile(workerPath, 'utf8');
+  for (const name of firebaseAdminSecretBindingNames) {
+    invariant(workerSource.includes(`env.${name}`), `Worker does not consume required secret binding ${name}`);
+  }
   const workerModule = await import(`data:text/javascript;base64,${Buffer.from(workerSource).toString('base64')}`);
   const completeEnv = {
     FIREBASE_API_KEY: 'synthetic-api-key',
@@ -199,6 +220,9 @@ function generatedWranglerConfig(manifest, subdomainSettings = null) {
       database_name: manifest.d1.databaseName,
       database_id: manifest.d1.databaseId,
     }],
+    secrets: {
+      required: [...firebaseAdminSecretBindingNames],
+    },
     observability: {
       enabled: manifest.observability.enabled,
       head_sampling_rate: manifest.observability.headSamplingRate,
