@@ -163,6 +163,9 @@ export async function validateSourceContracts(manifest) {
   invariant(appSource.includes('initializeApp(appConfig.firebaseConfig)'), 'Firebase bootstrap does not use runtime config');
   const workerPath = resolveInside(repositoryRoot, manifest.source.worker);
   const workerSource = await readFile(workerPath, 'utf8');
+  for (const name of firebaseAdminSecretBindingNames) {
+    invariant(workerSource.includes(`env.${name}`), `Worker does not consume required secret binding ${name}`);
+  }
   const workerModule = await import(`data:text/javascript;base64,${Buffer.from(workerSource).toString('base64')}`);
   const completeEnv = {
     FIREBASE_API_KEY: 'synthetic-api-key',
@@ -217,6 +220,9 @@ function generatedWranglerConfig(manifest, subdomainSettings = null) {
       database_name: manifest.d1.databaseName,
       database_id: manifest.d1.databaseId,
     }],
+    secrets: {
+      required: [...firebaseAdminSecretBindingNames],
+    },
     observability: {
       enabled: manifest.observability.enabled,
       head_sampling_rate: manifest.observability.headSamplingRate,

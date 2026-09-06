@@ -86,9 +86,10 @@ test('asset package preserves every governed /assets path', async () => {
   assert.equal(config.assets.directory, './public');
   assert.equal(config.assets.binding, 'ASSETS');
   assert.equal(config.observability.enabled, true);
-  const generatedConfig = JSON.stringify(config);
-  assert.equal(generatedConfig.includes('FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL'), false);
-  assert.equal(generatedConfig.includes('FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY'), false);
+  assert.deepEqual(config.secrets, {
+    required: ['FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL', 'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY'],
+  });
+  assert.equal(Object.hasOwn(config.secrets, 'values'), false);
 });
 
 test('remote binding parity rejects missing, changed, or stale production config', async () => {
