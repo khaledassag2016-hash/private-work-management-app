@@ -528,3 +528,17 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - Stage conversations stay within their Issue scope.
 - General supervision reviews PRs and authorizes stage transitions.
 - Except for an explicit scoped decision, two coding agents must not push concurrently or hand off the same PR without recorded sequential ownership.
+
+## UAT live remediation — Issue #135 / PR #136 — implementation verification
+
+- `UAT_LIVE_REMEDIATION_STATUS = IMPLEMENTATION_VERIFIED`.
+- Live Production UAT proved a parity gap for `UAT-044`: `PARTIALLY_STOPPED` on the active Production version zeroed customer remaining balance after a partial payment. Current `main` already contains the corrected D-027 semantics from PR #134, so no new UAT-044 financial formula change was made here.
+- Price-request remediation now rejects a second current-version pending price request for the same Work. Pending requests whose Work version has advanced are exposed as `SUPERSEDED` and are not actionable.
+- Work Details hides the price-request form while a current pending price request exists.
+- Financial UX cleanup removes the UAT-observed helper copy, removes the misleading payment amount placeholder, and resolves authorized participant UIDs to خالد/وليد in payment/reversal history using the existing participants read endpoint.
+- Product mirrors remain byte-identical for Worker and app asset sources.
+- Exact technical head `f1ebf310be413b33a33c6cd1172461123210c7f9` passed all applicable PR CI: S2 architecture validation, Production deployment guardrails, S3 CPU Gate Static, S9 UX Acceptance, S10 Integration Backup Restore, and S11 Historical Import.
+- `UAT-044` remains **NOT CLOSED** until a separately authorized Production deployment brings the corrected main implementation to the tested environment and independent live UAT confirms `PARTIALLY_STOPPED` retains the governed remaining amount.
+- `UAT-046` and `UAT-047` remain **NOT CLOSED** pending completion of independent live UAT.
+- No Deploy, Cloud/DNS/D1/Firebase write, schema/migration, Role Remap, Production data mutation, or live secret change was performed.
+
