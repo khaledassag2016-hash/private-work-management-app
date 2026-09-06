@@ -279,6 +279,7 @@ function runWrangler(manifest, args, { display = false } = {}) {
     cwd: repositoryRoot,
     encoding: 'utf8',
     env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: manifest.accountId },
+    shell: process.platform === 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (display) process.stdout.write(output);

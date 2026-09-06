@@ -200,6 +200,11 @@ test('candidate state survives package rebuild and locks the exact source SHA', 
   }
 });
 
+test('Windows deployment launches the wrangler.cmd shim through the Windows shell', async () => {
+  const source = await readFile(path.join(repositoryRoot, 'deployment/production/deploy.mjs'), 'utf8');
+  assert.match(source, /shell:\s*process\.platform === 'win32'/);
+});
+
 test('production staging and promotion require one exact clean Git HEAD', () => {
   const sourceSha = 'b'.repeat(40);
   assert.equal(assertCleanGitHead({
