@@ -95,8 +95,10 @@ describe('S5 PR-B UI Flows', () => {
     setupTestEnv();
 
     // Override fetch to verify API paths
+    const calledUrls = [];
     globalThis.fetch = async (url, options) => {
       lastFetch = { url, options };
+      calledUrls.push(url);
       return {
         ok: true,
         json: async () => ({ ok: true, data: { success: true } })
@@ -106,7 +108,8 @@ describe('S5 PR-B UI Flows', () => {
     // S7 may add authoritative Work-detail reads, but legacy requests remain wired through api().
     state.selectedWork = { id: 'w1' };
     await testApp.openWork('w1');
-    assert.match(lastFetch.url, /\/api\/works\/w1\/payment-reversal-requests$/);
+    assert.ok(calledUrls.some(url => /\/api\/works\/w1\/payment-reversal-requests$/.test(url)));
+    assert.ok(calledUrls.some(url => /\/api\/participants$/.test(url)));
   });
 
   it('2. Direct status UI cannot offer governed cancel targets', () => {
@@ -473,7 +476,7 @@ describe('S5 PR-B UI Flows', () => {
     const mockEvent = { preventDefault: () => {}, currentTarget: {} };
     await testApp.submitEvent(mockEvent);
 
-    assert.equal(calledUrls.length, 11); // event POST plus ten authoritative Work-detail reads, including S7 payment/reversal history
+    assert.equal(calledUrls.length, 12); // event POST plus eleven authoritative Work-detail reads, including S7 payment/reversal history and participant labels
     assert.match(calledUrls[0].url, /\/events$/);
     assert.equal(calledUrls[0].method, 'POST');
     assert.ok(calledUrls.some(call => /\/financials$/.test(call.url)));
