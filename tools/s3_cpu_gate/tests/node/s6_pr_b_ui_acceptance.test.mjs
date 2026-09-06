@@ -39,6 +39,7 @@ function setup({ uid = 'uid-one', selectedWork = {} } = {}) {
   state.busy = false;
   state.view = 'work';
   state.selectedWork = selectedWork;
+  state.financial.participants = [{ uid: 'uid-one', role: 'person_1' }, { uid: 'uid-two', role: 'person_2' }];
 }
 function response(data, ok = true, code = '') {
   return { ok, status: ok ? 200 : 409, json: async () => ok ? { ok: true, data } : { ok: false, code } };
@@ -91,8 +92,16 @@ test('S6 UI keeps pending price/ratio requests separate and blocks self approval
   assert.match(html, /لا يمكنك اعتماد طلبك/);
   assert.doesNotMatch(html, /data-action="approve-price-request" data-request-id="p1"/);
   assert.doesNotMatch(html, /data-action="approve-ratio-request" data-request-id="r1"/);
-  assert.match(html, /id="s6-price-form"/);
+  assert.doesNotMatch(html, /id="s6-price-form"/);
+  assert.match(html, /يوجد طلب سعر معلق؛ انتظر حسمه قبل إرسال طلب سعر جديد/);
   assert.match(html, /id="s6-ratio-form"/);
+});
+
+test('S6 UI renders superseded price requests as non-actionable', () => {
+  setup({ uid: 'uid-two', selectedWork: { id: 'w1', version: 2, title: 'طلب منتهي', financials: financials({ stateValue: 'PRICE_UNSET', priceRequests: [{ id: 'stale-price', state: 'SUPERSEDED', movement_type: 'BASE', amount_halalas: 10000, reason: 'stale', requested_by: 'uid-one', requested_at: '2026-08-12T12:00:00.000Z' }] }) } });
+  const html = testApp.workPage();
+  assert.match(html, /منتهي الصلاحية — غير قابل للاعتماد/);
+  assert.doesNotMatch(html, /data-action="approve-price-request" data-request-id="stale-price"/);
 });
 
 test('S6 UI approval actions execute both price directions and both ratio directions through existing api()', async () => {
