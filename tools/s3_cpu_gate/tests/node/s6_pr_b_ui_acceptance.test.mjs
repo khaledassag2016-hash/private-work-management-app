@@ -137,6 +137,35 @@ test('S6 UI mutation uses request version and verifies authoritative refetch bef
   assert.equal(state.busy, false);
 });
 
+test('UAT-044 D-027 Work Details distinguishes cancel-before zero from partial-stop retained due', () => {
+  const baseFinancials = {
+    ...financials({ price: 170000 }),
+    approved_payments_total_halalas: 100000,
+    remaining_halalas: 70000,
+    customer_remaining_halalas: 70000,
+    collection_status: 'PARTIALLY_COLLECTED',
+    payments: [],
+  };
+  setup({ selectedWork: {
+    id: 'w1', version: 4, title: 'عمل متوقف جزئيًا', customer_id: 'c1', status: 'PARTIALLY_STOPPED', relationship_kind: 'INDEPENDENT', is_cancelled: true, is_archived: false,
+    financials: baseFinancials, events: [], titleHistory: [], statusHistory: [], archiveHistory: [], requests: [], reversalRequests: [], similar: [],
+  } });
+  let html = testApp.workPage();
+  assert.match(html, /متوقف بعد تنفيذ جزئي — المستحق النهائي محفوظ/);
+  assert.match(html, /المتبقي على العميل: 700 ريال/);
+  assert.match(html, /data-collection-descriptor[^>]*>تحصيل جزئي</);
+  assert.doesNotMatch(html, /الرصيد على العميل صفر/);
+
+  setup({ selectedWork: {
+    id: 'w2', version: 4, title: 'عمل ملغى قبل التنفيذ', customer_id: 'c1', status: 'CANCELLED_BEFORE_EXECUTION', relationship_kind: 'INDEPENDENT', is_cancelled: true, is_archived: false,
+    financials: { ...baseFinancials, approved_payments_total_halalas: 0, remaining_halalas: 0, customer_remaining_halalas: 0, collection_status: 'CANCELLED_ZERO_BALANCE' },
+    events: [], titleHistory: [], statusHistory: [], archiveHistory: [], requests: [], reversalRequests: [], similar: [],
+  } });
+  html = testApp.workPage();
+  assert.match(html, /ملغى قبل التنفيذ — لا مبلغ متبقٍ على العميل/);
+  assert.match(html, /data-collection-descriptor[^>]*>ملغى قبل التنفيذ — لا مبلغ متبقٍ</);
+});
+
 test('S6 UI exposes negative-price fail-closed error without changing authoritative state', async () => {
   setup({ uid: 'uid-two', selectedWork: { id: 'w1', version: 2, current_price_halalas: 150000, financials: financials({ price: 150000 }) } });
   assert.equal(testApp.errorMessage('S6_NEGATIVE_FINAL_PRICE_POLICY_UNRESOLVED'), 'لا يمكن اعتماد هذه الحركة لأنها تجعل السعر النهائي سالبًا. لم يتغير السعر الحالي.');

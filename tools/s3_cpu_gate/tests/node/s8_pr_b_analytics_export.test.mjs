@@ -17,6 +17,7 @@ import worker, {
   getS8FollowUpExportDto,
   getS8MonthExportDto,
   getS8WorkExportDto,
+  searchWorksS8,
   getWorkFinancials,
 } from '../../src/worker/src/index.js';
 
@@ -117,6 +118,26 @@ test('S8 PR-B analytics groups classifications, period, archives, and authoritat
     await createCatalogValue(env, 's8b-one', 's8b-dynamic-country', 'country', { value_key: 'S8B_DYNAMIC_COUNTRY', label: 'Synthetic Dynamic Country' });
     work(database, 'WORK-S8B-DYNAMIC', { title: 'Synthetic dynamic catalog analytics', country: 'S8B_DYNAMIC_COUNTRY' });
     const dynamic = await getS8Analytics(env, { period_basis: 'CREATED_AT', year: '2026', month: '08', include_archived: true }); assert.equal(group(dynamic.groups, 'COUNTRY', 'S8B_DYNAMIC_COUNTRY').work_count, 1);
+  } finally { database.close(); }
+});
+
+test('UAT-044 D-027 partial-stop search/analytics/export preserve the governed remaining amount', async () => {
+  const { database, env } = fixture();
+  try {
+    seedAnalyticsFixture(database);
+    database.prepare("UPDATE works SET status='PARTIALLY_STOPPED' WHERE id='WORK-S8B-A'").run();
+    const page = await searchWorksS8(env, { period_basis: 'CREATED_AT', year: '2026', month: '08', include_archived: true, collection_status: 'PARTIALLY_COLLECTED' });
+    const row = page.items.find(item => item.id === 'WORK-S8B-A');
+    assert.ok(row);
+    assert.equal(row.current_price_halalas, 10000);
+    assert.equal(row.approved_paid_halalas, 6000);
+    assert.equal(row.remaining_halalas, 4000);
+    assert.equal(row.collection_status, 'PARTIALLY_COLLECTED');
+    const analytics = await getS8Analytics(env, { period_basis: 'CREATED_AT', year: '2026', month: '08', include_archived: true });
+    assert.deepEqual(group(analytics.groups, 'WORK_TYPE', 'TYPE_A'), { dimension: 'WORK_TYPE', bucket: 'TYPE_A', work_count: 2, active_work_count: 2, archived_work_count: 0, price_unset_work_count: 0, current_price_halalas: 15000, approved_paid_halalas: 6000, remaining_halalas: 9000 });
+    const dto = await getS8WorkExportDto(env, 'WORK-S8B-A');
+    assert.equal(dto.work.remaining_halalas, 4000);
+    assert.equal(dto.work.collection_status, 'PARTIALLY_COLLECTED');
   } finally { database.close(); }
 });
 
