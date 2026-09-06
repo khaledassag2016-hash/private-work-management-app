@@ -146,6 +146,27 @@ test('remote script-settings parity covers observability, Logpush, and tail cons
     },
   };
   assert.doesNotThrow(() => assertScriptSettingsParity(settings, manifest));
+
+  const nullTailConsumers = structuredClone(settings);
+  nullTailConsumers.tail_consumers = null;
+  assert.doesNotThrow(() => assertScriptSettingsParity(nullTailConsumers, manifest));
+
+  const missingTailConsumers = structuredClone(settings);
+  delete missingTailConsumers.tail_consumers;
+  assert.throws(() => assertScriptSettingsParity(missingTailConsumers, manifest), /remote tail consumers are unavailable/);
+
+  const invalidTailConsumers = structuredClone(settings);
+  invalidTailConsumers.tail_consumers = {};
+  assert.throws(() => assertScriptSettingsParity(invalidTailConsumers, manifest), /remote tail consumers are unavailable/);
+
+  const nonEmptyTailConsumers = structuredClone(settings);
+  nonEmptyTailConsumers.tail_consumers = [{ service: 'unexpected-tail-worker' }];
+  assert.throws(() => assertScriptSettingsParity(nonEmptyTailConsumers, manifest), /remote tail consumers differ from the manifest/);
+
+  const manifestExpectingTailConsumer = structuredClone(manifest);
+  manifestExpectingTailConsumer.tailConsumers = [{ service: 'expected-tail-worker' }];
+  assert.throws(() => assertScriptSettingsParity(nullTailConsumers, manifestExpectingTailConsumer), /remote tail consumers differ from the manifest/);
+
   const wrong = structuredClone(settings);
   wrong.observability.logs.persist = false;
   assert.throws(() => assertScriptSettingsParity(wrong, manifest), /logs persist setting differs/);
