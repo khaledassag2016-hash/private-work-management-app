@@ -480,6 +480,18 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - No Deploy, Cloud/DNS/D1/Firebase write, live secret addition, Production traffic change, or merge was performed by this implementation verification.
 - Final PR-head acceptance requires all applicable CI to pass again after this state-only update before merge can be considered.
 
+## UAT-044 — Governance supersession of D-024 — Issue #131 — governance verified candidate
+
+- Frozen governance base: `7bf9c5a49837f1373cf39e24e6f235c83f543725`.
+- Dedicated branch: `uat-044-governance-131`; no direct `main` change.
+- Work type: `GOVERNANCE ONLY`. No Product code, Worker/backend, schema, migration, tests for product behavior, Role Remap, Deploy, Cloud/DNS/D1/Firebase write, or Production data mutation is included.
+- The previously resolved UAT-044 decision is recorded as D-027 without reopening or changing the product decision.
+- D-027 supersedes only the conflicting forced-zero-balance clause in D-024: cancellation does not impose a universal zero final amount due; the approved UAT-044 outcome may be zero / partial / full, while historical price/payment records remain preserved.
+- All non-conflicting D-024 protections remain governing: historical preservation, ordinary-operation stop after cancellation, closed-snapshot immutability, and append-only settlement adjustment handling.
+- `UAT044_GOVERNANCE_STATUS = GOVERNANCE_VERIFIED_CANDIDATE`.
+- `UAT-044` is NOT recorded as `CLOSED`; Product implementation and independent UAT remain separate future work and require separate authorization.
+- Issue #131 / PR pending at this state-writing point. Final governance verification requires documentation/validation CI on the final PR head and independent supervisory review before merge.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.
