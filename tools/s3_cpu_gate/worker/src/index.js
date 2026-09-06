@@ -1679,7 +1679,7 @@ export async function getWorkFinancials(env, workId) {
     payments: paymentRows.map(paymentReadModel),
     payment_totals: { gross_paid_halalas: totals.gross, reversed_paid_halalas: totals.reversed, approved_paid_halalas: totals.approvedPaid },
     movements,
-    price_requests: cancelled ? priceRequests.map(row => row.state === 'PENDING' ? { ...row, state: 'SUPERSEDED' } : row) : priceRequests,
+    price_requests: priceRequests.map(row => row.state === 'PENDING' && (cancelled || Number(row.work_version) !== Number(work.version)) ? { ...row, state: 'SUPERSEDED' } : row),
     ratio_requests: cancelled ? ratioRequests.map(row => row.state === 'PENDING' ? { ...row, state: 'SUPERSEDED' } : row) : ratioRequests,
     ratio_history: ratioHistory,
   };
@@ -1773,7 +1773,8 @@ async function listPriceChangeRequestsRaw(env, workId) {
 export async function listPriceChangeRequests(env, workId) {
   const work = await getWorkRaw(env, workId);
   const rows = await listPriceChangeRequestsRaw(env, workId);
-  return isCancelledWorkStatus(work.status) ? rows.map(row => row.state === 'PENDING' ? { ...row, state: 'SUPERSEDED' } : row) : rows;
+  const cancelled = isCancelledWorkStatus(work.status);
+  return rows.map(row => row.state === 'PENDING' && (cancelled || Number(row.work_version) !== Number(work.version)) ? { ...row, state: 'SUPERSEDED' } : row);
 }
 
 export async function createPriceChangeRequest(env, actorUid, requestId, workId, input) {
@@ -1790,6 +1791,8 @@ export async function createPriceChangeRequest(env, actorUid, requestId, workId,
   const reason = requiredString(input.reason, 'REASON_REQUIRED');
   const effectiveAt = canonicalEventTimestamp(input.effective_at === undefined ? nowIso() : input.effective_at);
   await prbEnsurePeriodOpen(env, effectiveAt);
+  const existingPending = await env.DB.prepare(`SELECT id FROM price_change_requests WHERE work_id=?1 AND state='PENDING' AND work_version=?2 LIMIT 1`).bind(workId, version).first();
+  if (existingPending) throw new DomainError('PRICE_REQUEST_ALREADY_PENDING', 409);
   const id = newId('price_req');
   const requestedAt = nowIso();
   const after = { id, work_id: workId, movement_type: movementType, amount_halalas: amountHalalas, reason, effective_at: effectiveAt, requested_by: actorUid, requested_at: requestedAt, work_version: version, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };

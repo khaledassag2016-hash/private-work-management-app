@@ -104,6 +104,28 @@ test('S6 MONEY parser rejects malformed, >2 decimals, and unsafe values before D
   } finally { database.close(); }
 });
 
+test('UAT live remediation allows only one current-version pending price request and renders stale pending as superseded', async () => {
+  const { database, env } = fixture();
+  try {
+    const { work } = await setupWork(env, { title: 'Pending Price Guard' });
+    const first = await createPriceChangeRequest(env, 'uid-one', 'pending-price-first', work.id, { version: 1, movement_type: 'BASE', amount_riyals: '100.00', reason: 'first pending' });
+    assert.equal(first.state, 'PENDING');
+    await assert.rejects(
+      createPriceChangeRequest(env, 'uid-two', 'pending-price-duplicate', work.id, { version: 1, movement_type: 'BASE', amount_riyals: '100.00', reason: 'duplicate pending' }),
+      error => error?.code === 'PRICE_REQUEST_ALREADY_PENDING'
+    );
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM price_change_requests WHERE work_id=? AND state='PENDING'").get(work.id).count, 1);
+
+    await changeWorkTitle(env, 'uid-one', 'pending-price-title-drift', work.id, { version: 1, new_title: 'Pending Price Guard Updated', reason: 'unrelated version drift' });
+    const staleRows = await listPriceChangeRequests(env, work.id);
+    assert.equal(staleRows[0].state, 'SUPERSEDED');
+
+    const current = await getWork(env, work.id);
+    const replacement = await createPriceChangeRequest(env, 'uid-two', 'pending-price-replacement', work.id, { version: current.version, movement_type: 'BASE', amount_riyals: '100.00', reason: 'replacement after stale request' });
+    assert.equal(replacement.state, 'PENDING');
+  } finally { database.close(); }
+});
+
 for (const scenario of [
   { name: 'cancel before execution stays zero', target: 'CANCELLED_BEFORE_EXECUTION', payment: null, expectedRemaining: 0, expectedCollection: 'CANCELLED_ZERO_BALANCE' },
   { name: 'partial stop with no payment keeps full due', target: 'PARTIALLY_STOPPED', payment: null, expectedRemaining: 170000, expectedCollection: 'UNPAID' },
