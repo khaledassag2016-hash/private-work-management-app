@@ -26,6 +26,12 @@ async function submitConfirmed(page, form, path) {
   await expect(page.locator('#app')).toHaveAttribute('aria-busy', 'false');
 }
 
+async function openWorkDisclosure(page, name) {
+  const disclosure = page.locator(`[data-work-disclosure="${name}"]`);
+  if (!(await disclosure.evaluate(element => element.open))) await disclosure.locator('summary').click();
+  await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(true);
+}
+
 test('A-M capability matrix is reachable with identical mobile and desktop functions', async ({ page }) => {
   expect(capabilityMatrix.capabilities.map(item => item.id)).toEqual('ABCDEFGHIJKLM'.split(''));
   expect(capabilityMatrix.capabilities.every(item => item.mobile === 'required' && item.desktop === 'required')).toBe(true);
@@ -39,7 +45,17 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await openWork(page);
-  for (const selector of ['#s5-event-form', '#s5-title-form', '#s5-status-form', '#s5-cancel-form', '#s5-archive-form', '#s6-price-form', '#s6-ratio-form', '#s7-payment-form']) await expect(page.locator(selector)).toBeVisible();
+  await expect(page.locator('[data-work-summary]')).toBeVisible();
+  await expect(page.locator('[data-work-attention]')).toBeVisible();
+  await expect(page.locator('#s5-event-form')).toBeHidden();
+  await openWorkDisclosure(page, 'financial-details');
+  for (const selector of ['#s6-price-form', '#s6-ratio-form']) await expect(page.locator(selector)).toBeVisible();
+  await openWorkDisclosure(page, 'collection-details');
+  await expect(page.locator('#s7-payment-form')).toBeVisible();
+  await openWorkDisclosure(page, 'history');
+  for (const selector of ['#s5-event-form', '#s5-title-form', '#s5-status-form']) await expect(page.locator(selector)).toBeVisible();
+  await openWorkDisclosure(page, 'danger');
+  for (const selector of ['#s5-cancel-form', '#s5-archive-form']) await expect(page.locator(selector)).toBeVisible();
   await expect(page.locator('[data-action="approve-request"]')).toBeVisible();
   await expect(page.locator('[data-action="approve-price-request"]')).toBeVisible();
   await expect(page.locator('[data-action="approve-ratio-request"]')).toBeVisible();
@@ -62,18 +78,22 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
 
 test('sensitive actions cancel with zero requests and confirm exactly once', async ({ page }) => {
   await openWork(page);
+  await openWorkDisclosure(page, 'danger');
   await page.locator('#s5-archive-form input[name="reason"]').fill('سبب أرشفة اصطناعي');
   const archivePath = `/api/works/${work.id}/requests`;
   const archiveBefore = api.count('POST', archivePath);
   await page.locator('#s5-archive-form button[type="submit"]').click();
   await handleNextDialog(page, 'dismiss');
   expect(api.count('POST', archivePath)).toBe(archiveBefore);
+  await openWorkDisclosure(page, 'danger');
   await page.locator('#s5-archive-form input[name="reason"]').fill('سبب أرشفة اصطناعي');
   await submitConfirmed(page, '#s5-archive-form', archivePath);
 
+  await openWorkDisclosure(page, 'financial-details');
   await page.locator('#s6-price-form input[name="amount_riyals"]').fill('100.00');
   await page.locator('#s6-price-form input[name="reason"]').fill('زيادة اصطناعية');
   await submitConfirmed(page, '#s6-price-form', `/api/works/${work.id}/price-requests`);
+  await openWorkDisclosure(page, 'financial-details');
   await page.locator('#s6-ratio-form input[name="reason"]').fill('استثناء اصطناعي');
   await submitConfirmed(page, '#s6-ratio-form', `/api/works/${work.id}/ratio-requests`);
 
@@ -83,9 +103,12 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
     ['[data-action="approve-ratio-request"]', `/api/works/${work.id}/ratio-requests/ratio-request-1/approve`],
     ['[data-action="approve-payment-reversal"]', `/api/works/${work.id}/payment-reversal-requests/reversal-1/approve`],
   ]) {
+    const disclosure = selector.includes('approve-request') && !selector.includes('approve-price') && !selector.includes('approve-ratio') ? 'danger' : selector.includes('approve-payment') ? 'collection-details' : 'financial-details';
+    await openWorkDisclosure(page, disclosure);
     const before = api.count('POST', path); await page.locator(selector).click(); if (selector.includes('approve-price-request')) { const dialog = page.getByRole('dialog'); await expect(dialog.getByRole('heading')).toHaveText('اعتماد حركة السعر'); await expect(dialog).toContainText('سيتم اعتماد طلب حركة السعر وتحديث السعر الحالي وفق الحركة المطلوبة.'); } await handleNextDialog(page, 'accept'); await expect.poll(() => api.count('POST', path)).toBe(before + 1);
   }
 
+  await openWorkDisclosure(page, 'collection-details');
   await page.locator('[data-action="request-payment-reversal"]').click();
   await page.locator('#payment-reversal-form input[name="reason"]').fill('تصحيح اصطناعي');
   await submitConfirmed(page, '#payment-reversal-form', `/api/works/${work.id}/payment-reversal-requests`);
@@ -127,6 +150,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
 
 test('double click, double tap, repeated Enter, and click while pending send one mutation', async ({ page }, testInfo) => {
   await openWork(page);
+  await openWorkDisclosure(page, 'collection-details');
   const form = page.locator('#s7-payment-form');
   await form.locator('input[name="amount_riyals"]').fill('100.00');
   await form.locator('input[name="effective_at"]').fill('2026-08-13T12:00');
@@ -137,8 +161,8 @@ test('double click, double tap, repeated Enter, and click while pending send one
   await expect.poll(() => api.count('POST', path)).toBe(1);
   await expect(form.locator('button[type="submit"]')).toBeDisabled();
   await expect(form.locator('button[type="submit"]')).toHaveAttribute('aria-busy', 'true');
-  if (testInfo.project.metadata.width < 600) await form.locator('button[type="submit"]').tap({ force: true });
-  else await form.locator('button[type="submit"]').click({ force: true });
+  await form.locator('button[type="submit"]').scrollIntoViewIfNeeded();
+  await form.locator('button[type="submit"]').dispatchEvent('click');
   await form.locator('input[name="amount_riyals"]').press('Enter');
   expect(api.count('POST', path)).toBe(1);
   release();
@@ -147,6 +171,7 @@ test('double click, double tap, repeated Enter, and click while pending send one
 
 test('400/401/403/409/fail-closed/500/network errors are visible, recoverable, and preserve input', async ({ page }) => {
   await openWork(page);
+  await openWorkDisclosure(page, 'history');
   const form = page.locator('#s5-event-form');
   await form.locator('input[name="event_type"]').fill('FOLLOW_UP');
   await form.locator('input[name="description"]').fill('نص يجب ألا يضيع');

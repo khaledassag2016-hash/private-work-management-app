@@ -126,5 +126,8 @@ export async function openApp(page) {
 export async function openWork(page) {
   await page.locator('[data-nav="works"]').click();
   await page.locator(`[data-work="${work.id}"]`).click();
+  const financialDisclosureSummary = page.locator('[data-work-disclosure="financial-details"] summary');
+  await financialDisclosureSummary.click();
   await page.locator('[data-s6-financial-core]').waitFor();
+  await financialDisclosureSummary.click();
 }

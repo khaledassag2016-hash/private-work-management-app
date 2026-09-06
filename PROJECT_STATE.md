@@ -438,6 +438,22 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - `SCOPE_DEVIATIONS = NONE` for product implementation; no Worker backend business logic, schema, migration, permission, role, role mapping, Firebase, D1, binding, deployment, Cloud, DNS, Role Remap, or Wave 3 product work was performed.
 - Wave 2 implementation closure becomes effective only after this state-only final PR head passes all applicable CI, PR #126 is Squash merged, the resulting `main` SHA passes applicable post-merge CI, and Issue #125 is closed completed. When those conditions are met, execution may transition to Wave 3 under a new Issue, branch and PR without reopening Wave 1 or Wave 2 implementation.
 
+## Wave 3 — Work Details UX & True Mobile Responsiveness — Issue #127
+
+- Frozen implementation base: `4c32e6a0a63cb47eadb9a1159c21be9eeaa261e5`.
+- Dedicated branch: `wave3-work-details-127`; no direct `main` change.
+- Exclusive scope: UAT-045 and UAT-049 only; no UAT is recorded as `CLOSED` by this implementation wave.
+- Product changes are confined to the mirrored Worker presentation assets `tools/s3_cpu_gate/src/worker/assets/app.js`, `tools/s3_cpu_gate/worker/assets/app.js`, `tools/s3_cpu_gate/src/worker/assets/styles.css`, and `tools/s3_cpu_gate/worker/assets/styles.css`.
+- Test-only changes are limited to the S9 full-flow/structural tests and fixture plus the directly affected S5 UI contract assertion.
+- Work Details now presents a primary summary and pending-attention region first, uses native disclosure groups for financial, collection, history and sensitive actions, preserves all existing form IDs/actions, keeps dangerous cancellation/archive actions separate, and provides keyboard/touch disclosure access.
+- Mirrored `app.js` and `styles.css` assets are byte-identical after implementation.
+- `WAVE3_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED_CANDIDATE`.
+- Targeted Node S5/S6 verification: `29 PASS / 0 FAIL`.
+- S9 Level A verification: `10 PASS / 0 FAIL`; S9 Level B verification: `44 PASS / 6 intentional skips`.
+- Full Node S3/S10/S11 verification: `159 PASS / 3 environment-blocked`; blockers are missing `openssl` on PATH for two authentication-boundary checks and Windows `EPERM` cleanup in the separate-target restore test. No product assertion failed in this final run.
+- No Worker backend, financial rules, roles, Firebase, D1, schema, migration, binding, deployment, Cloud write, DNS, Billing or real-data mutation was performed.
+- Final-head CI and supervisory review remain required; this candidate is not merged, deployed, or declared complete.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.

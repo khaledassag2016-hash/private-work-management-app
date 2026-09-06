@@ -7,6 +7,12 @@ test.beforeEach(async ({ page }) => {
   await openApp(page);
 });
 
+async function openWorkDisclosure(page, name) {
+  const disclosure = page.locator(`[data-work-disclosure="${name}"]`);
+  if (!(await disclosure.evaluate(element => element.open))) await disclosure.locator('summary').click();
+  await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(true);
+}
+
 test('RTL, responsive containment, navigation reachability, and state clarity', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
@@ -25,11 +31,15 @@ test('RTL, responsive containment, navigation reachability, and state clarity', 
     expect(horizontalEscapes, `${route} has controls outside the viewport`).toEqual([]);
   }
   await openWork(page);
+  await expect(page.locator('[data-work-summary]')).toBeVisible();
+  await expect(page.locator('[data-work-attention]')).toBeVisible();
+  await expect(page.locator('#s5-event-form')).toBeHidden();
   await expect(page.locator('[data-execution-status]')).toBeVisible();
   await expect(page.locator('[data-collection-status]')).toBeVisible();
-  await expect(page.locator('[data-authoritative-price]')).toHaveText('1700 ريال');
-  await expect(page.locator('[data-approved-payments]')).toHaveText('1000 ريال');
-  await expect(page.locator('[data-remaining]')).toHaveText('700 ريال');
+  await expect(page.locator('[data-authoritative-price]:visible')).toHaveText('1700 ريال');
+  await expect(page.locator('[data-approved-payments]:visible')).toHaveText('1000 ريال');
+  await expect(page.locator('[data-remaining]:visible')).toHaveText('700 ريال');
+  await openWorkDisclosure(page, 'financial-details');
   await expect(page.locator('[data-financial-request]').first()).toBeVisible();
   const criticalClipping = await page.locator('[data-execution-status], [data-collection-status], [data-authoritative-price], [data-approved-payments], [data-remaining], [data-financial-request]').evaluateAll(elements => elements.filter(element => {
     const rect = element.getBoundingClientRect();
@@ -47,6 +57,18 @@ test('RTL, responsive containment, navigation reachability, and state clarity', 
     return found;
   });
   expect(overlaps, 'interactive controls overlap').toEqual([]);
+});
+
+test('work disclosure groups open by keyboard and touch', async ({ page }, testInfo) => {
+  await openWork(page);
+  const financial = page.locator('[data-work-disclosure="financial-details"]');
+  await financial.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => financial.evaluate(element => element.open)).toBe(true);
+  const collection = page.locator('[data-work-disclosure="collection-details"]');
+  if (testInfo.project.metadata.width < 600) await collection.locator('summary').tap();
+  else await collection.locator('summary').click();
+  await expect(collection).toHaveAttribute('open', '');
 });
 
 test('keyboard dialog focus is contained and restored', async ({ page }) => {
