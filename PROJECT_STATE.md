@@ -497,6 +497,26 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - `UAT-044` is NOT recorded as `CLOSED`; Product implementation and independent UAT remain separate future work and require separate authorization.
 - Final merge eligibility requires all applicable CI to pass again on the state-only final PR head after this synchronization. Merge is not authorized by this record.
 
+## UAT-044 — D-027 cancellation final amount implementation — Issue #133 / PR #134 — implementation verification
+
+- Frozen implementation base: `1f0645bf4358823f642aabf14378646b82d71d80`, after D-027 governance was merged to `main`.
+- Dedicated branch: `uat-044-cancellation-final-amount-133`; no direct `main` change.
+- Scope is UAT-044 Product implementation only. No UAT-013/UAT-050 Role Remap, Final Clean Cutover, Cloud/DNS/D1/Firebase write, Deploy, or Production data mutation is included.
+- D-027 is implemented without reopening the decision: `CANCELLED_BEFORE_EXECUTION` has zero customer remaining amount, while `PARTIALLY_STOPPED` preserves approved price and net-approved payments so the remaining amount can be full, partial, or zero.
+- The approved requirements remain aligned: cancel-before-execution does not count as executed work; partial stop preserves the executed/price truth and the unpaid remainder instead of deleting the due amount.
+- Non-conflicting D-024 protections remain unchanged: historical price/payment preservation, ordinary-operation blocking after cancellation, internal share basis on net approved receipts, closed-snapshot immutability, and append-only cancellation/post-cancellation-reversal adjustments.
+- Search/filter, analytics/export DTOs, Work Details, Audit/export labels, and the financial read model now use the same cancellation distinction.
+- Technical changed-file set: the mirrored Worker `index.js`, mirrored `app.js`, mirrored `s8-export.mjs`, plus focused Node tests `s6_pr_a_financial_core.test.mjs`, `s6_pr_b_ui_acceptance.test.mjs`, `s8_pr_b_analytics_export.test.mjs`, and `uat_supervisory_corrections.test.mjs`.
+- Final technical implementation head before this state-only synchronization: `d7cb3dd685e87684e434cdd72b7db8e4658bc30f`.
+- Mirror parity on that head: Worker `d0f0a54732060f9014d74ef5afd21128b74fb9f6`; app `709172d1ea0f2a042bbf79ae60190bba565c3fdb`; export `2daaf4852678e469f886962ae15317fcca6a83c9`.
+- The first PR head exposed one stale test assertion that expected a search DTO field the search contract does not expose. One test-only correction removed that invalid assertion while retaining search collection-status verification and analytics/export remaining-amount verification; no Product code changed in the correction.
+- Exact corrected-head CI is fully green: S2 architecture `34042391598`; Production deployment guardrails `34042391605`; S3 CPU Gate Static `34042391602`; S9 UX Acceptance `34042391599`; S10 Integration Backup Restore `34042391608`; S11 Historical Import `34042391597`.
+- Exact corrected-head regression evidence: S3 Full Node `152 PASS / 0 FAIL / 0 skipped`; S10 Full Node `152 PASS / 0 FAIL / 0 skipped`; S11 Full Node `162 PASS / 0 FAIL / 0 skipped`; S9 Level A `10 PASS`; S9 Level B `44 PASS + 6 intentional skips`; Pester `350 PASS / 0 FAIL`.
+- Independent supervisory diff review confirms no schema/migration, role/permission, Role Remap, Firebase/D1 binding, deployment, Cloud/DNS, or unrelated UAT change.
+- `UAT044_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED`.
+- `UAT-044` is NOT recorded as `CLOSED`; independent UAT remains required after merge/deployment becomes available.
+- Final PR-head acceptance requires all applicable CI to pass again after this state-only update. Merge remains outside the current authorization.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.
