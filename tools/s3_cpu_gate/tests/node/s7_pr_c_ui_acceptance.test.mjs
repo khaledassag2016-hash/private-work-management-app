@@ -48,7 +48,7 @@ function setup({ uid = 'uid-one', role = 'person_1', work = null } = {}) {
   state.busy = false;
   state.view = 'work';
   state.selectedWork = work;
-  state.financial = { periodKey: '2026-08', preview: null, snapshots: [], reopenRequests: [], transfers: [], subscriptions: [], expenses: [] };
+  state.financial = { periodKey: '2026-08', preview: null, snapshots: [], reopenRequests: [], transfers: [], subscriptions: [], expenses: [], participants: [{ uid: 'uid-one', role: 'person_1' }, { uid: 'uid-two', role: 'person_2' }] };
 }
 function financials({ price = 170000, paid = 0, collection = 'UNPAID', payments = [] } = {}) {
   return {
@@ -72,6 +72,7 @@ function installWorkFetch(financial = financials(), reversalRequests = []) {
     if (path.endsWith('/financials')) return response(financial);
     if (path.endsWith('/payments')) return response(financial.payments || []);
     if (path.endsWith('/payment-reversal-requests')) return response(reversalRequests);
+    if (path === '/api/participants') return response([{ uid: 'uid-one', role: 'person_1' }, { uid: 'uid-two', role: 'person_2' }]);
     if (path.endsWith('/similar') || path.endsWith('/events') || path.endsWith('/title-history') || path.endsWith('/status-history') || path.endsWith('/archive-history') || path.endsWith('/requests')) return response([]);
     return response(workPayload(financial));
   };
@@ -100,6 +101,14 @@ test('S7 PR-C Work UI shows authoritative collection truth separately from execu
   assert.match(html, /حالة التنفيذ/);
   assert.match(html, /طلب تصحيح معلق — لا يغير التحصيل/);
   assert.match(html, /لا يمكنك اعتماد طلبك/);
+  assert.match(html, /استلمها: خالد/);
+  assert.match(html, /سُجلت بواسطة: خالد/);
+  assert.doesNotMatch(html, /مستخدم مصرح/);
+  assert.doesNotMatch(html, /لا يدخل طلب التصحيح المعلق في هذا الإجمالي/);
+  assert.doesNotMatch(html, /مشتق من السعر المعتمد وسجل الدفعات فقط/);
+  assert.doesNotMatch(html, /مستقل عن حالة تنفيذ العمل/);
+  assert.doesNotMatch(html, /تسجل دفعة واحدة لهذا العمل/);
+  assert.doesNotMatch(html, /placeholder="1000"/);
   assert.doesNotMatch(html, /data-action="approve-payment-reversal" data-request-id="rev-1"/);
 });
 
