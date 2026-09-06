@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -426,18 +427,88 @@ export function assertBindingContract(version, manifest) {
   invariant(JSON.stringify([...(runtime?.compatibility_flags || [])].sort()) === JSON.stringify([...manifest.worker.compatibilityFlags].sort()), 'compatibility flags mismatch');
 }
 
-export function assertCandidateParity(activeVersion, candidateVersion, manifest) {
-  assertBindingContract(activeVersion, manifest);
+export function assertActiveBindingContract(version, manifest, { allowFirebaseAdminBootstrap = false } = {}) {
+  if (!allowFirebaseAdminBootstrap) {
+    assertBindingContract(version, manifest);
+    return;
+  }
+  const actual = bindingMap(version);
+  const missingSecrets = firebaseAdminSecretBindingNames.filter((name) => !actual.has(name));
+  invariant(
+    missingSecrets.length === firebaseAdminSecretBindingNames.length,
+    'Firebase Admin bootstrap requires both secret bindings to be absent from the active version',
+  );
+  const baselineManifest = {
+    ...manifest,
+    requiredBindings: manifest.requiredBindings.filter((binding) => !firebaseAdminSecretBindingNames.includes(binding.name)),
+  };
+  assertBindingContract(version, baselineManifest);
+}
+
+export function assertCandidateParity(activeVersion, candidateVersion, manifest, { allowFirebaseAdminBootstrap = false } = {}) {
+  assertActiveBindingContract(activeVersion, manifest, { allowFirebaseAdminBootstrap });
   assertBindingContract(candidateVersion, manifest);
   const active = bindingMap(activeVersion);
   const candidate = bindingMap(candidateVersion);
   for (const expected of manifest.requiredBindings) {
+    if (allowFirebaseAdminBootstrap && firebaseAdminSecretBindingNames.includes(expected.name) && !active.has(expected.name)) continue;
     invariant(JSON.stringify(bindingIdentity(active.get(expected.name))) === JSON.stringify(bindingIdentity(candidate.get(expected.name))), `${expected.name} binding identity drift`);
     if (expected.type === 'plain_text') {
       invariant(typeof active.get(expected.name)?.text === 'string', `${expected.name} active value is unavailable`);
       invariant(candidate.get(expected.name)?.text === active.get(expected.name).text, `${expected.name} value drift`);
     }
   }
+}
+
+export function firebaseAdminSecretsFromServiceAccount(serviceAccount, manifest) {
+  invariant(object(serviceAccount), 'Firebase service-account file must contain one JSON object');
+  invariant(serviceAccount.type === 'service_account', 'Firebase credential type must be service_account');
+  invariant(serviceAccount.project_id === manifest.firebase.projectId, 'Firebase service-account project does not match Production');
+  const clientEmail = typeof serviceAccount.client_email === 'string' ? serviceAccount.client_email.trim() : '';
+  invariant(
+    clientEmail.endsWith(`@${manifest.firebase.projectId}.iam.gserviceaccount.com`),
+    'Firebase service-account client email does not match Production project',
+  );
+  const privateKey = typeof serviceAccount.private_key === 'string'
+    ? serviceAccount.private_key.replace(/\\n/g, '\n').trim()
+    : '';
+  invariant(
+    /^-----BEGIN PRIVATE KEY-----[\s\S]+-----END PRIVATE KEY-----$/.test(privateKey),
+    'Firebase service-account private key is invalid',
+  );
+  return {
+    FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL: clientEmail,
+    FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY: `${privateKey}\n`,
+  };
+}
+
+async function prepareFirebaseAdminBootstrapSecretsFile(serviceAccountPath, manifest) {
+  invariant(typeof serviceAccountPath === 'string' && serviceAccountPath.length > 0, 'Firebase service-account path is required');
+  invariant(path.isAbsolute(serviceAccountPath), 'Firebase service-account path must be absolute');
+  const resolved = path.resolve(serviceAccountPath);
+  const repository = path.resolve(repositoryRoot);
+  invariant(
+    resolved !== repository && !resolved.startsWith(`${repository}${path.sep}`),
+    'Firebase service-account file must be outside the repository',
+  );
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(await readFile(resolved, 'utf8'));
+  } catch {
+    invariant(false, 'Firebase service-account file is unavailable or invalid JSON');
+  }
+  const secrets = firebaseAdminSecretsFromServiceAccount(serviceAccount, manifest);
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'assagwork-firebase-admin-'));
+  const secretsFile = path.join(temporaryRoot, 'cloudflare-secrets.json');
+  await writeFile(secretsFile, `${JSON.stringify(secrets)}\n`, { encoding: 'utf8', mode: 0o600 });
+  return {
+    secretsFile,
+    cleanup: () => rm(temporaryRoot, { recursive: true, force: true }),
+  };
+}
+
+export function versionUploadSecretsArgs(secretsFile = '') {
+  return secretsFile ? ['--secrets-file', secretsFile] : [];
 }
 
 function versionView(manifest, versionId) {
@@ -498,17 +569,26 @@ export async function clearCandidateState() {
   await rm(candidateStatePath, { force: true });
 }
 
-export async function saveCandidateState(manifest, previousVersion, candidateVersion, sourceSha, subdomainSettings) {
+export async function saveCandidateState(
+  manifest,
+  previousVersion,
+  candidateVersion,
+  sourceSha,
+  subdomainSettings,
+  { firebaseAdminSecretBootstrap = false } = {},
+) {
   invariant(/^[0-9a-f]{40}$/.test(sourceSha || ''), 'candidate source SHA is invalid');
+  invariant(typeof firebaseAdminSecretBootstrap === 'boolean', 'candidate Firebase Admin bootstrap state is invalid');
   const lockedSubdomain = assertSubdomainSettings(subdomainSettings);
   await mkdir(candidateStateRoot, { recursive: true });
   await writeFile(candidateStatePath, `${JSON.stringify({
-    schemaVersion: 2,
+    schemaVersion: 3,
     worker: manifest.worker.name,
     previousVersion,
     candidateVersion,
     sourceSha,
     subdomain: lockedSubdomain,
+    firebaseAdminSecretBootstrap,
     stagedAt: new Date().toISOString(),
   }, null, 2)}\n`, 'utf8');
 }
@@ -520,12 +600,13 @@ export async function loadCandidateState(manifest) {
   } catch {
     invariant(false, 'no locally saved candidate state; stage and verify a candidate first');
   }
-  invariant(state?.schemaVersion === 2, 'saved candidate state schema is invalid');
+  invariant(state?.schemaVersion === 3, 'saved candidate state schema is invalid');
   invariant(state.worker === manifest.worker.name, 'saved candidate state targets a different Worker');
   invariant(uuidPattern.test(state.previousVersion || ''), 'saved rollback version is invalid');
   invariant(uuidPattern.test(state.candidateVersion || ''), 'saved candidate version is invalid');
   invariant(state.previousVersion !== state.candidateVersion, 'saved candidate state is invalid');
   invariant(/^[0-9a-f]{40}$/.test(state.sourceSha || ''), 'saved candidate source SHA is invalid');
+  invariant(typeof state.firebaseAdminSecretBootstrap === 'boolean', 'saved candidate Firebase Admin bootstrap state is invalid');
   state.subdomain = assertSubdomainSettings(state.subdomain);
   return state;
 }
@@ -537,6 +618,7 @@ export async function verifyStagedCandidateWithRecovery({
   candidateVersion,
   sourceSha,
   subdomainSettings,
+  firebaseAdminSecretBootstrap = false,
   deployTrafficFn = (versions, message) => runWrangler(manifest, [
     'versions', 'deploy',
     ...versions,
@@ -559,7 +641,14 @@ export async function verifyStagedCandidateWithRecovery({
     assertSplit(deploymentStatusFn(), new Map([[previousVersion, 100], [candidateVersion, 0]]));
     await httpSmokeFn(manifest, candidateVersion);
     await browserSmokeFn(manifest, candidateVersion);
-    await saveCandidateStateFn(manifest, previousVersion, candidateVersion, sourceSha, subdomainSettings);
+    await saveCandidateStateFn(
+      manifest,
+      previousVersion,
+      candidateVersion,
+      sourceSha,
+      subdomainSettings,
+      { firebaseAdminSecretBootstrap },
+    );
   } catch (error) {
     try {
       deployTrafficFn(
@@ -582,6 +671,8 @@ async function stage() {
   assertLocalOAuthOnly();
   const sourceSha = assertCleanGitHead();
   const initialManifest = validateManifest(await loadManifest());
+  const serviceAccountPath = readOption('firebase-service-account');
+  const firebaseAdminSecretBootstrap = Boolean(serviceAccountPath);
   assertWranglerVersion(initialManifest);
   const oauthToken = readLocalOAuthToken(initialManifest);
   await assertRemoteObservabilityParity(initialManifest, { tokenProvider: () => oauthToken });
@@ -591,32 +682,52 @@ async function stage() {
   const currentDeployment = deploymentStatus(manifest);
   const previousVersion = extractSingleActiveVersion(currentDeployment);
   const activeVersion = versionView(manifest, previousVersion);
-  assertBindingContract(activeVersion, manifest);
-  runWrangler(manifest, ['versions', 'upload', '--config', configPath, '--keep-vars', '--strict', '--dry-run', '--outdir', path.join(distributionRoot, 'dry-run')], { display: true });
-  const revision = sourceSha.slice(0, 12);
-  const upload = runWrangler(manifest, [
-    'versions', 'upload',
-    '--config', configPath,
-    '--keep-vars',
-    '--strict',
-    '--tag', `production-${revision}`,
-    '--message', `Production candidate ${revision}; zero traffic`,
-  ], { display: true });
-  const candidateVersion = upload.match(/Worker Version ID:\s*([0-9a-f-]{36})/i)?.[1] || '';
-  invariant(uuidPattern.test(candidateVersion), 'Wrangler did not return a candidate version ID');
-  const candidate = versionView(manifest, candidateVersion);
-  assertCandidateParity(activeVersion, candidate, manifest);
-  await verifyStagedCandidateWithRecovery({
-    manifest,
-    configPath,
-    previousVersion,
-    candidateVersion,
-    sourceSha,
-    subdomainSettings,
-  });
-  console.log(`CANDIDATE_READY: ${candidateVersion}`);
-  console.log(`ROLLBACK_TARGET: ${previousVersion}`);
-  console.log(`SOURCE_SHA: ${sourceSha}`);
+  assertActiveBindingContract(activeVersion, manifest, { allowFirebaseAdminBootstrap: firebaseAdminSecretBootstrap });
+
+  let bootstrapSecrets = null;
+  try {
+    if (firebaseAdminSecretBootstrap) {
+      bootstrapSecrets = await prepareFirebaseAdminBootstrapSecretsFile(serviceAccountPath, manifest);
+    }
+    const secretsArgs = versionUploadSecretsArgs(bootstrapSecrets?.secretsFile || '');
+    runWrangler(manifest, [
+      'versions', 'upload',
+      '--config', configPath,
+      '--keep-vars',
+      '--strict',
+      ...secretsArgs,
+      '--dry-run',
+      '--outdir', path.join(distributionRoot, 'dry-run'),
+    ], { display: true });
+    const revision = sourceSha.slice(0, 12);
+    const upload = runWrangler(manifest, [
+      'versions', 'upload',
+      '--config', configPath,
+      '--keep-vars',
+      '--strict',
+      ...secretsArgs,
+      '--tag', `production-${revision}`,
+      '--message', `Production candidate ${revision}; zero traffic`,
+    ], { display: true });
+    const candidateVersion = upload.match(/Worker Version ID:\s*([0-9a-f-]{36})/i)?.[1] || '';
+    invariant(uuidPattern.test(candidateVersion), 'Wrangler did not return a candidate version ID');
+    const candidate = versionView(manifest, candidateVersion);
+    assertCandidateParity(activeVersion, candidate, manifest, { allowFirebaseAdminBootstrap: firebaseAdminSecretBootstrap });
+    await verifyStagedCandidateWithRecovery({
+      manifest,
+      configPath,
+      previousVersion,
+      candidateVersion,
+      sourceSha,
+      subdomainSettings,
+      firebaseAdminSecretBootstrap,
+    });
+    console.log(`CANDIDATE_READY: ${candidateVersion}`);
+    console.log(`ROLLBACK_TARGET: ${previousVersion}`);
+    console.log(`SOURCE_SHA: ${sourceSha}`);
+  } finally {
+    await bootstrapSecrets?.cleanup();
+  }
 }
 function readOption(name) {
   const index = process.argv.indexOf(`--${name}`);
@@ -721,7 +832,7 @@ async function promote() {
   const { manifest, configPath } = await validateAll({ subdomainSettings });
   const active = versionView(manifest, previousVersion);
   const candidate = versionView(manifest, candidateVersion);
-  assertCandidateParity(active, candidate, manifest);
+  assertCandidateParity(active, candidate, manifest, { allowFirebaseAdminBootstrap: state.firebaseAdminSecretBootstrap });
   assertSplit(deploymentStatus(manifest), new Map([[previousVersion, 100], [candidateVersion, 0]]));
   await httpSmoke(manifest, candidateVersion);
   await browserSmoke(manifest, candidateVersion);
