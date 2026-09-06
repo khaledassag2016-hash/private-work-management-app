@@ -3,6 +3,7 @@ import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  assertActiveBindingContract,
   assertBindingContract,
   assertCandidateParity,
   assertCleanGitHead,
@@ -12,6 +13,7 @@ import {
   buildPackage,
   candidateStatePath,
   extractSingleActiveVersion,
+  firebaseAdminSecretsFromServiceAccount,
   loadCandidateState,
   loadManifest,
   readRemoteSubdomainSettings,
@@ -21,6 +23,7 @@ import {
   validateManifest,
   validateSourceContracts,
   verifyStagedCandidateWithRecovery,
+  versionUploadSecretsArgs,
 } from './deploy.mjs';
 
 function remoteVersion(manifest) {
@@ -109,6 +112,53 @@ test('remote binding parity rejects missing, changed, or stale production config
   const missingFirebaseAdminSecret = structuredClone(candidate);
   missingFirebaseAdminSecret.resources.bindings = missingFirebaseAdminSecret.resources.bindings.filter((binding) => binding.name !== 'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY');
   assert.throws(() => assertBindingContract(missingFirebaseAdminSecret, manifest), /binding allowlist differs/);
+
+  const activeBeforeFirebaseAdminBootstrap = structuredClone(active);
+  activeBeforeFirebaseAdminBootstrap.resources.bindings = activeBeforeFirebaseAdminBootstrap.resources.bindings.filter(
+    (binding) => !['FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL', 'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY'].includes(binding.name),
+  );
+  assert.throws(() => assertActiveBindingContract(activeBeforeFirebaseAdminBootstrap, manifest), /binding allowlist differs/);
+  assert.doesNotThrow(() => assertActiveBindingContract(
+    activeBeforeFirebaseAdminBootstrap,
+    manifest,
+    { allowFirebaseAdminBootstrap: true },
+  ));
+  assert.doesNotThrow(() => assertCandidateParity(
+    activeBeforeFirebaseAdminBootstrap,
+    candidate,
+    manifest,
+    { allowFirebaseAdminBootstrap: true },
+  ));
+
+  const partiallyConfiguredFirebaseAdmin = structuredClone(activeBeforeFirebaseAdminBootstrap);
+  partiallyConfiguredFirebaseAdmin.resources.bindings.push(
+    active.resources.bindings.find((binding) => binding.name === 'FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL'),
+  );
+  assert.throws(() => assertActiveBindingContract(
+    partiallyConfiguredFirebaseAdmin,
+    manifest,
+    { allowFirebaseAdminBootstrap: true },
+  ), /requires both secret bindings to be absent/);
+
+  const unexpectedBootstrapBinding = structuredClone(activeBeforeFirebaseAdminBootstrap);
+  unexpectedBootstrapBinding.resources.bindings.push({ name: 'UNEXPECTED_SECRET', type: 'secret_text' });
+  assert.throws(() => assertActiveBindingContract(
+    unexpectedBootstrapBinding,
+    manifest,
+    { allowFirebaseAdminBootstrap: true },
+  ), /binding allowlist differs/);
+
+  const bootstrapCandidateMissingSecret = structuredClone(candidate);
+  bootstrapCandidateMissingSecret.resources.bindings = bootstrapCandidateMissingSecret.resources.bindings.filter(
+    (binding) => binding.name !== 'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY',
+  );
+  assert.throws(() => assertCandidateParity(
+    activeBeforeFirebaseAdminBootstrap,
+    bootstrapCandidateMissingSecret,
+    manifest,
+    { allowFirebaseAdminBootstrap: true },
+  ), /binding allowlist differs/);
+
   const wrongFirebaseAdminSecretType = structuredClone(candidate);
   wrongFirebaseAdminSecretType.resources.bindings.find((binding) => binding.name === 'FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL').type = 'plain_text';
   assert.throws(() => assertBindingContract(wrongFirebaseAdminSecretType, manifest), /FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL binding type mismatch/);
@@ -122,6 +172,41 @@ test('staging requires one and only one production version at 100 percent', () =
   assert.equal(extractSingleActiveVersion({ versions: [{ version_id: versionId, percentage: 100 }] }), versionId);
   assert.throws(() => extractSingleActiveVersion({ versions: [{ version_id: versionId, percentage: 90 }] }), /100% traffic/);
   assert.throws(() => extractSingleActiveVersion({ versions: [] }), /exactly one active version/);
+});
+
+
+test('Firebase Admin bootstrap accepts only the exact Production service-account identity and uploads only governed secrets', async () => {
+  const manifest = validateManifest(await loadManifest());
+  const privateKey = '-----BEGIN PRIVATE KEY-----\nsynthetic-test-key\n-----END PRIVATE KEY-----\n';
+  const serviceAccount = {
+    type: 'service_account',
+    project_id: manifest.firebase.projectId,
+    private_key_id: 'synthetic-key-id',
+    private_key: privateKey,
+    client_email: `deployment-bootstrap@${manifest.firebase.projectId}.iam.gserviceaccount.com`,
+    client_id: 'synthetic-client-id',
+  };
+  assert.deepEqual(firebaseAdminSecretsFromServiceAccount(serviceAccount, manifest), {
+    FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL: serviceAccount.client_email,
+    FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY: privateKey,
+  });
+  assert.deepEqual(versionUploadSecretsArgs('/outside-repository/cloudflare-secrets.json'), [
+    '--secrets-file',
+    '/outside-repository/cloudflare-secrets.json',
+  ]);
+  assert.deepEqual(versionUploadSecretsArgs(), []);
+
+  const wrongProject = { ...serviceAccount, project_id: 'example-project' };
+  assert.throws(() => firebaseAdminSecretsFromServiceAccount(wrongProject, manifest), /project does not match Production/);
+
+  const wrongType = { ...serviceAccount, type: 'authorized_user' };
+  assert.throws(() => firebaseAdminSecretsFromServiceAccount(wrongType, manifest), /type must be service_account/);
+
+  const wrongEmail = { ...serviceAccount, client_email: 'deployment-bootstrap@example.invalid' };
+  assert.throws(() => firebaseAdminSecretsFromServiceAccount(wrongEmail, manifest), /client email does not match Production project/);
+
+  const wrongKey = { ...serviceAccount, private_key: 'not-a-private-key' };
+  assert.throws(() => firebaseAdminSecretsFromServiceAccount(wrongKey, manifest), /private key is invalid/);
 });
 
 test('remote script-settings parity covers observability, Logpush, and tail consumers', async () => {
@@ -209,13 +294,21 @@ test('candidate state survives package rebuild and locks the exact source SHA', 
   const subdomain = { enabled: false, previews_enabled: false };
   await rm(path.dirname(candidateStatePath), { recursive: true, force: true });
   try {
-    await saveCandidateState(manifest, previousVersion, candidateVersion, sourceSha, subdomain);
+    await saveCandidateState(
+      manifest,
+      previousVersion,
+      candidateVersion,
+      sourceSha,
+      subdomain,
+      { firebaseAdminSecretBootstrap: true },
+    );
     await buildPackage(manifest, { subdomainSettings: subdomain });
     const state = await loadCandidateState(manifest);
     assert.equal(state.previousVersion, previousVersion);
     assert.equal(state.candidateVersion, candidateVersion);
     assert.equal(state.sourceSha, sourceSha);
     assert.deepEqual(state.subdomain, subdomain);
+    assert.equal(state.firebaseAdminSecretBootstrap, true);
   } finally {
     await rm(path.dirname(candidateStatePath), { recursive: true, force: true });
   }
@@ -320,5 +413,8 @@ test('GitHub is validation-only; production execution is local OAuth only', asyn
   assert.match(executable, /auth', 'token', '--json/);
   assert.match(executable, /workers\/scripts\/\$\{encodeURIComponent\(manifest\.worker\.name\)\}\/script-settings/);
   assert.match(executable, /workers\/scripts\/\$\{encodeURIComponent\(manifest\.worker\.name\)\}\/subdomain/);
+  assert.match(executable, /readOption\('firebase-service-account'\)/);
+  assert.match(executable, /versionUploadSecretsArgs\(bootstrapSecrets\?\.secretsFile \|\| ''\)/);
+  assert.match(executable, /'versions', 'upload',[\s\S]*\.\.\.secretsArgs/);
   assert.doesNotMatch(executable, /--preview-alias/);
 });
