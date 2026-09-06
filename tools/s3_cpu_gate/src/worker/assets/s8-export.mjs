@@ -9,7 +9,7 @@ const WORK_STATUS_LABELS = Object.freeze({
   REVISION_REQUIRED: 'تعديل مطلوب', PAUSED: 'متوقف مؤقتًا', CANCELLED_BEFORE_EXECUTION: 'ملغى قبل التنفيذ',
   PARTIALLY_STOPPED: 'متوقف بعد تنفيذ جزئي', COMPLETED: 'مكتمل', DELIVERED: 'مسلم',
 });
-const COLLECTION_LABELS = Object.freeze({ PRICE_UNSET: 'السعر غير محدد', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', FINANCIALLY_CLOSED: 'مغلق ماليًا', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم', CANCELLED_ZERO_BALANCE: 'ملغى — الرصيد على العميل صفر' });
+const COLLECTION_LABELS = Object.freeze({ PRICE_UNSET: 'السعر غير محدد', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', FINANCIALLY_CLOSED: 'مغلق ماليًا', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم', CANCELLED_ZERO_BALANCE: 'ملغى قبل التنفيذ — لا مبلغ متبقٍ' });
 const PAYMENT_METHOD_LABELS = Object.freeze({ BANK_TRANSFER: 'تحويل بنكي', CASH: 'نقدي', CARD: 'بطاقة', OTHER: 'أخرى' });
 const WARNING_LABELS = Object.freeze({ NON_PAYMENT: 'عدم دفع', DELAY: 'تأخر', BLOCKED: 'حظر أو انقطاع', DISPUTE: 'نزاع' });
 const EVENT_LABELS = Object.freeze({ FOLLOW_UP: 'متابعة', NOTE: 'ملاحظة', CONTACT: 'تواصل', MEETING: 'اجتماع', DELIVERY: 'تسليم' });

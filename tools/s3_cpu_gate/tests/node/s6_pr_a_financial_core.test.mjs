@@ -104,28 +104,36 @@ test('S6 MONEY parser rejects malformed, >2 decimals, and unsafe values before D
   } finally { database.close(); }
 });
 
-test('UAT cancellation preserves historical money, zeroes customer balance, and freezes ordinary mutations', async () => {
-  const { database, env } = fixture();
-  try {
-    const { work } = await setupWork(env, { title: 'Cancelled UAT Work' });
-    const base = await createPriceChangeRequest(env, 'uid-one', 'uat-cancel-base', work.id, { version: 1, movement_type: 'BASE', amount_riyals: '1700.00', reason: 'UAT base' });
-    await approvePriceChangeRequest(env, 'uid-two', 'uat-cancel-base-approve', work.id, base.id);
-    await createClientPayment(env, 'uid-one', 'uat-cancel-payment', work.id, { version: 2, amount_riyals: '100.00', effective_at: '2026-08-12T12:00:00.000Z', payment_method: 'BANK_TRANSFER' });
-    const beforeCancel = await getWork(env, work.id);
-    const cancel = await createCancelArchiveRequest(env, 'uid-one', 'uat-cancel-request', work.id, { version: beforeCancel.version, action: 'CANCEL', target_execution_status: 'PARTIALLY_STOPPED', reason: 'UAT cancellation' });
-    await approveCancelArchiveRequest(env, 'uid-two', 'uat-cancel-approve', work.id, cancel.id);
-    const financials = await getWorkFinancials(env, work.id);
-    assert.equal(financials.current_price_halalas, 170000);
-    assert.equal(financials.customer_remaining_halalas, 0);
-    assert.equal(financials.internal_share_basis_halalas, 10000);
-    assert.equal(financials.collection_status, 'CANCELLED_ZERO_BALANCE');
-    assert.deepEqual(financials.shares, { person_1_halalas: 7000, person_2_halalas: 3000 });
-    const cancelled = await getWork(env, work.id);
-    await assert.rejects(createPriceChangeRequest(env, 'uid-one', 'uat-cancel-price', work.id, { version: cancelled.version, movement_type: 'INCREASE', amount_riyals: '1.00', reason: 'must be blocked' }), /CANCELLED_WORK_OPERATION_FORBIDDEN/);
-    await assert.rejects(changeWorkTitle(env, 'uid-one', 'uat-cancel-title', work.id, { version: cancelled.version, new_title: 'must be blocked', reason: 'must be blocked' }), /CANCELLED_WORK_OPERATION_FORBIDDEN/);
-    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM client_payments WHERE work_id=?").get(work.id).count, 1);
-  } finally { database.close(); }
-});
+for (const scenario of [
+  { name: 'cancel before execution stays zero', target: 'CANCELLED_BEFORE_EXECUTION', payment: null, expectedRemaining: 0, expectedCollection: 'CANCELLED_ZERO_BALANCE' },
+  { name: 'partial stop with no payment keeps full due', target: 'PARTIALLY_STOPPED', payment: null, expectedRemaining: 170000, expectedCollection: 'UNPAID' },
+  { name: 'partial stop with partial payment keeps partial due', target: 'PARTIALLY_STOPPED', payment: '100.00', expectedRemaining: 160000, expectedCollection: 'PARTIALLY_COLLECTED' },
+  { name: 'partial stop with full payment reaches zero due', target: 'PARTIALLY_STOPPED', payment: '1700.00', expectedRemaining: 0, expectedCollection: 'FINANCIALLY_CLOSED' },
+]) {
+  test(`UAT-044 D-027 ${scenario.name}`, async () => {
+    const { database, env } = fixture();
+    try {
+      const { work } = await setupWork(env, { title: `D027 ${scenario.name}` });
+      const base = await createPriceChangeRequest(env, 'uid-one', `d027-base-${scenario.name}`, work.id, { version: 1, movement_type: 'BASE', amount_riyals: '1700.00', reason: 'D-027 base' });
+      await approvePriceChangeRequest(env, 'uid-two', `d027-base-approve-${scenario.name}`, work.id, base.id);
+      if (scenario.payment !== null) {
+        await createClientPayment(env, 'uid-one', `d027-payment-${scenario.name}`, work.id, { version: 2, amount_riyals: scenario.payment, effective_at: '2026-08-12T12:00:00.000Z', payment_method: 'BANK_TRANSFER' });
+      }
+      const beforeCancel = await getWork(env, work.id);
+      const cancel = await createCancelArchiveRequest(env, 'uid-one', `d027-cancel-${scenario.name}`, work.id, { version: beforeCancel.version, action: 'CANCEL', target_execution_status: scenario.target, reason: 'D-027 cancellation' });
+      await approveCancelArchiveRequest(env, 'uid-two', `d027-cancel-approve-${scenario.name}`, work.id, cancel.id);
+      const financials = await getWorkFinancials(env, work.id);
+      assert.equal(financials.current_price_halalas, 170000);
+      assert.equal(financials.customer_remaining_halalas, scenario.expectedRemaining);
+      assert.equal(financials.remaining_halalas, scenario.expectedRemaining);
+      assert.equal(financials.collection_status, scenario.expectedCollection);
+      assert.equal(financials.internal_share_basis_halalas, scenario.payment === null ? 0 : Math.round(Number(scenario.payment) * 100));
+      const cancelled = await getWork(env, work.id);
+      await assert.rejects(createPriceChangeRequest(env, 'uid-one', `d027-block-price-${scenario.name}`, work.id, { version: cancelled.version, movement_type: 'INCREASE', amount_riyals: '1.00', reason: 'must be blocked' }), /CANCELLED_WORK_OPERATION_FORBIDDEN/);
+      await assert.rejects(changeWorkTitle(env, 'uid-one', `d027-block-title-${scenario.name}`, work.id, { version: cancelled.version, new_title: 'must be blocked', reason: 'must be blocked' }), /CANCELLED_WORK_OPERATION_FORBIDDEN/);
+    } finally { database.close(); }
+  });
+}
 
 test('S6 AC-02 computes 1500 + 200 + 100 and later -100 with retained history', async () => {
   const { database, env } = fixture();

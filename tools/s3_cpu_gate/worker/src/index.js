@@ -455,7 +455,7 @@ function s8IncludeArchived(value) {
 }
 function s8CollectionSql() {
   return `CASE
-    WHEN w.status IN ('CANCELLED_BEFORE_EXECUTION','PARTIALLY_STOPPED') THEN 'CANCELLED_ZERO_BALANCE'
+    WHEN w.status='CANCELLED_BEFORE_EXECUTION' THEN 'CANCELLED_ZERO_BALANCE'
     WHEN COALESCE(p.price_movement_count,0)=0 THEN 'PRICE_UNSET'
     WHEN COALESCE(pay.approved_paid_halalas,0)>p.current_price_halalas THEN 'OVERPAYMENT_UNRESOLVED'
     WHEN p.current_price_halalas=0 OR COALESCE(pay.approved_paid_halalas,0)=p.current_price_halalas THEN 'FINANCIALLY_CLOSED'
@@ -617,7 +617,7 @@ function s8FinancialRow(row) {
     is_archived: Boolean(row.archived_at),
     current_price_halalas: currentPrice,
     approved_paid_halalas: approvedPaid,
-    remaining_halalas: isCancelledWorkStatus(row.status) ? 0 : currentPrice === null ? null : safeFinancialAdd(currentPrice, -approvedPaid),
+    remaining_halalas: row.status === 'CANCELLED_BEFORE_EXECUTION' ? 0 : currentPrice === null ? null : safeFinancialAdd(currentPrice, -approvedPaid),
     collection_status: paymentCollectionStatus(currentPrice, approvedPaid, row.status),
   };
 }
@@ -1530,7 +1530,7 @@ function validatePaymentMethod(value) {
 }
 
 function paymentCollectionStatus(currentPriceHalalas, approvedPaidTotalHalalas, workStatus = null) {
-  if (isCancelledWorkStatus(workStatus)) return 'CANCELLED_ZERO_BALANCE';
+  if (workStatus === 'CANCELLED_BEFORE_EXECUTION') return 'CANCELLED_ZERO_BALANCE';
   if (currentPriceHalalas === null) return 'PRICE_UNSET';
   if (approvedPaidTotalHalalas > currentPriceHalalas) return 'OVERPAYMENT_UNRESOLVED';
   if (currentPriceHalalas === 0 || approvedPaidTotalHalalas === currentPriceHalalas) return 'FINANCIALLY_CLOSED';
@@ -1658,10 +1658,11 @@ export async function getWorkFinancials(env, workId) {
   const totals = paymentTotals(paymentRows);
   const hasS7Payments = paymentRows.length > 0;
   const cancelled = isCancelledWorkStatus(work.status);
+  const cancelledBeforeExecution = work.status === 'CANCELLED_BEFORE_EXECUTION';
   const shareBasisHalalas = cancelled ? totals.approvedPaid : currentPriceHalalas;
   const person1Share = calculateShareHalalas(shareBasisHalalas, ratio.person_1_bps);
   const person2Share = calculateShareHalalas(shareBasisHalalas, ratio.person_2_bps);
-  const remainingHalalas = cancelled ? 0 : currentPriceHalalas === null ? null : safeFinancialAdd(currentPriceHalalas, -totals.approvedPaid);
+  const remainingHalalas = cancelledBeforeExecution ? 0 : currentPriceHalalas === null ? null : safeFinancialAdd(currentPriceHalalas, -totals.approvedPaid);
   return {
     work_id: workId,
     price_state: currentPriceHalalas === null ? 'PRICE_UNSET' : 'PRICE_APPROVED',
