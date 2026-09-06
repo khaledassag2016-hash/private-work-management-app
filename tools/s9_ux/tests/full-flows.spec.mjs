@@ -162,7 +162,8 @@ test('double click, double tap, repeated Enter, and click while pending send one
   await expect(form.locator('button[type="submit"]')).toBeDisabled();
   await expect(form.locator('button[type="submit"]')).toHaveAttribute('aria-busy', 'true');
   await form.locator('button[type="submit"]').scrollIntoViewIfNeeded();
-  await form.locator('button[type="submit"]').dispatchEvent('click');
+  if (testInfo.project.metadata.width < 600) await form.locator('button[type="submit"]').tap({ force: true });
+  else await form.locator('button[type="submit"]').click({ force: true });
   await form.locator('input[name="amount_riyals"]').press('Enter');
   expect(api.count('POST', path)).toBe(1);
   release();

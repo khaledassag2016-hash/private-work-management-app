@@ -670,20 +670,20 @@ function workPrimarySummaryMarkup(work) {
   const currentPrice = financials.current_price_halalas ?? work.current_price_halalas ?? null;
   const statusText = workStatusLabel(work.status);
   const collectionText = collectionLabel(financials.collection_status);
-  return `<section class="work-primary-summary" data-work-summary><div class="work-summary-heading"><div><p class="eyebrow">ملخص العمل</p><h2>${escapeHtml(work.title)}</h2><div class="detail-meta"><span>العميل: ${escapeHtml(customerName(work.customer_id))}</span><span>العلاقة: ${work.relationship_kind === 'CHILD' ? 'تابع لعمل أكبر' : 'عمل مستقل'}</span>${work.confirmed_at ? `<span>تاريخ التأكيد: ${escapeHtml(dateTimeLabel(work.confirmed_at))}</span>` : ''}</div></div><span class="badge ok">${escapeHtml(statusText)}</span></div><div class="grid grid-3 work-summary-financial"><article class="stat"><small>السعر المعتمد</small><strong data-authoritative-price>${escapeHtml(pricingState === 'PRICE_UNSET' ? 'السعر غير محدد' : moneyLabel(currentPrice))}</strong></article><article class="stat"><small>المدفوع المعتمد</small><strong data-approved-payments>${escapeHtml(moneyLabel(financials.approved_payments_total_halalas))}</strong></article><article class="stat"><small>المتبقي</small><strong data-remaining>${escapeHtml(moneyLabel(financials.remaining_halalas ?? currentPrice))}</strong></article></div><div class="work-summary-status"><article class="card" data-execution-status><h2>حالة التنفيذ</h2><div class="badge ok">${escapeHtml(statusText)}</div></article><article class="card" data-collection-status><h2>ملخص التحصيل</h2><div class="badge ${financials.collection_status === 'PARTIALLY_COLLECTED' ? 'unset' : 'ok'}" data-collection-descriptor>${escapeHtml(collectionText)}</div><p class="hint">مشتق من السعر والدفعات المعتمدة، ومستقل عن حالة التنفيذ.</p></article></div></section>`;
+  const archiveDisplay = work.is_archived ? '✅ مؤرشف' : 'غير مؤرشف';
+  const cancelled = work.is_cancelled || ['CANCELLED_BEFORE_EXECUTION', 'PARTIALLY_STOPPED'].includes(work.status);
+  return `<section class="work-primary-summary" data-work-summary><div class="work-summary-heading"><div><p class="eyebrow">ملخص العمل</p><h2 data-work-primary-title>${escapeHtml(work.title)}</h2><div class="detail-meta"><span>العميل: ${escapeHtml(customerName(work.customer_id))}</span><span>العلاقة: ${work.relationship_kind === 'CHILD' ? 'تابع لعمل أكبر' : 'عمل مستقل'}</span>${work.confirmed_at ? `<span>تاريخ التأكيد: ${escapeHtml(dateTimeLabel(work.confirmed_at))}</span>` : ''}</div></div><div class="work-summary-actions"><span class="badge ok" data-work-execution-state>${escapeHtml(statusText)}</span><span class="badge ${work.is_archived ? 'ok' : 'unset'}" data-work-archive-state>الأرشفة: ${escapeHtml(archiveDisplay)}</span>${cancelled ? '' : '<button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button>'}</div></div><div class="grid grid-3 work-summary-financial"><article class="stat"><small>السعر المعتمد</small><strong data-authoritative-price>${escapeHtml(pricingState === 'PRICE_UNSET' ? 'السعر غير محدد' : moneyLabel(currentPrice))}</strong></article><article class="stat"><small>المدفوع المعتمد</small><strong data-approved-payments>${escapeHtml(moneyLabel(financials.approved_payments_total_halalas))}</strong></article><article class="stat"><small>المتبقي</small><strong data-remaining>${escapeHtml(moneyLabel(financials.remaining_halalas ?? currentPrice))}</strong></article></div><div class="work-summary-status"><article class="card" data-execution-status><h2>حالة التنفيذ</h2><div class="badge ok">${escapeHtml(statusText)}</div></article><article class="card" data-collection-status><h2>ملخص التحصيل</h2><div class="badge ${financials.collection_status === 'PARTIALLY_COLLECTED' ? 'unset' : 'ok'}" data-collection-descriptor>${escapeHtml(collectionText)}</div><p class="hint">مشتق من السعر والدفعات المعتمدة، ومستقل عن حالة التنفيذ.</p></article></div></section>`;
 }
 function workAttentionMarkup(work) {
   const financials = work.financials || {};
   const pendingFinancial = [...(Array.isArray(financials.price_requests) ? financials.price_requests : []), ...(Array.isArray(financials.ratio_requests) ? financials.ratio_requests : [])].filter(item => item.state === 'PENDING');
   const pendingWork = (Array.isArray(work.requests) ? work.requests : []).filter(item => item.state === 'PENDING');
   const pendingReversals = (Array.isArray(work.reversalRequests) ? work.reversalRequests : []).filter(item => item.state === 'PENDING');
-  const warnings = Array.isArray(work.soft_warnings) ? work.soft_warnings : [];
-  if (!pendingFinancial.length && !pendingWork.length && !pendingReversals.length && !warnings.length) return '';
-  return `<section class="work-attention notice warning" data-work-attention><div><strong>يحتاج انتباهًا</strong><ul class="work-attention-list">${warnings.map(warning => `<li>${escapeHtml(softWarningLabel(warning))}</li>`).join('')}${pendingFinancial.length ? `<li>طلبات سعر أو نسبة معلقة (${pendingFinancial.length})</li>` : ''}${pendingReversals.length ? `<li>طلبات تصحيح دفعات معلقة (${pendingReversals.length})</li>` : ''}${pendingWork.length ? `<li>طلبات إلغاء أو أرشفة معلقة (${pendingWork.length})</li>` : ''}</ul><div class="work-attention-actions">${pendingFinancial.length ? '<button class="button secondary" data-open-work-disclosure="financial-details" type="button">فتح الطلبات المالية</button>' : ''}${pendingReversals.length ? '<button class="button secondary" data-open-work-disclosure="collection-details" type="button">فتح تصحيح الدفعات</button>' : ''}${pendingWork.length ? '<button class="button danger" data-open-work-disclosure="danger" type="button">فتح الإجراءات المعلقة</button>' : ''}</div></div></section>`;
+  if (!pendingFinancial.length && !pendingWork.length && !pendingReversals.length) return '';
+  return `<section class="work-attention notice warning" data-work-attention><div><strong>يحتاج انتباهًا</strong><ul class="work-attention-list">${pendingFinancial.length ? `<li>طلبات سعر أو نسبة معلقة (${pendingFinancial.length})</li>` : ''}${pendingReversals.length ? `<li>طلبات تصحيح دفعات معلقة (${pendingReversals.length})</li>` : ''}${pendingWork.length ? `<li>طلبات إلغاء أو أرشفة معلقة (${pendingWork.length})</li>` : ''}</ul><div class="work-attention-actions">${pendingFinancial.length ? '<button class="button secondary" data-open-work-disclosure="financial-details" type="button">فتح الطلبات المالية</button>' : ''}${pendingReversals.length ? '<button class="button secondary" data-open-work-disclosure="collection-details" type="button">فتح تصحيح الدفعات</button>' : ''}${pendingWork.length ? '<button class="button danger" data-open-work-disclosure="danger" type="button">فتح الإجراءات المعلقة</button>' : ''}</div></div></section>`;
 }
 function workPage() {
   const work = state.selectedWork; if (!work) return loading(); const similar = work.similar || [];
-  const statusText = workStatusLabel(work.status);
   const cancelled = work.is_cancelled || ['CANCELLED_BEFORE_EXECUTION', 'PARTIALLY_STOPPED'].includes(work.status);
 
   // Sort events chronologically: effective_at ASC, created_at ASC, id ASC
@@ -703,27 +703,10 @@ function workPage() {
     'WAITING_REVIEW', 'REVISION_REQUIRED', 'PAUSED', 'COMPLETED', 'DELIVERED'
   ];
 
-  const archiveDisplay = work.is_archived ? '✅ مؤرشف' : 'غير مؤرشف';
-
   return `
-  <section class="detail-header">
-    <div>
-      <h2>${escapeHtml(work.title)}</h2>
-      <div class="detail-meta">
-        <span></span>
-        <span>العميل: ${escapeHtml(customerName(work.customer_id))}</span>
-        <span>العلاقة: ${work.relationship_kind === 'CHILD' ? 'تابع لعمل أكبر' : 'عمل مستقل'}</span>
-        <span>${badgeForWork(work)}</span>
-        <span class="badge ok">الحالة الحالية: ${escapeHtml(statusText)}</span>
-        <span class="badge ${work.is_archived ? 'ok' : 'unset'}">الأرشفة: ${escapeHtml(archiveDisplay)}</span>
-        <span class="badge ${work.confirmed_at ? 'ok' : 'unset'}">تاريخ التأكيد: ${escapeHtml(work.confirmed_at ? dateTimeLabel(work.confirmed_at) : 'غير مؤكد')}</span>
-      </div>
-    </div>
-    ${cancelled ? '' : '<button class="button ghost" data-action="edit-work" type="button">تعديل العمل</button>'}
-  </section>
-  ${softWarningsMarkup(work)}
-  ${cancelled ? '<section class="notice warning" data-cancelled-work-notice><strong>ملغى — الرصيد على العميل صفر</strong><p>حُفظ السعر والتاريخ والمدفوعات السابقة كما هي. توقفت العمليات العادية؛ المتاح هو القراءة والتصحيح التاريخي الموثق والأرشفة فقط.</p></section>' : ''}
   ${workPrimarySummaryMarkup(work)}
+  ${cancelled ? '<section class="notice warning" data-cancelled-work-notice><strong>ملغى — الرصيد على العميل صفر</strong><p>حُفظ السعر والتاريخ والمدفوعات السابقة كما هي. توقفت العمليات العادية؛ المتاح هو القراءة والتصحيح التاريخي الموثق والأرشفة فقط.</p></section>' : ''}
+  ${softWarningsMarkup(work)}
   ${workAttentionMarkup(work)}
   <details class="work-disclosure" data-work-disclosure="financial-details">
     <summary><span>تفاصيل السعر والنسبة والتاريخ المالي</span><span class="disclosure-hint">تفتح عند الحاجة</span></summary>

@@ -150,7 +150,9 @@ tr:last-child td { border-bottom: 0; }
 
 .work-primary-summary { margin: 0 0 1rem; padding: 1.15rem; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .work-summary-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.work-summary-heading h2 { margin: 0; font-size: 1.15rem; }
+.work-summary-heading h2 { margin: 0; font-size: 1.15rem; overflow-wrap: anywhere; }
+.work-summary-heading > div:first-child { min-width: 0; }
+.work-summary-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .5rem; }
 .eyebrow { margin: 0 0 .25rem; color: var(--teal); font-size: .68rem; font-weight: 700; }
 .work-summary-financial { margin-top: 1rem; }
 .work-summary-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
@@ -174,7 +176,9 @@ tr:last-child td { border-bottom: 0; }
 }
 @media (max-width: 480px) {
   .work-primary-summary { padding: .9rem; }
-  .work-summary-heading { align-items: flex-start; }
+  .work-summary-heading { align-items: flex-start; flex-direction: column; }
+  .work-summary-actions { width: 100%; justify-content: flex-start; }
+  .work-summary-actions .button { width: 100%; }
   .work-attention-actions .button { width: 100%; }
   .work-disclosure-body { padding: 0 .9rem .9rem; }
 }

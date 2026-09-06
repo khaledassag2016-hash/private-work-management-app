@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { installHarness, openApp, openWork } from './fixtures.mjs';
+import { installHarness, openApp, openWork, work } from './fixtures.mjs';
 
 test.beforeEach(async ({ page }) => {
   await installHarness(page);
@@ -31,7 +31,12 @@ test('RTL, responsive containment, navigation reachability, and state clarity', 
     expect(horizontalEscapes, `${route} has controls outside the viewport`).toEqual([]);
   }
   await openWork(page);
+  await expect(page.locator('[data-work-summary]')).toHaveCount(1);
   await expect(page.locator('[data-work-summary]')).toBeVisible();
+  await expect(page.locator('.detail-header')).toHaveCount(0);
+  await expect(page.locator('[data-work-primary-title]')).toHaveText(work.title);
+  await expect(page.locator('[data-work-summary] [data-action="edit-work"]')).toBeVisible();
+  await expect(page.locator('[data-work-archive-state]')).toContainText('غير مؤرشف');
   await expect(page.locator('[data-work-attention]')).toBeVisible();
   await expect(page.locator('#s5-event-form')).toBeHidden();
   await expect(page.locator('[data-execution-status]')).toBeVisible();
