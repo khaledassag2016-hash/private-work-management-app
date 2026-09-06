@@ -1788,11 +1788,11 @@ export async function createPriceChangeRequest(env, actorUid, requestId, workId,
   const currentMovements = await listApprovedPriceMovementsRaw(env, workId);
   if (!currentMovements.length && movementType !== 'BASE') throw new DomainError('BASE_REQUIRED', 400);
   if (currentMovements.length && movementType === 'BASE') throw new DomainError('BASE_ALREADY_SET', 400);
-  const existingPending = await env.DB.prepare(`SELECT id FROM price_change_requests WHERE work_id=?1 AND state='PENDING' AND work_version=?2 LIMIT 1`).bind(workId, version).first();
-  if (existingPending) throw new DomainError('PRICE_REQUEST_ALREADY_PENDING', 409);
   const reason = requiredString(input.reason, 'REASON_REQUIRED');
   const effectiveAt = canonicalEventTimestamp(input.effective_at === undefined ? nowIso() : input.effective_at);
   await prbEnsurePeriodOpen(env, effectiveAt);
+  const existingPending = await env.DB.prepare(`SELECT id FROM price_change_requests WHERE work_id=?1 AND state='PENDING' AND work_version=?2 LIMIT 1`).bind(workId, version).first();
+  if (existingPending) throw new DomainError('PRICE_REQUEST_ALREADY_PENDING', 409);
   const id = newId('price_req');
   const requestedAt = nowIso();
   const after = { id, work_id: workId, movement_type: movementType, amount_halalas: amountHalalas, reason, effective_at: effectiveAt, requested_by: actorUid, requested_at: requestedAt, work_version: version, state: 'PENDING', approved_by: null, approved_at: null, approval_request_id: null, request_id: requestId };
