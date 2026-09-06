@@ -314,7 +314,7 @@ describe('S5 PR-B UI Flows', () => {
     };
 
     const html = testApp.workPage();
-    assert.match(html, /الحالة الحالية: قيد التنفيذ/);
+    assert.match(html, /data-work-execution-state[^>]*>قيد التنفيذ</);
     assert.match(html, /طلب أرشفة/);
   });
 
