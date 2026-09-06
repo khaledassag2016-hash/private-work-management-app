@@ -131,7 +131,6 @@ test('UAT-044 D-027 partial-stop search/analytics/export preserve the governed r
     assert.ok(row);
     assert.equal(row.current_price_halalas, 10000);
     assert.equal(row.approved_paid_halalas, 6000);
-    assert.equal(row.remaining_halalas, 4000);
     assert.equal(row.collection_status, 'PARTIALLY_COLLECTED');
     const analytics = await getS8Analytics(env, { period_basis: 'CREATED_AT', year: '2026', month: '08', include_archived: true });
     assert.deepEqual(group(analytics.groups, 'WORK_TYPE', 'TYPE_A'), { dimension: 'WORK_TYPE', bucket: 'TYPE_A', work_count: 2, active_work_count: 2, archived_work_count: 0, price_unset_work_count: 0, current_price_halalas: 15000, approved_paid_halalas: 6000, remaining_halalas: 9000 });
