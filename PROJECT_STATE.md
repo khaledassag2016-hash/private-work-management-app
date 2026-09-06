@@ -438,6 +438,29 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - `SCOPE_DEVIATIONS = NONE` for product implementation; no Worker backend business logic, schema, migration, permission, role, role mapping, Firebase, D1, binding, deployment, Cloud, DNS, Role Remap, or Wave 3 product work was performed.
 - Wave 2 implementation closure becomes effective only after this state-only final PR head passes all applicable CI, PR #126 is Squash merged, the resulting `main` SHA passes applicable post-merge CI, and Issue #125 is closed completed. When those conditions are met, execution may transition to Wave 3 under a new Issue, branch and PR without reopening Wave 1 or Wave 2 implementation.
 
+## Wave 3 — Work Details UX & True Mobile Responsiveness — Issue #127 / PR #128 — implementation closure
+
+- Frozen implementation base: `4c32e6a0a63cb47eadb9a1159c21be9eeaa261e5`.
+- Dedicated branch: `wave3-work-details-127`; no direct `main` change.
+- Sequential ownership is explicit: Codex completed the initial Wave 3 implementation and stopped; the user then explicitly authorized general supervision to execute the remaining corrections and final closure work on the same PR. No concurrent writer is authorized.
+- Exclusive scope: `UAT-045` and `UAT-049` only. No UAT is recorded as `CLOSED` by this implementation wave.
+- Product changes are confined to the mirrored presentation assets `tools/s3_cpu_gate/src/worker/assets/app.js`, `tools/s3_cpu_gate/worker/assets/app.js`, `tools/s3_cpu_gate/src/worker/assets/styles.css`, and `tools/s3_cpu_gate/worker/assets/styles.css`.
+- Test-only changes are limited to `tools/s9_ux/tests/fixtures.mjs`, `tools/s9_ux/tests/full-flows.spec.mjs`, `tools/s9_ux/tests/structural.spec.mjs`, and the directly affected `tools/s3_cpu_gate/tests/node/s5_pr_b_ui_flows.test.mjs`.
+- Final technical implementation head before the state-only closure update: `cf1989e8eda1fdfb72f2207e256abe26d3d182e2`.
+- Work Details now has one primary top summary instead of the duplicated legacy detail header. The summary preserves title, customer, relationship, confirmation date, execution state, archive state, price, paid amount, remaining amount, and the existing edit action when the Work is operational.
+- Soft detail warnings are rendered once. The `data-work-attention` region contains only actionable pending price/ratio, payment-reversal, and cancel/archive requests, with navigation to the relevant disclosure.
+- Native accessible disclosure groups keep financial details, collection/payment correction, history, and sensitive cancellation/archive actions available without rendering all forms into the initial page height. Dangerous actions remain visually separated and all existing action/form identifiers are preserved.
+- The duplicate-submit browser regression uses Playwright user-level tap/click interaction after reopening the collection disclosure following rerender, together with repeated Enter and the existing one-mutation assertions; it no longer relies on a synthetic `dispatchEvent('click')`.
+- Final mirror parity on the technical head: both `app.js` blobs are `1c529d7fcb4d766f4ed309466d27705fcb70bcee`; both `styles.css` blobs are `f5a217a7865573918763d404d957bd12d2edea39`.
+- Exact technical-head CI is fully green: Foundation integrity `34022836759` SUCCESS; S2 architecture validation `34022836783` SUCCESS; Production deployment guardrails `34022836780` SUCCESS; S3 CPU Gate Static `34022836769` SUCCESS; S9 UX Acceptance `34022836795` SUCCESS; S10 Integration Backup Restore `34022836760` SUCCESS; S11 Historical Import `34022836766` SUCCESS.
+- Exact technical-head regression evidence: S3 Full Node `147 PASS / 0 FAIL / 0 skipped`; S10 Full Node `147 PASS / 0 FAIL / 0 skipped`; S11 Full Node `157 PASS / 0 FAIL / 0 skipped`; S9 Level A `10 PASS`; S9 Level B `44 PASS + 6 intentional skips`; Pester `350 PASS / 0 FAIL` in the applicable S3/S10/S11 workflows.
+- The prior state-only final head `0b58f6a522decc591e6c63bd242c6e37c65e456e` also passed all applicable PR CI: Foundation `34023128087`; S2 `34023128028`; Production guardrails `34023128058`; S3 `34023128015`; S9 `34023128020`; S10 `34023128149`; S11 `34023128082`.
+- `WAVE3_IMPLEMENTATION_STATUS = IMPLEMENTATION_VERIFIED`.
+- `SCOPE_DEVIATIONS = NONE`: no Worker backend business logic, financial formula, settlement rule, cancellation accounting, payment-reversal rule, permission, role, role mapping, Firebase, D1, schema, migration, binding, deployment, Cloud, DNS, Billing, Production resource, or Wave 4 product change was performed.
+- Wave 1 and Wave 2 remain frozen and their regression suites pass.
+- No Wave 3 UAT identity is marked `CLOSED` by this implementation closure; independent UAT validation remains separate from implementation verification.
+- Wave 3 implementation closure becomes effective only after this state-only final PR head passes all applicable CI, PR #128 is Squash merged, the resulting `main` SHA passes applicable post-merge CI, and Issue #127 is closed completed.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.

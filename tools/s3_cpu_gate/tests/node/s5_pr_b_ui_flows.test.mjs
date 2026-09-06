@@ -314,7 +314,7 @@ describe('S5 PR-B UI Flows', () => {
     };
 
     const html = testApp.workPage();
-    assert.match(html, /الحالة الحالية: قيد التنفيذ/);
+    assert.match(html, /data-work-execution-state[^>]*>قيد التنفيذ</);
     assert.match(html, /طلب أرشفة/);
   });
 
@@ -492,9 +492,57 @@ describe('S5 PR-B UI Flows', () => {
     assert.match(html, /data-collection-status/);
     assert.match(html, /ملخص التحصيل/);
     const collectionCard = html.split('data-collection-status')[1].split('</article>')[0];
-    assert.match(collectionCard, /المتبقي يحسب من السعر والدفعات المعتمدة/);
-    assert.match(collectionCard, /تعرض هذه المنطقة حالة التحصيل دون خلطها بحالة التنفيذ/);
+    assert.match(collectionCard, /مشتق من السعر والدفعات المعتمدة، ومستقل عن حالة التنفيذ/);
     assert.doesNotMatch(collectionCard, /PRICE_UNSET|سعر غير محدد|سعر صفري/);
+  });
+
+  it('19b. Wave 3 uses one primary summary and does not duplicate soft warnings', () => {
+    setupTestEnv();
+    state.selectedWork = {
+      id: 'w-summary',
+      version: 1,
+      title: 'عمل ملخص واحد',
+      customer_id: '',
+      status: 'IN_PROGRESS',
+      relationship_kind: 'INDEPENDENT',
+      is_archived: false,
+      confirmed_at: '2026-09-01T10:00:00.000Z',
+      country: 'SA',
+      university: '',
+      specialty_key: '',
+      work_type_key: '',
+      description: '',
+      soft_warnings: [{ code: 'WORK_DETAIL_UNIVERSITY_MISSING' }],
+      financials: {
+        price_state: 'PRICE_APPROVED',
+        current_price_halalas: 10000,
+        approved_payments_total_halalas: 0,
+        remaining_halalas: 10000,
+        collection_status: 'UNPAID',
+        price_requests: [{ id: 'price-pending', state: 'PENDING', movement_type: 'INCREASE', amount_halalas: 1000, reason: 'سبب اختباري', requested_by: 'user-2', requested_at: '2026-09-01T10:00:00.000Z', effective_at: '2026-09-01T10:00:00.000Z' }],
+        ratio_requests: [],
+        movements: [],
+        ratio_history: [],
+        ratio: { person_1_bps: 7000, person_2_bps: 3000, source: 'DEFAULT' },
+        shares: { person_1_halalas: 7000, person_2_halalas: 3000 },
+      },
+      payments: [],
+      reversalRequests: [],
+      requests: [],
+      events: [],
+      titleHistory: [],
+      statusHistory: [],
+      archiveHistory: [],
+    };
+    const html = testApp.workPage();
+    assert.equal((html.match(/data-work-summary/g) || []).length, 1);
+    assert.doesNotMatch(html, /class="detail-header"/);
+    assert.match(html, /data-work-primary-title/);
+    assert.match(html, /data-action="edit-work"/);
+    assert.match(html, /data-work-archive-state/);
+    assert.equal(html.split('الجامعة غير متوفرة.').length - 1, 1);
+    assert.match(html, /data-work-attention/);
+    assert.match(html, /طلبات سعر أو نسبة معلقة \(1\)/);
   });
 
   it('20. authorized SPA session reads uid and role from ping data envelope', async () => {
