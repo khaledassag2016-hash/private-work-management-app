@@ -92,7 +92,7 @@ test('S6 UI keeps pending price/ratio requests separate and blocks self approval
   assert.match(html, /لا يمكنك اعتماد طلبك/);
   assert.doesNotMatch(html, /data-action="approve-price-request" data-request-id="p1"/);
   assert.doesNotMatch(html, /data-action="approve-ratio-request" data-request-id="r1"/);
-  assert.doesNotMatch(html, /id="s6-price-form"/);
+  assert.match(html, /id="s6-price-form" class="form-grid" hidden/);
   assert.match(html, /يوجد طلب سعر معلق؛ انتظر حسمه قبل إرسال طلب سعر جديد/);
   assert.match(html, /id="s6-ratio-form"/);
 });
