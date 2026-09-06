@@ -50,6 +50,14 @@
       "type": "plain_text"
     },
     {
+      "name": "FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL",
+      "type": "secret_text"
+    },
+    {
+      "name": "FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY",
+      "type": "secret_text"
+    },
+    {
       "name": "RUN_MARKER",
       "type": "plain_text"
     },

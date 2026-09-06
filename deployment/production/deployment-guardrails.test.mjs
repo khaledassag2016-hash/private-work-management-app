@@ -45,6 +45,14 @@ test('manifest locks the production identity and fail-closed values', async () =
   assert.equal(manifest.worker.name, 'assagwork-app');
   assert.equal(manifest.d1.databaseId, '15c9e94c-54e7-487a-9996-0d712b11dccf');
   assert.equal(manifest.fixedPlainText.TEST_CONTROLS, 'disabled');
+  const firebaseAdminSecrets = ['FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL', 'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY'];
+  for (const name of firebaseAdminSecrets) {
+    const binding = manifest.requiredBindings.find((item) => item.name === name);
+    assert.deepEqual(binding, { name, type: 'secret_text' });
+  }
+  const leakedSecretValue = structuredClone(manifest);
+  leakedSecretValue.requiredBindings.find((item) => item.name === 'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY').value = 'not-a-real-secret';
+  assert.throws(() => validateManifest(leakedSecretValue), /manifest entry must contain binding identity only/);
   for (const [pathName, value] of [
     ['worker', 'wrong-worker'],
     ['d1', '00000000-0000-4000-8000-000000000000'],
@@ -78,6 +86,9 @@ test('asset package preserves every governed /assets path', async () => {
   assert.equal(config.assets.directory, './public');
   assert.equal(config.assets.binding, 'ASSETS');
   assert.equal(config.observability.enabled, true);
+  const generatedConfig = JSON.stringify(config);
+  assert.equal(generatedConfig.includes('FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL'), false);
+  assert.equal(generatedConfig.includes('FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY'), false);
 });
 
 test('remote binding parity rejects missing, changed, or stale production config', async () => {
@@ -94,6 +105,12 @@ test('remote binding parity rejects missing, changed, or stale production config
   const enabledControls = structuredClone(candidate);
   enabledControls.resources.bindings.find((binding) => binding.name === 'TEST_CONTROLS').text = 'enabled';
   assert.throws(() => assertBindingContract(enabledControls, manifest), /TEST_CONTROLS value mismatch/);
+  const missingFirebaseAdminSecret = structuredClone(candidate);
+  missingFirebaseAdminSecret.resources.bindings = missingFirebaseAdminSecret.resources.bindings.filter((binding) => binding.name !== 'FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY');
+  assert.throws(() => assertBindingContract(missingFirebaseAdminSecret, manifest), /binding allowlist differs/);
+  const wrongFirebaseAdminSecretType = structuredClone(candidate);
+  wrongFirebaseAdminSecretType.resources.bindings.find((binding) => binding.name === 'FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL').type = 'plain_text';
+  assert.throws(() => assertBindingContract(wrongFirebaseAdminSecretType, manifest), /FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL binding type mismatch/);
   const drift = structuredClone(candidate);
   drift.resources.bindings.find((binding) => binding.name === 'RUN_MARKER').text = 'different';
   assert.throws(() => assertCandidateParity(active, drift, manifest), /RUN_MARKER value drift/);
