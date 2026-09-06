@@ -480,6 +480,23 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - No Deploy, Cloud/DNS/D1/Firebase write, live secret addition, Production traffic change, or merge was performed by this implementation verification.
 - Final PR-head acceptance requires all applicable CI to pass again after this state-only update before merge can be considered.
 
+## UAT-044 — Governance supersession of D-024 — Issue #131 / PR #132 — governance verification
+
+- Frozen governance base: `7bf9c5a49837f1373cf39e24e6f235c83f543725`.
+- Dedicated branch: `uat-044-governance-131`; no direct `main` change.
+- Work type: `GOVERNANCE ONLY`. No Product code, Worker/backend, schema, migration, product-behavior tests, Role Remap, Deploy, Cloud/DNS/D1/Firebase write, or Production data mutation is included.
+- The previously resolved UAT-044 decision is recorded as D-027 without reopening or changing the product decision.
+- D-027 supersedes only the conflicting forced-zero-balance clause in D-024: cancellation does not impose a universal zero final amount due; the approved UAT-044 outcome may be zero / partial / full, while historical price/payment records remain preserved.
+- All non-conflicting D-024 protections remain governing: historical preservation, ordinary-operation stop after cancellation, closed-snapshot immutability, and append-only settlement adjustment handling.
+- Governance changed-file set before this state-only synchronization: `docs/DECISION_LOG.md`, `scripts/validate_foundation.py`, and `PROJECT_STATE.md` only. The validator change only advances the recorded-decision allowlist/output from D-026 to D-027; it does not change product logic.
+- Initial PR-head Foundation/S2 CI correctly failed because the foundation validator still expected D-001..D-026. One scoped governance-validation correction updated the expected recorded-decision range to D-027; no product file was touched.
+- Exact corrected technical head before this state-only synchronization: `75fcb14a284867d3b9b7b72bc38ca4870b2f8612`.
+- Exact corrected-head CI: Foundation integrity `34038339149` SUCCESS; S2 architecture validation `34038339133` SUCCESS; Production deployment guardrails `34038339078` SUCCESS; S10 Integration Backup Restore `34038339056` SUCCESS; S11 Historical Import `34038339082` SUCCESS.
+- Independent supervisory diff review confirms the branch is governance/validation/state only and contains no application/runtime behavior change.
+- `UAT044_GOVERNANCE_STATUS = GOVERNANCE_VERIFIED`.
+- `UAT-044` is NOT recorded as `CLOSED`; Product implementation and independent UAT remain separate future work and require separate authorization.
+- Final merge eligibility requires all applicable CI to pass again on the state-only final PR head after this synchronization. Merge is not authorized by this record.
+
 ## Permanent rules
 
 - No direct edits to `main`; every stage/change through its own branch and PR.
