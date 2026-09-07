@@ -542,3 +542,57 @@ Scope: P-07 / AC-14 historical cleaning and governed import with fail-closed unc
 - `UAT-046` and `UAT-047` remain **NOT CLOSED** pending completion of independent live UAT.
 - No Deploy, Cloud/DNS/D1/Firebase write, schema/migration, Role Remap, Production data mutation, or live secret change was performed.
 
+## UAT Remediation Phase 4 / Phase 5 — administrative closure — Issue #146
+
+### Phase 4 — post-S11 implementation/governance closure
+
+- `PHASE_4_STATUS = CLOSED_COMPLETE` when the Issue #146 administrative closure PR is Squash merged and post-merge CI passes.
+- Phase 4 was technically complete but did not previously have a dedicated final administrative closure record.
+- Verified merged implementation/governance chain:
+  - PR #130 / main `7bf9c5a49837f1373cf39e24e6f235c83f543725` — UAT-051 Production Firebase Admin secret-binding guardrails.
+  - PR #132 / main `1f0645bf4358823f642aabf14378646b82d71d80` — UAT-044 governance / D-027.
+  - PR #134 / main `469aa90be3ebf7885868a0c11be8f229b3855f36` — UAT-044 D-027 Product implementation.
+  - PR #136 / main `0a1cf6975db3fc843094636707998ffb651dd868` — targeted live-UAT remediation.
+- Phase 4 closure does not reopen Waves 1/2/3 and does not convert implementation verification into invented evidence.
+- `PHASE_4_PRODUCT_CLOUD_WRITES_IN_CLOSURE = NONE`.
+
+### Phase 5 — governed Production deployment and live acceptance closure
+
+- Governed source deployed and accepted: `3a1cba865bce72012ba6bfae4fc995d20e25f88e`.
+- Production Candidate accepted: `9dd5466f-c447-4e8b-866e-c463cff97830`.
+- Previous rollback target retained: `e3dce50a-c0c9-49ca-b2e6-d5f4404c4f05`.
+- Final Promotion to 100% completed successfully; post-promotion verification completed successfully; no rollback occurred on the successful final promotion.
+- Independent live Production acceptance supplied by supervision/user:
+  - `UAT-033 = PASS` — وليد يستخدم البيانات/الوظائف المشتركة ولا يرى Account Administration.
+  - `UAT-044 = PASS` — price 100, collected 70, remaining 30 under `PARTIALLY_STOPPED`.
+  - `UAT-046 = PASS` — cancelled Work cannot create new price or ratio requests.
+  - `UAT-047 = PASS` — governed payment reversal approval succeeds despite unrelated Work-version change.
+  - `UAT-051 = PASS` — خالد يرى الحسابين عبر Production Account Administration؛ Firebase Admin active؛ no passwords exposed.
+- Production D1 read-only reconciliation:
+  - `SETTLEMENT_RECONCILIATION = DATA/ENTRY ISSUE`.
+  - `TRANSFER_RECONCILIATION = DATA/ENTRY ISSUE`.
+  - `NO_SETTLEMENT_DEFECT = TRUE`.
+  - September preview reconciles to stored D1 data; the 400 SAR transfer was stored as خالد → وليد while the intended direction was وليد → خالد.
+  - No September settlement snapshot had been closed; the reviewed values were Preview/UAT data.
+- `PHASE_5_TECHNICAL_AND_LIVE_ACCEPTANCE = PASS`.
+- `PHASE_5_STATUS = CLOSED_COMPLETE` when the Issue #146 administrative closure PR is Squash merged and post-merge CI passes.
+- No Product code, Backend/API, schema/migration, Production data mutation, Deploy, Cloud/DNS/D1/Firebase write, or Role Remap is part of this closure PR.
+
+### Phase 6 — mandatory pre-cutover carry-forward
+
+- Temporal identity mapping is governed by D-028:
+  - CURRENT Production before Cutover: `person_1 = خالد`, `person_2 = وليد`.
+  - TARGET after Phase 6 Final Clean Cutover only: `person_1 = وليد = 30%`, `person_2 = خالد = 70% = Supervisor`.
+  - Same Firebase UIDs are preserved; old D1 history is not reinterpreted; old D1 and previous Worker version remain rollback evidence/targets.
+- Transfer direction is governed by D-029: وليد → خالد only; UI visible to وليد only; not shown to خالد; no selectable direction; backend enforcement and explicit confirmation are required.
+- `UAT-013` and `UAT-050` remain Phase-6 cutover work.
+- `UAT-032 = PRIOR_BASELINE_SOURCE_REQUIRED / USER_EVIDENCE_REQUIRED`; do not guess or close it.
+- `UAT-048 = EVIDENCE_REQUIRED`; do not guess or close it.
+- Mandatory UX before clean cutover:
+  - separate Work execution status from archive status; never label a cancelled Work as active merely because it is not archived;
+  - consistent state colors across Works, Work Details, Search/Analytics: cancelled/stopped red; needs-pricing/attention warning; normal active green; archive explicit/separate;
+  - clarify settlement labels so recorded Work prices, cancellation share basis, receipts and settlement values cannot be confused;
+  - preserve authoritative Audit data while showing concise summaries by default, details on demand, human خالد/وليد labels, and Account Administration near the top;
+  - professional UX redesign across Dashboard, Customers, Works, Work Details, Collections & Settlements, Search & Analytics, Catalogs, and Audit/Account Administration, with clearer hierarchy, lower default information density, less unnecessary scrolling, and secondary history/actions on demand.
+- Existing Phase-6 requirements remain: خالد-only Account Admin; خالد-only Audit UI/API; خالد-only subscription mutation without وليد approval; per-Work ratio exceptions remain dual approval; clean D1; no UAT/experimental history transfer; rollback retained.
+- `PHASE_6_READY = YES` only after the Issue #146 closure PR is Squash merged and post-merge CI passes.
