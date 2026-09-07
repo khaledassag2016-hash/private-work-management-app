@@ -11,6 +11,7 @@ import {
   assertScriptSettingsParity,
   assertSubdomainParity,
   buildPackage,
+  buildWranglerInvocation,
   candidateStatePath,
   extractSingleActiveVersion,
   firebaseAdminSecretsFromServiceAccount,
@@ -314,9 +315,46 @@ test('candidate state survives package rebuild and locks the exact source SHA', 
   }
 });
 
-test('Windows deployment launches the wrangler.cmd shim through the Windows shell', async () => {
-  const source = await readFile(path.join(repositoryRoot, 'deployment/production/deploy.mjs'), 'utf8');
-  assert.match(source, /shell:\s*process\.platform === 'win32'/);
+test('Windows Wrangler launcher preserves exact argument boundaries without cmd.exe shell parsing', () => {
+  const binary = 'C:\\tools\\npm\\node_modules\\.bin\\wrangler.cmd';
+  const shim = 'C:\\tools\\npm\\node_modules\\.bin\\wrangler.ps1';
+  const message = 'Production candidate 7acf90e53acd; zero traffic';
+  const deploymentSpec = '3020f65e-4ffd-47e3-b373-1c053ffe1297@100%';
+  const invocation = buildWranglerInvocation(binary, [
+    'versions',
+    'upload',
+    '--message',
+    message,
+    deploymentSpec,
+  ], {
+    platform: 'win32',
+    resolveCommand: () => binary,
+    fileExists: (value) => value === shim,
+    powershellBinary: 'powershell.exe',
+  });
+
+  assert.equal(invocation.file, 'powershell.exe');
+  assert.deepEqual(invocation.args, [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', shim,
+    'versions',
+    'upload',
+    '--message',
+    message,
+    deploymentSpec,
+  ]);
+  assert.equal(invocation.args.filter((value) => value === message).length, 1);
+  assert.equal(invocation.args.filter((value) => value === deploymentSpec).length, 1);
+});
+
+test('non-Windows Wrangler launcher remains direct execFile argument passing', () => {
+  const args = ['versions', 'upload', '--message', 'Production candidate abc; zero traffic'];
+  assert.deepEqual(
+    buildWranglerInvocation('/usr/local/bin/wrangler', args, { platform: 'linux' }),
+    { file: '/usr/local/bin/wrangler', args },
+  );
 });
 
 test('production staging and promotion require one exact clean Git HEAD', () => {
