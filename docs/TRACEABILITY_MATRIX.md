@@ -127,3 +127,23 @@
 - S11 should use deterministic read-only ingest, dry-run, validation, idempotent import, duplicate protection, reversible batch handling, reconciliation and accepted/rejected/pending reporting.
 - `PENDING_REVIEW` / `UNKNOWN` rows may remain pending without automatic approval or financial effect.
 - S11 starts only from the exact final S10 main SHA after S10 administrative closure, post-merge verification and Issue #9 closure, under a separately issued `FINAL_ACTIVATED` S11 package.
+
+## Post-S11 UAT Remediation — Phase 4 / Phase 5 closure addendum
+
+This addendum records the remaining-UAT reconciliation/acceptance set without redefining the original FR/AC/P/S identifiers above.
+
+| UAT | Closure evidence | Status at Phase-5 closure |
+| --- | --- | --- |
+| UAT-033 | Independent live Production acceptance: وليد can use shared data/functions and does not see Account Administration. | PASS |
+| UAT-044 | Independent live Production acceptance after governed deployment: 100 price / 70 collected / 30 remaining under `PARTIALLY_STOPPED`. | PASS |
+| UAT-046 | Independent live Production acceptance: cancelled Work cannot create new price or ratio requests. | PASS |
+| UAT-047 | Independent live Production acceptance: payment reversal approval survives unrelated Work-version change. | PASS |
+| UAT-051 | Independent live Production acceptance: خالد can read both accounts via Account Administration; Firebase Admin active; no passwords exposed. | PASS |
+| UAT-013 | Final Clean Cutover / permissions work. | DEFERRED_PHASE_6 |
+| UAT-050 | Final Clean Cutover / Audit permission work. | DEFERRED_PHASE_6 |
+| UAT-032 | Prior authoritative baseline source was not recovered. | USER_EVIDENCE_REQUIRED |
+| UAT-048 | No authoritative closure evidence is recorded by this administrative closure. | EVIDENCE_REQUIRED |
+
+- Phase 5 read-only D1 reconciliation = `DATA/ENTRY ISSUE`; `NO SETTLEMENT DEFECT`.
+- D-028 governs current-vs-target temporal role mapping; D-029 governs the Phase-6 one-way transfer direction وليد → خالد.
+- Phase-6 UX/cutover requirements are mandatory carry-forward in `PROJECT_STATE.md`; this closure addendum does not implement them.
