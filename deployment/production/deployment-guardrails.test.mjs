@@ -453,7 +453,7 @@ test('post-promotion smoke retry exhaustion remains fail-closed and rolls back',
     candidateVersion,
     deployTrafficFn,
     deploymentStatusFn,
-    postPromotionSmokeRetryDelaysMs: [0, 0],
+    retryDelaysMs: [0, 0],
     sleepFn: async (milliseconds) => { sleeps.push(milliseconds); },
     httpSmokeFn: async () => {
       smokeAttempts += 1;
