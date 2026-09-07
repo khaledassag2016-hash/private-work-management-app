@@ -604,6 +604,37 @@ async function browserSmoke(manifest, candidateVersion = '') {
   await smoke.verifyLogin(manifest, candidateVersion);
 }
 
+export const postPromotionSmokeRetryDelaysMs = Object.freeze([1000, 2000, 4000, 8000]);
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function verifyPostPromotionSmokeWithRetry({
+  manifest,
+  httpSmokeFn = httpSmoke,
+  browserSmokeFn = browserSmoke,
+  retryDelaysMs = postPromotionSmokeRetryDelaysMs,
+  sleepFn = sleep,
+} = {}) {
+  invariant(object(manifest), 'post-promotion smoke manifest is required');
+  invariant(Array.isArray(retryDelaysMs) && retryDelaysMs.every((value) => Number.isInteger(value) && value >= 0), 'post-promotion smoke retry delays are invalid');
+  invariant(typeof sleepFn === 'function', 'post-promotion smoke sleep function is invalid');
+  let lastError;
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      await httpSmokeFn(manifest);
+      await browserSmokeFn(manifest);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === retryDelaysMs.length) throw error;
+      await sleepFn(retryDelaysMs[attempt]);
+    }
+  }
+  throw lastError;
+}
+
 export async function clearCandidateState() {
   await rm(candidateStatePath, { force: true });
 }
@@ -801,6 +832,8 @@ export async function promoteVerifiedCandidateWithRecovery({
   deploymentStatusFn = () => deploymentStatus(manifest),
   httpSmokeFn = httpSmoke,
   browserSmokeFn = browserSmoke,
+  postPromotionSmokeRetryDelaysMs = postPromotionSmokeRetryDelaysMs,
+  sleepFn = sleep,
 } = {}) {
   try {
     deployTrafficFn(
@@ -808,8 +841,13 @@ export async function promoteVerifiedCandidateWithRecovery({
       `Promote verified candidate ${candidateVersion}; rollback ${previousVersion}`,
     );
     assertSplit(deploymentStatusFn(), new Map([[candidateVersion, 100]]));
-    await httpSmokeFn(manifest);
-    await browserSmokeFn(manifest);
+    await verifyPostPromotionSmokeWithRetry({
+      manifest,
+      httpSmokeFn,
+      browserSmokeFn,
+      retryDelaysMs: postPromotionSmokeRetryDelaysMs,
+      sleepFn,
+    });
   } catch (error) {
     try {
       let safeWithoutRollback = false;
