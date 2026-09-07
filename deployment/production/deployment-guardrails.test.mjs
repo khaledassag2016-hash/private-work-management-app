@@ -22,6 +22,7 @@ import {
   saveCandidateState,
   promoteVerifiedCandidateWithRecovery,
   validateManifest,
+  verifyPostPromotionSmokeWithRetry,
   validateSourceContracts,
   verifyStagedCandidateWithRecovery,
   versionUploadSecretsArgs,
@@ -400,6 +401,75 @@ test('failed Candidate smoke restores the previous version to 100 percent', asyn
   assert.equal(deployCalls.length, 2);
   assert.deepEqual(deployCalls[0], [`${previousVersion}@100%`, `${candidateVersion}@0%`]);
   assert.deepEqual(deployCalls[1], [`${previousVersion}@100%`]);
+  assert.deepEqual([...deployed], [[previousVersion, 100]]);
+});
+
+test('post-promotion smoke retries transient propagation failures with bounded backoff', async () => {
+  const manifest = validateManifest(await loadManifest());
+  let httpAttempts = 0;
+  let browserAttempts = 0;
+  const sleeps = [];
+
+  await assert.doesNotReject(() => verifyPostPromotionSmokeWithRetry({
+    manifest,
+    retryDelaysMs: [10, 20, 40],
+    sleepFn: async (milliseconds) => { sleeps.push(milliseconds); },
+    httpSmokeFn: async () => {
+      httpAttempts += 1;
+      if (httpAttempts < 3) throw new Error('/ content differs from the candidate package');
+    },
+    browserSmokeFn: async () => { browserAttempts += 1; },
+  }));
+
+  assert.equal(httpAttempts, 3);
+  assert.equal(browserAttempts, 1);
+  assert.deepEqual(sleeps, [10, 20]);
+});
+
+test('post-promotion smoke retry exhaustion remains fail-closed and rolls back', async () => {
+  const manifest = validateManifest(await loadManifest());
+  const previousVersion = '3020f65e-4ffd-47e3-b373-1c053ffe1297';
+  const candidateVersion = 'e3dce50a-c0c9-49ca-b2e6-d5f4404c4f05';
+  let deployed = new Map([[previousVersion, 100], [candidateVersion, 0]]);
+  const deployCalls = [];
+  let smokeAttempts = 0;
+  const sleeps = [];
+
+  const deployTrafficFn = (versions) => {
+    deployCalls.push([...versions]);
+    deployed = new Map(versions.map((item) => {
+      const [versionId, rawPercentage] = item.split('@');
+      return [versionId, Number(rawPercentage.replace('%', ''))];
+    }));
+  };
+  const deploymentStatusFn = () => ({
+    versions: [...deployed].map(([version_id, percentage]) => ({ version_id, percentage })),
+  });
+
+  await assert.rejects(() => promoteVerifiedCandidateWithRecovery({
+    manifest,
+    configPath: '/synthetic/wrangler.jsonc',
+    previousVersion,
+    candidateVersion,
+    deployTrafficFn,
+    deploymentStatusFn,
+    postPromotionSmokeRetryDelaysMs: [0, 0],
+    sleepFn: async (milliseconds) => { sleeps.push(milliseconds); },
+    httpSmokeFn: async () => {
+      smokeAttempts += 1;
+      throw new Error('/ content differs from the candidate package');
+    },
+    browserSmokeFn: async () => {
+      throw new Error('browser smoke must not run after HTTP smoke failure');
+    },
+  }), /content differs from the candidate package/);
+
+  assert.equal(smokeAttempts, 3);
+  assert.deepEqual(sleeps, [0, 0]);
+  assert.deepEqual(deployCalls, [
+    [`${candidateVersion}@100%`],
+    [`${previousVersion}@100%`],
+  ]);
   assert.deepEqual([...deployed], [[previousVersion, 100]]);
 });
 
