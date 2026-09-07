@@ -832,7 +832,7 @@ export async function promoteVerifiedCandidateWithRecovery({
   deploymentStatusFn = () => deploymentStatus(manifest),
   httpSmokeFn = httpSmoke,
   browserSmokeFn = browserSmoke,
-  postPromotionSmokeRetryDelaysMs = postPromotionSmokeRetryDelaysMs,
+  retryDelaysMs = postPromotionSmokeRetryDelaysMs,
   sleepFn = sleep,
 } = {}) {
   try {
@@ -845,7 +845,7 @@ export async function promoteVerifiedCandidateWithRecovery({
       manifest,
       httpSmokeFn,
       browserSmokeFn,
-      retryDelaysMs: postPromotionSmokeRetryDelaysMs,
+      retryDelaysMs,
       sleepFn,
     });
   } catch (error) {
