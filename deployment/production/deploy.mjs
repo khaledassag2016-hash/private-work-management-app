@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -274,13 +275,51 @@ export async function validateAll({ subdomainSettings = null } = {}) {
   console.log('DEPLOYMENT_GUARDS: PASS');
   return { manifest, ...built };
 }
+function resolveWindowsCommand(binary) {
+  if (path.win32.isAbsolute(binary)) return binary;
+  const resolved = execFileSync('where.exe', [binary], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).split(/\r?\n/).map((value) => value.trim()).find(Boolean);
+  invariant(typeof resolved === 'string' && resolved.length > 0, `Windows command could not be resolved: ${binary}`);
+  return resolved;
+}
+
+export function buildWranglerInvocation(binary, args, {
+  platform = process.platform,
+  resolveCommand = resolveWindowsCommand,
+  fileExists = existsSync,
+  powershellBinary = 'powershell.exe',
+} = {}) {
+  invariant(typeof binary === 'string' && binary.length > 0, 'Wrangler binary is required');
+  invariant(Array.isArray(args) && args.every((value) => typeof value === 'string'), 'Wrangler arguments must be strings');
+  if (platform !== 'win32' || !/\.cmd$/i.test(binary)) {
+    return { file: binary, args: [...args] };
+  }
+  const commandPath = resolveCommand(binary);
+  invariant(/\.cmd$/i.test(commandPath), 'resolved Windows Wrangler command must be a .cmd shim');
+  const powershellShim = commandPath.replace(/\.cmd$/i, '.ps1');
+  invariant(fileExists(powershellShim), 'Wrangler PowerShell shim is unavailable');
+  return {
+    file: powershellBinary,
+    args: [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', powershellShim,
+      ...args,
+    ],
+  };
+}
+
 function runWrangler(manifest, args, { display = false } = {}) {
   const binary = process.env.WRANGLER_BIN || (process.platform === 'win32' ? 'wrangler.cmd' : 'wrangler');
-  const output = execFileSync(binary, args, {
+  const invocation = buildWranglerInvocation(binary, args);
+  const output = execFileSync(invocation.file, invocation.args, {
     cwd: repositoryRoot,
     encoding: 'utf8',
     env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: manifest.accountId },
-    shell: process.platform === 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (display) process.stdout.write(output);
