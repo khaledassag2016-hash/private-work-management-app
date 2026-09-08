@@ -23,6 +23,11 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url, 'http://127.0.0.1');
   const path = url.pathname;
   if (path === '/__health') {
+    response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    response.end('ok');
+    return;
+  }
+  if (path === '/__preview-health') {
     response.writeHead(enabled ? 200 : 503, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
     response.end(enabled ? 'ok' : 'preview-not-configured');
     return;
