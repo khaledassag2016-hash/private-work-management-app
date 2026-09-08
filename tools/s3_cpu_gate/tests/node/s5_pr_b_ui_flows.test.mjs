@@ -135,11 +135,10 @@ describe('S5 PR-B UI Flows', () => {
       ]
     };
     const html = testApp.workPage();
-    assert.match(html, /العنوان القديم: Title A/);
-    assert.match(html, /الجديد: Title B/);
-    assert.match(html, /سبب التغيير: Initial change/);
-    assert.match(html, /العنوان القديم: Title B/);
-    assert.match(html, /الجديد: Title C/);
+    assert.match(html, /تغيير عنوان/);
+    assert.match(html, /Title A ← Title B — Initial change/);
+    assert.match(html, /Title B ← Title C — Second change/);
+    assert.match(html, /عرض السجل الكامل/);
   });
 
   it('4. Event list/add/reload/order acceptance', () => {
@@ -154,12 +153,12 @@ describe('S5 PR-B UI Flows', () => {
     };
 
     const html = testApp.workPage();
-    // Should sort e2 -> e3 -> e1
-    const parts = html.split('<strong>Comment');
-    // Index 1 should be Comment 2, Index 2 should be Comment 3, Index 3 should be Comment 1
-    assert.match(parts[1], /^ 2/);
-    assert.match(parts[2], /^ 3/);
-    assert.match(parts[3], /^ 1/);
+    // Effective time is authoritative; ties preserve deterministic source order.
+    const first = html.indexOf('نشاط: Comment 1');
+    const second = html.indexOf('نشاط: Comment 2');
+    const third = html.indexOf('نشاط: Comment 3');
+    assert.ok(first >= 0 && second > first && third > second);
+    assert.match(html, /عرض السجل الكامل/);
   });
 
   it('5. CANCEL User1->User2 approval flow', async () => {
@@ -333,9 +332,10 @@ describe('S5 PR-B UI Flows', () => {
 
     const html = testApp.workPage();
     assert.match(html, /الأرشفة: مؤرشف/);
-    assert.match(html, /أرشفة كاملة ومؤمنة للعمل/);
-    assert.match(html, /السبب والمبرر: Fully completed/);
+    assert.match(html, /أرشفة العمل/);
+    assert.match(html, /Fully completed/);
     assert.match(html, /Historic event/);
+    assert.match(html, /عرض السجل الكامل/);
   });
 
   it('12. stale/version conflict behavior', async () => {
@@ -589,7 +589,7 @@ describe('S5 PR-B UI Flows', () => {
 
   it('23. Wave 1 presentation guard keeps closed UI behavior while removing targeted implementation copy', () => {
     const srcContent = readFileSync(fileURLToPath(new URL('../../src/worker/assets/app.js', import.meta.url)), 'utf8');
-    assert.match(srcContent, /\['s8', 'البحث والتحليلات'\]/);
+    assert.match(srcContent, /\['s8','البحث والتحليلات'\]|\['s8', 'البحث والتحليلات'\]/);
     assert.match(srcContent, /function pageSubtitle\(/);
     assert.match(srcContent, /name="confirmed_at" type="text"/);
     assert.match(srcContent, /function auditValueMarkup\(/);
