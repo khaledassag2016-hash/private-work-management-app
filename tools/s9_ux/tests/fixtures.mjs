@@ -27,8 +27,11 @@ function followUpExport() { return { export_type: 'FOLLOW_UP', events: [{ id: 'e
 function customerExport() { return { export_type: 'CUSTOMER', customer, works: [searchWork], warnings: [], totals: { work_count: 1, active_work_count: 1, archived_work_count: 0, price_unset_work_count: 0, approved_paid_halalas: 100000, remaining_halalas: 70000 }, next_cursor: null, warning_next_cursor: null }; }
 function classificationExport() { return { export_type: 'CLASSIFICATION', groups: { WORK_TYPE: group, SPECIALTY: group, COUNTRY: group, UNIVERSITY: group, PERIOD: group } }; }
 
-function dataFor(path, method) {
-  if (path === '/private/ping') return { uid: 'uid-one', role: 'person_1' };
+export function dataFor(path, method, identity = {}) {
+  const uid = identity.uid || 'uid-one';
+  const role = identity.role || 'person_1';
+  const identityMode = identity.identityMode || 'CURRENT';
+  if (path === '/private/ping') return { uid, role, identity_mode: identityMode };
   if (path.startsWith('/api/catalog/')) return [{ value_key: path.endsWith('/country') ? 'SA' : path.endsWith('/specialty') ? 'IT' : 'REPORT', label: path.endsWith('/country') ? 'السعودية' : path.endsWith('/specialty') ? 'تقنية المعلومات' : 'تقرير', active: true }];
   if (path === '/api/customers' && method === 'GET') return [customer];
   if (path === `/api/customers/${customer.id}`) return customer;
@@ -46,6 +49,10 @@ function dataFor(path, method) {
   if (path === `/api/works/${work.id}/payment-reversal-requests`) return reversals;
   if (path === `/api/works/${work.id}`) return work;
   if (path === '/api/participants') return [{ uid: 'uid-one', role: 'person_1' }, { uid: 'uid-two', role: 'person_2' }];
+  if (path === '/api/audit') return [{ id: 'audit-1', entity_type: 'work', entity_id: work.id, action: 'UPDATE', actor_uid: 'uid-one', actor_role: 'person_1', created_at: now, before: { status: 'AGREED', from_party: 'person_1' }, after: { status: 'IN_PROGRESS', to_party: 'person_2' } }];
+  if (path === '/api/account-admin/accounts' && method === 'GET') return identityMode === 'D028_TARGET'
+    ? [{ role: 'person_1', display_name: 'وليد', email: 'waleed@example.test', active: true, disabled: false }, { role: 'person_2', display_name: 'خالد', email: 'khalid@example.test', active: true, disabled: false }]
+    : [{ role: 'person_1', display_name: 'خالد', email: 'khalid@example.test', active: true, disabled: false }, { role: 'person_2', display_name: 'وليد', email: 'waleed@example.test', active: true, disabled: false }];
   if (path === '/api/transfers' || path === '/api/subscriptions' || path === '/api/expenses') return [];
   if (path === '/api/settlements/preview') return preview;
   if (path === '/api/settlements') return [];
@@ -62,10 +69,10 @@ function dataFor(path, method) {
   return {};
 }
 
-export async function installHarness(page) {
-  await page.addInitScript(() => {
-    window.__PRIVATE_WORK_APP_CONFIG__ = { apiBaseUrl: '', s8ExportModuleUrl: '/assets/s8-export.mjs', getIdToken: async () => 'synthetic-token', signOut: async () => {}, email: 'synthetic@example.test' };
-  });
+export async function installHarness(page, identity = {}) {
+  await page.addInitScript(({ email }) => {
+    window.__PRIVATE_WORK_APP_CONFIG__ = { apiBaseUrl: '', s8ExportModuleUrl: '/assets/s8-export.mjs', getIdToken: async () => 'synthetic-token', signOut: async () => {}, email };
+  }, { email: identity.email || 'synthetic@example.test' });
   const requestsLog = [];
   let nextFailure = null;
   let held = null;
@@ -105,7 +112,7 @@ export async function installHarness(page) {
     } else if (entry.method === 'GET' && /^\/api\/settlements\/[^/]+\/reopen-requests$/.test(entry.path)) {
       data = settlementHarness.reopenRequests;
     } else {
-      data = dataFor(entry.path, entry.method);
+      data = dataFor(entry.path, entry.method, identity);
     }
     await route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ ok: true, data }) });
   }
