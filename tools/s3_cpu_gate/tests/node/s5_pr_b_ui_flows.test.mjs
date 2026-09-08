@@ -490,13 +490,12 @@ describe('S5 PR-B UI Flows', () => {
     setupTestEnv();
     state.selectedWork = { id: 'w1', version: 1, status: 'IN_PROGRESS', price_state: 'PRICE_UNSET', is_archived: false };
     const html = testApp.workPage();
-    assert.match(html, /data-execution-status/);
-    assert.match(html, /حالة التنفيذ/);
-    assert.match(html, /data-collection-status/);
-    assert.match(html, /ملخص التحصيل/);
-    const collectionCard = html.split('data-collection-status')[1].split('</article>')[0];
-    assert.match(collectionCard, /مشتق من السعر والدفعات المعتمدة، ومستقل عن حالة التنفيذ/);
-    assert.doesNotMatch(collectionCard, /PRICE_UNSET|سعر غير محدد|سعر صفري/);
+    assert.match(html, /data-work-execution-state/);
+    assert.match(html, /الدفعات والتحصيل/);
+    assert.match(html, /data-collection-descriptor/);
+    const primarySummary = html.split('data-work-disclosure="work-data"')[0];
+    assert.doesNotMatch(primarySummary, /حالة التحصيل|PRICE_UNSET|سعر صفري/);
+    assert.match(html, /حالة التحصيل/);
   });
 
   it('19b. Wave 3 uses one primary summary and does not duplicate soft warnings', () => {
@@ -545,7 +544,8 @@ describe('S5 PR-B UI Flows', () => {
     assert.match(html, /data-work-archive-state/);
     assert.equal(html.split('الجامعة غير متوفرة.').length - 1, 1);
     assert.match(html, /data-work-attention/);
-    assert.match(html, /طلبات سعر أو نسبة معلقة \(1\)/);
+    assert.match(html, /مركز الإجراءات/);
+    assert.equal((html.match(/data-financial-request="price-pending"/g) || []).length, 1);
   });
 
   it('20. authorized SPA session reads uid and role from ping data envelope', async () => {
