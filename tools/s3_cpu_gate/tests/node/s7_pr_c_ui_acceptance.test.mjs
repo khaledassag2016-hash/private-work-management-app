@@ -142,7 +142,7 @@ test('S7 PR-C financial workspace keeps full details while Wave 2 summary and pe
   state.financial = { ...common, snapshots: [{ version: 1, state: 'CLOSED', final_balance_halalas: 26000, created_at: '2026-08-31T00:00:00.000Z' }], reopenRequests: [historicalRequest] };
   const closedHtml = ui.financialPage();
   assert.match(closedHtml, /data-settlement-summary/);
-  for (const label of ['إجمالي قيمة أعمال الشهر', 'حصة خالد', 'حصة وليد', 'إجمالي الاشتراكات', 'رسوم التحويل']) assert.match(closedHtml, new RegExp(label));
+  for (const label of ['الأسعار الحالية المسجلة للأعمال', 'المقبوض الفعلي المعتمد', 'حصة خالد', 'حصة وليد', 'الرصيد النهائي']) assert.match(closedHtml, new RegExp(label));
   assert.match(closedHtml, /عدد الأعمال/);
   assert.match(closedHtml, /المتحصل من العميل/);
   assert.match(closedHtml, /الرصيد السابق/);
