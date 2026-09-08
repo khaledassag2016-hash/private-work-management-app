@@ -142,13 +142,13 @@ test('S7 PR-C financial workspace keeps full details while Wave 2 summary and pe
   state.financial = { ...common, snapshots: [{ version: 1, state: 'CLOSED', final_balance_halalas: 26000, created_at: '2026-08-31T00:00:00.000Z' }], reopenRequests: [historicalRequest] };
   const closedHtml = ui.financialPage();
   assert.match(closedHtml, /data-settlement-summary/);
-  for (const label of ['الأسعار الحالية المسجلة للأعمال', 'المقبوض الفعلي المعتمد', 'حصة خالد', 'حصة وليد', 'الرصيد النهائي']) assert.match(closedHtml, new RegExp(label));
+  for (const label of ['إجمالي الأسعار المسجلة للأعمال', 'إجمالي المقبوض فعليًا من العملاء', 'حصة خالد', 'حصة وليد', 'الرصيد النهائي الحالي']) assert.match(closedHtml, new RegExp(label));
   assert.match(closedHtml, /عدد الأعمال/);
   assert.match(closedHtml, /المقبوض الفعلي المعتمد من العملاء/);
-  assert.match(closedHtml, /الرصيد السابق/);
-  assert.match(closedHtml, /الرصيد النهائي/);
+  assert.match(closedHtml, /الرصيد المرحل/);
+  assert.match(closedHtml, /الرصيد النهائي الحالي/);
   assert.match(closedHtml, /التسوية تحتاج مراجعة قبل الإقفال/);
-  assert.match(closedHtml, /حالة الفترة: مغلقة/);
+  assert.match(closedHtml, /data-settlement-period-state[^>]*>مغلقة</);
   assert.doesNotMatch(closedHtml, /id="s7-settlement-close-form"/);
   assert.match(closedHtml, /id="s7-reopen-form"/);
   assert.match(closedHtml, /سبب تاريخي للمراجعة/);
@@ -158,7 +158,7 @@ test('S7 PR-C financial workspace keeps full details while Wave 2 summary and pe
 
   state.financial = { ...common, preview: preview(), snapshots: [], reopenRequests: [historicalRequest] };
   const openHtml = ui.financialPage();
-  assert.match(openHtml, /حالة الفترة: مفتوحة/);
+  assert.match(openHtml, /data-settlement-period-state[^>]*>مفتوحة</);
   assert.match(openHtml, /id="s7-settlement-close-form"/);
   assert.doesNotMatch(openHtml, /id="s7-reopen-form"/);
   assert.match(openHtml, /سبب تاريخي للمراجعة/);
@@ -206,10 +206,10 @@ test('S7 PR-C collection display keeps completed execution independent across ze
   assert.match(html, /مغلق ماليًا/); assert.match(html, /0 ريال/);
   const unset = financials(); unset.price_state = 'PRICE_UNSET'; unset.current_price_halalas = null; unset.remaining_halalas = null; unset.collection_status = 'PRICE_UNSET';
   setup({ work: workPayload(unset) }); html = ui.workPage();
-  assert.match(html, /لا يمكن إدخال دفعة لأن السعر المعتمد غير محدد/); assert.doesNotMatch(html, /id="s7-payment-form"/);
+  assert.match(html, /لا يمكن تسجيل دفعة قبل اعتماد السعر/); assert.doesNotMatch(html, /id="s7-payment-form"/);
   const zero = financials({ price: 0, paid: 0, collection: 'FINANCIALLY_CLOSED' });
   setup({ work: workPayload(zero) }); html = ui.workPage();
-  assert.match(html, /هذا العمل بسعر معتمد صفر؛ لا تُدخل دفعة موجبة/); assert.doesNotMatch(html, /id="s7-payment-form"/);
+  assert.match(html, /هذا العمل بسعر معتمد صفر؛ لا تُسجل دفعة موجبة/); assert.doesNotMatch(html, /id="s7-payment-form"/);
   assert.match(ui.errorMessage('CLOSED_PERIOD_MUTATION_FORBIDDEN'), /إعادة فتح معتمدة/);
 });
 
@@ -281,7 +281,7 @@ test('S7 PR-C integrated UI plus Worker/DB acceptance covers confirmation, C/F/H
     await ui.submitWork(integratedForm({ id: work.id, version: 1, customer_id: customer.id, title: 'Integrated S7 Work', country: 'SA', university: 'Integrated University', specialty_key: 'IT', work_type_key: 'REPORT', subject_or_course_code: '', status: 'NEW_REQUEST', quantity: '', relationship_kind: 'INDEPENDENT', parent_work_id: '', description: '', confirmed_at: '12/08/2026 10:00' }));
     const confirmed = await worker.getWork(env, work.id); assert.equal(confirmed.confirmed_at, '2026-08-12T07:00:00.000Z'); assert.equal((await worker.getSettlementPreview(env, '2026-08', {})).work_count, 1); assert.match(ui.workPage(), /تاريخ التأكيد/);
     const priceRequest = await worker.createPriceChangeRequest(env, 'uid-one', 'integrated-price-request', work.id, { version: confirmed.version, movement_type: 'BASE', amount_riyals: '1700.00', reason: 'Integrated price', effective_at: '2026-08-12T10:00:00.000Z' }); await worker.approvePriceChangeRequest(env, 'uid-two', 'integrated-price-approve', work.id, priceRequest.id); await ui.openWork(work.id);
-    await ui.loadFinancialWorkspace('2026-08'); assert.match(ui.s7WorkFinancialMarkup(state.selectedWork), /name="received_by"/); assert.match(ui.settlementPreviewMarkup(state.financial.preview), /استلام خالد/);
+    await ui.loadFinancialWorkspace('2026-08'); assert.match(ui.paymentActionForm(state.selectedWork), /name="received_by"/); assert.match(ui.settlementPreviewMarkup(state.financial.preview), /استلام خالد/);
     await ui.submitPayment(integratedForm({ amount_riyals: '1000.00', effective_at: '2026-08-12T12:00', payment_method: 'BANK_TRANSFER', received_by: 'uid-two', note: 'first irregular installment' }));
     await ui.submitPayment(integratedForm({ amount_riyals: '700.00', effective_at: '2026-08-15T12:00', payment_method: 'CASH', received_by: 'uid-one', note: 'second irregular installment' }));
     let financial = await worker.getWorkFinancials(env, work.id); assert.equal(financial.remaining_halalas, 0); assert.equal(financial.payments.length, 2); assert.equal(financial.payments[0].recorded_by, 'uid-one'); assert.equal(financial.payments[0].received_by, 'uid-two'); assert.notEqual(state.selectedWork.payments[0].received_by, state.selectedWork.payments[0].recorded_by); assert.match(ui.workPage(), /استلمها:/); assert.match(ui.workPage(), /سُجلت بواسطة:/);
