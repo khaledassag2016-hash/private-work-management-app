@@ -59,8 +59,9 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
   await expect(page.locator('.dialog #s7-payment-form')).toBeVisible();
   await page.locator('.dialog [data-action="close-modal"]').last().click();
   await openWorkDisclosure(page, 'history');
+  const historyActions = page.locator('[data-work-disclosure="history"] .history-actions');
   for (const label of ['إضافة حدث أو ملاحظة', 'تغيير العنوان', 'تغيير حالة التنفيذ']) {
-    await page.getByText(label, { exact: true }).click();
+    await historyActions.locator('details.inline-action > summary').filter({ hasText: label }).click();
   }
   for (const selector of ['#s5-event-form', '#s5-title-form', '#s5-status-form']) await expect(page.locator(selector)).toBeVisible();
   await openWorkDisclosure(page, 'danger');
@@ -97,6 +98,8 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
 test('sensitive actions cancel with zero requests and confirm exactly once', async ({ page }) => {
   await openWork(page);
   await openWorkDisclosure(page, 'danger');
+  const dangerActions = page.locator('[data-work-disclosure="danger"] .sensitive-actions');
+  await dangerActions.locator('details.inline-action > summary').filter({ hasText: 'طلب أرشفة العمل' }).click();
   await page.locator('#s5-archive-form input[name="reason"]').fill('سبب أرشفة اصطناعي');
   const archivePath = `/api/works/${work.id}/requests`;
   const archiveBefore = api.count('POST', archivePath);
@@ -104,6 +107,9 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await handleNextDialog(page, 'dismiss');
   expect(api.count('POST', archivePath)).toBe(archiveBefore);
   await openWorkDisclosure(page, 'danger');
+  if (!(await page.locator('#s5-archive-form').isVisible())) {
+    await page.locator('[data-work-disclosure="danger"] .sensitive-actions details.inline-action > summary').filter({ hasText: 'طلب أرشفة العمل' }).click();
+  }
   await page.locator('#s5-archive-form input[name="reason"]').fill('سبب أرشفة اصطناعي');
   await submitConfirmed(page, '#s5-archive-form', archivePath);
 
@@ -196,7 +202,7 @@ test('double click, double tap, repeated Enter, and click while pending send one
 test('400/401/403/409/fail-closed/500/network errors are visible, recoverable, and preserve input', async ({ page }) => {
   await openWork(page);
   await openWorkDisclosure(page, 'history');
-  await page.getByText('إضافة حدث أو ملاحظة', { exact: true }).click();
+  await page.locator('[data-work-disclosure="history"] .history-actions details.inline-action > summary').filter({ hasText: 'إضافة حدث أو ملاحظة' }).click();
   const form = page.locator('#s5-event-form');
   await form.locator('input[name="event_type"]').fill('FOLLOW_UP');
   await form.locator('input[name="description"]').fill('نص يجب ألا يضيع');
