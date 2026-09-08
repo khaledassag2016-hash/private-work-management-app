@@ -882,7 +882,7 @@ function phase6SupervisorRole(env) { return isPhase6TargetIdentity(env) ? 'perso
 function phase6DefaultRatio(env) {
   return isPhase6TargetIdentity(env)
     ? { person_1_bps: 3000, person_2_bps: 7000, source: 'DEFAULT_D028_TARGET' }
-    : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT_D023' };
+    : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT' };
 }
 
 async function requireAccountAdmin(env, actorUid) {
