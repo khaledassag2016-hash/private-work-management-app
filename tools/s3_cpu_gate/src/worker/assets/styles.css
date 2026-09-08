@@ -206,3 +206,55 @@ tr:last-child td { border-bottom: 0; }
 [data-account-admin] { margin: 0 0 1rem !important; border-color: #c8ddd7; }
 @media (max-width: 1000px) { .work-summary-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 820px) { .grid-4, .work-summary-kpis, .audit-change-grid { grid-template-columns: minmax(0, 1fr); } }
+
+
+/* Phase 6 final UX restructure */
+.preview-banner { display:grid; gap:.2rem; margin:0 0 1rem; padding:.8rem 1rem; border:1px solid var(--line); border-radius:12px; font-size:.72rem; line-height:1.7; }
+.preview-banner strong { font-size:.76rem; }
+.preview-banner.demo { background:var(--warning-soft); }
+.preview-banner.clean { background:var(--success-soft); }
+.dashboard-compact { display:grid; gap:1rem; }
+.compact-card { margin-top:0; }
+.balance-brief { font-size:.82rem !important; line-height:1.55; overflow-wrap:anywhere; }
+.work-summary-kpis { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.work-summary-kpis .stat { min-height:82px; }
+.exception-indicator { min-height:44px; margin-top:.55rem; padding:.55rem .75rem; color:var(--brand); background:var(--warning-soft); border:1px solid #edd39b; border-radius:999px; font:inherit; font-size:.7rem; font-weight:700; cursor:pointer; }
+.work-attention { margin:0 0 1rem; padding:1rem; border:1px solid #edd39b; border-radius:var(--radius); background:var(--warning-soft); }
+.section-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
+.section-heading h2 { margin:0; font-size:1rem; }
+.pending-action-list { display:grid; gap:.65rem; margin-top:.85rem; }
+.pending-action-card { display:grid; gap:.45rem; padding:.8rem; border:1px solid #edd39b; border-radius:10px; background:var(--paper); }
+.pending-action-card p { margin:0; }
+.pending-action-card > span { color:var(--muted); font-size:.68rem; }
+.section-actions { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:.9rem; }
+.section-actions h3 { margin:0 0 .25rem; }
+.section-actions p { margin:0; }
+.compact-stats { margin-top:.7rem; }
+.history-block { margin-top:1rem; padding-top:1rem; border-top:1px solid var(--line); }
+.exception-note { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.55rem; margin-top:.85rem; padding:.75rem; border:1px solid #edd39b; border-radius:10px; background:var(--warning-soft); }
+.nested-disclosure,.inline-action,.financial-disclosure { margin-top:.7rem; border:1px solid var(--line); border-radius:10px; background:var(--paper); }
+.nested-disclosure > summary,.inline-action > summary,.financial-disclosure > summary { min-height:44px; display:flex; align-items:center; padding:.75rem .85rem; color:var(--brand); cursor:pointer; font-weight:700; }
+.nested-disclosure > .fact-list,.inline-action > form { margin:0 .85rem .85rem; }
+.history-actions { display:grid; gap:.55rem; margin-top:.85rem; }
+.danger-action > summary { color:var(--danger); }
+.settlement-period-picker,.settlement-truth { margin-bottom:1rem; }
+.settlement-truth-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.75rem; margin-top:.8rem; }
+.settlement-truth-grid .stat { min-height:84px; }
+.financial-explainers { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
+.financial-explainers .card { min-width:0; }
+.financial-explainers .card h3 { margin-top:0; }
+.financial-disclosure { margin:.8rem 0; border-radius:var(--radius); }
+.financial-disclosure > summary { min-height:52px; padding:1rem 1.1rem; }
+.financial-disclosure-body { min-width:0; padding:0 1rem 1rem; }
+@media (max-width:1000px) { .settlement-truth-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:820px) {
+  .work-summary-kpis,.settlement-truth-grid,.financial-explainers { grid-template-columns:minmax(0,1fr); }
+  .section-actions { flex-direction:column; }
+  .section-actions .toolbar-right { width:100%; }
+  .section-actions .toolbar-right .button { flex:1 1 180px; }
+  .financial-disclosure-body { padding:0 .85rem .85rem; }
+}
+@media (max-width:480px) {
+  .pending-action-card .button,.financial-explainers .button,.section-actions .button,.exception-indicator { width:100%; }
+  .settlement-truth-grid .stat,.work-summary-kpis .stat { min-height:auto; }
+}
