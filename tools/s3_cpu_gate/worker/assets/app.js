@@ -932,8 +932,32 @@ function modalInvokerReference(invoker) {
   }
   return { element: invoker, selector };
 }
-function openModal(modal, invoker = document.activeElement) { modalInvoker = modalInvokerReference(invoker); state.modal = modal; render(); }
-function closeModal() { if (pendingConfirmation) { resolveConfirmation(false); return; } const invoker = modalInvoker; state.modal = null; modalInvoker = null; render(); Promise.resolve().then(() => (invoker?.selector && document.querySelector(invoker.selector) || invoker?.element)?.focus?.()); }
+function captureOpenWorkDisclosures() {
+  return [...(document.querySelectorAll?.('[data-work-disclosure][open]') || [])].map(item => item.dataset.workDisclosure).filter(Boolean);
+}
+function restoreOpenWorkDisclosures(names = []) {
+  names.forEach(name => {
+    const disclosure = document.querySelector?.(`[data-work-disclosure="${CSS.escape(name)}"]`);
+    if (disclosure) disclosure.open = true;
+  });
+}
+function openModal(modal, invoker = document.activeElement) {
+  const openDisclosures = captureOpenWorkDisclosures();
+  modalInvoker = modalInvokerReference(invoker);
+  state.modal = modal;
+  render();
+  restoreOpenWorkDisclosures(openDisclosures);
+}
+function closeModal() {
+  if (pendingConfirmation) { resolveConfirmation(false); return; }
+  const openDisclosures = captureOpenWorkDisclosures();
+  const invoker = modalInvoker;
+  state.modal = null;
+  modalInvoker = null;
+  render();
+  restoreOpenWorkDisclosures(openDisclosures);
+  Promise.resolve().then(() => (invoker?.selector && document.querySelector(invoker.selector) || invoker?.element)?.focus?.());
+}
 function bindDialogAccessibility() {
   const dialog = document.querySelector('.dialog');
   if (!dialog) return;
