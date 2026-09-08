@@ -49,12 +49,22 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
   await expect(page.locator('[data-work-attention]')).toBeVisible();
   await expect(page.locator('#s5-event-form')).toBeHidden();
   await openWorkDisclosure(page, 'financial-details');
-  for (const selector of ['#s6-price-form', '#s6-ratio-form']) await expect(page.locator(selector)).toBeVisible();
+  for (const [action, selector] of [['open-price-action', '#s6-price-form'], ['open-ratio-action', '#s6-ratio-form']]) {
+    await page.locator(`[data-action="${action}"]`).click();
+    await expect(page.locator(`.dialog ${selector}`)).toBeVisible();
+    await page.locator('.dialog [data-action="close-modal"]').last().click();
+  }
   await openWorkDisclosure(page, 'collection-details');
-  await expect(page.locator('#s7-payment-form')).toBeVisible();
+  await page.locator('[data-action="open-payment-action"]').click();
+  await expect(page.locator('.dialog #s7-payment-form')).toBeVisible();
+  await page.locator('.dialog [data-action="close-modal"]').last().click();
   await openWorkDisclosure(page, 'history');
+  for (const label of ['إضافة حدث أو ملاحظة', 'تغيير العنوان', 'تغيير حالة التنفيذ']) {
+    await page.getByText(label, { exact: true }).click();
+  }
   for (const selector of ['#s5-event-form', '#s5-title-form', '#s5-status-form']) await expect(page.locator(selector)).toBeVisible();
   await openWorkDisclosure(page, 'danger');
+  for (const label of ['طلب إلغاء العمل', 'طلب أرشفة العمل']) await page.getByText(label, { exact: true }).click();
   for (const selector of ['#s5-cancel-form', '#s5-archive-form']) await expect(page.locator(selector)).toBeVisible();
   await expect(page.locator('[data-action="approve-request"]')).toBeVisible();
   await expect(page.locator('[data-action="approve-price-request"]')).toBeVisible();
@@ -62,11 +72,19 @@ test('A-M capability matrix is reachable with identical mobile and desktop funct
   await expect(page.locator('[data-action="request-payment-reversal"]')).toBeVisible();
   await expect(page.locator('[data-action="approve-payment-reversal"]')).toBeVisible();
   await page.locator('[data-nav="financial"]').click();
-  for (const selector of ['#s7-transfer-form', '#s7-subscription-form', '#s7-expense-form', '#s7-settlement-close-form']) await expect(page.locator(selector)).toBeVisible();
+  for (const [action, selector] of [['open-transfer-action', '#s7-transfer-form'], ['open-subscription-action', '#s7-subscription-form'], ['open-expense-action', '#s7-expense-form']]) {
+    await page.locator(`[data-action="${action}"]`).click();
+    await expect(page.locator(`.dialog ${selector}`)).toBeVisible();
+    await page.locator('.dialog [data-action="close-modal"]').last().click();
+  }
+  await page.locator('.financial-disclosure').filter({ hasText: 'تفاصيل حساب التسوية' }).locator('summary').click();
+  await expect(page.locator('#s7-settlement-close-form')).toBeVisible();
   await expect(page.locator('#s7-reopen-form')).toHaveCount(0);
   await expect(page.locator('[data-settlement-summary]')).toBeVisible();
-  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مفتوحة');
-  await expect(page.getByText('إعادة فتح اصطناعية')).toBeVisible();
+  await expect(page.locator('[data-settlement-period-state]')).toContainText('مفتوحة');
+  const reopenDisclosure = page.locator('.financial-disclosure').filter({ hasText: 'إعادة فتح فترة مقفلة' });
+  await reopenDisclosure.locator('summary').click();
+  await expect(reopenDisclosure).toContainText('إعادة فتح اصطناعية');
   await expect(page.locator('[data-action="approve-settlement-reopen"]')).toHaveCount(0);
   await page.locator('[data-nav="s8"]').click();
   await expect(page.locator('#s8-search-form')).toBeVisible();
@@ -90,12 +108,14 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await submitConfirmed(page, '#s5-archive-form', archivePath);
 
   await openWorkDisclosure(page, 'financial-details');
-  await page.locator('#s6-price-form input[name="amount_riyals"]').fill('100.00');
-  await page.locator('#s6-price-form input[name="reason"]').fill('زيادة اصطناعية');
-  await submitConfirmed(page, '#s6-price-form', `/api/works/${work.id}/price-requests`);
+  await page.locator('[data-action="open-price-action"]').click();
+  await page.locator('.dialog #s6-price-form input[name="amount_riyals"]').fill('100.00');
+  await page.locator('.dialog #s6-price-form input[name="reason"]').fill('زيادة اصطناعية');
+  await submitConfirmed(page, '.dialog #s6-price-form', `/api/works/${work.id}/price-requests`);
   await openWorkDisclosure(page, 'financial-details');
-  await page.locator('#s6-ratio-form input[name="reason"]').fill('استثناء اصطناعي');
-  await submitConfirmed(page, '#s6-ratio-form', `/api/works/${work.id}/ratio-requests`);
+  await page.locator('[data-action="open-ratio-action"]').click();
+  await page.locator('.dialog #s6-ratio-form input[name="reason"]').fill('استثناء اصطناعي');
+  await submitConfirmed(page, '.dialog #s6-ratio-form', `/api/works/${work.id}/ratio-requests`);
 
   for (const [selector, path] of [
     ['[data-action="approve-request"]', `/api/works/${work.id}/requests/request-1/approve`],
@@ -115,19 +135,26 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
 
   await page.locator('[data-nav="financial"]').click();
   const settlementPeriod = await page.locator('#s7-settlement-period-form input[name="period_key"]').inputValue();
-  await page.locator('#s7-transfer-form input[name="amount_riyals"]').fill('20.00');
-  await page.locator('#s7-transfer-form input[name="effective_at"]').fill('2026-08-13T12:00');
-  await submitConfirmed(page, '#s7-transfer-form', '/api/transfers');
-  await page.locator('#s7-subscription-form input[name="effective_at"]').fill('2026-08-13T12:00');
-  await submitConfirmed(page, '#s7-subscription-form', '/api/subscriptions');
-  await page.locator('#s7-expense-form input[name="amount_riyals"]').fill('10.00');
-  await page.locator('#s7-expense-form input[name="category"]').fill('مصروف اصطناعي');
-  await page.locator('#s7-expense-form input[name="effective_at"]').fill('2026-08-13T12:00');
-  await submitConfirmed(page, '#s7-expense-form', '/api/expenses');
+  await page.locator('[data-action="open-transfer-action"]').click();
+  await page.locator('.dialog #s7-transfer-form input[name="amount_riyals"]').fill('20.00');
+  await page.locator('.dialog #s7-transfer-form input[name="effective_at"]').fill('2026-08-13T12:00');
+  await submitConfirmed(page, '.dialog #s7-transfer-form', '/api/transfers');
+  await page.locator('[data-action="open-subscription-action"]').click();
+  await page.locator('.dialog #s7-subscription-form input[name="effective_at"]').fill('2026-08-13T12:00');
+  await submitConfirmed(page, '.dialog #s7-subscription-form', '/api/subscriptions');
+  await page.locator('[data-action="open-expense-action"]').click();
+  await page.locator('.dialog #s7-expense-form input[name="amount_riyals"]').fill('10.00');
+  await page.locator('.dialog #s7-expense-form input[name="category"]').fill('مصروف اصطناعي');
+  await page.locator('.dialog #s7-expense-form input[name="effective_at"]').fill('2026-08-13T12:00');
+  await submitConfirmed(page, '.dialog #s7-expense-form', '/api/expenses');
+  const closeDisclosure = page.locator('.financial-disclosure').filter({ hasText: 'تفاصيل حساب التسوية' });
+  await closeDisclosure.locator('summary').click();
   await submitConfirmed(page, '#s7-settlement-close-form', `/api/settlements/${settlementPeriod}/close`);
-  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مغلقة');
+  await expect(page.locator('[data-settlement-period-state]')).toContainText('مغلقة');
+  const reopenDisclosure = page.locator('.financial-disclosure').filter({ hasText: 'إعادة فتح فترة مقفلة' });
+  await reopenDisclosure.locator('summary').click();
   await expect(page.locator('#s7-reopen-form')).toBeVisible();
-  await expect(page.getByText('إعادة فتح اصطناعية')).toBeVisible();
+  await expect(reopenDisclosure).toContainText('إعادة فتح اصطناعية');
   const reopenRequestPath = `/api/settlements/${settlementPeriod}/reopen-requests`;
   const reopenBefore = api.count('POST', reopenRequestPath);
   await page.locator('#s7-reopen-form input[name="reason"]').fill('إعادة فتح من المتصفح');
@@ -135,7 +162,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('طلب إعادة فتح التسوية');
   await handleNextDialog(page, 'accept');
   await expect.poll(() => api.count('POST', reopenRequestPath)).toBe(reopenBefore + 1);
-  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مغلقة');
+  await expect(page.locator('[data-settlement-period-state]')).toContainText('مغلقة');
 
   const reopenApprovePath = `/api/settlements/${settlementPeriod}/reopen-requests/reopen-1/approve`;
   const approveBefore = api.count('POST', reopenApprovePath);
@@ -143,7 +170,7 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
   await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('اعتماد إعادة فتح التسوية');
   await handleNextDialog(page, 'accept');
   await expect.poll(() => api.count('POST', reopenApprovePath)).toBe(approveBefore + 1);
-  await expect(page.locator('[data-settlement-current-state]')).toContainText('حالة الفترة: مفتوحة');
+  await expect(page.locator('[data-settlement-period-state]')).toContainText('مفتوحة');
   await expect(page.locator('#s7-reopen-form')).toHaveCount(0);
   await expect(page.locator('[data-action="approve-settlement-reopen"]')).toHaveCount(0);
 });
@@ -151,7 +178,8 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
 test('double click, double tap, repeated Enter, and click while pending send one mutation', async ({ page }, testInfo) => {
   await openWork(page);
   await openWorkDisclosure(page, 'collection-details');
-  const form = page.locator('#s7-payment-form');
+  await page.locator('[data-action="open-payment-action"]').click();
+  const form = page.locator('.dialog #s7-payment-form');
   await form.locator('input[name="amount_riyals"]').fill('100.00');
   await form.locator('input[name="effective_at"]').fill('2026-08-13T12:00');
   const path = `/api/works/${work.id}/payments`;
@@ -159,13 +187,7 @@ test('double click, double tap, repeated Enter, and click while pending send one
   await page.evaluate(() => { const formElement = document.querySelector('#s7-payment-form'); formElement.requestSubmit(); formElement.requestSubmit(); });
   await handleNextDialog(page, 'accept');
   await expect.poll(() => api.count('POST', path)).toBe(1);
-  await expect(form.locator('button[type="submit"]')).toBeDisabled();
-  await expect(form.locator('button[type="submit"]')).toHaveAttribute('aria-busy', 'true');
-  await openWorkDisclosure(page, 'collection-details');
-  await form.locator('button[type="submit"]').scrollIntoViewIfNeeded();
-  if (testInfo.project.metadata.width < 600) await form.locator('button[type="submit"]').tap({ force: true });
-  else await form.locator('button[type="submit"]').click({ force: true });
-  await form.locator('input[name="amount_riyals"]').press('Enter');
+  await expect(page.locator('#app')).toHaveAttribute('aria-busy', 'true');
   expect(api.count('POST', path)).toBe(1);
   release();
   await expect(page.locator('#app')).toHaveAttribute('aria-busy', 'false');
@@ -174,6 +196,7 @@ test('double click, double tap, repeated Enter, and click while pending send one
 test('400/401/403/409/fail-closed/500/network errors are visible, recoverable, and preserve input', async ({ page }) => {
   await openWork(page);
   await openWorkDisclosure(page, 'history');
+  await page.getByText('إضافة حدث أو ملاحظة', { exact: true }).click();
   const form = page.locator('#s5-event-form');
   await form.locator('input[name="event_type"]').fill('FOLLOW_UP');
   await form.locator('input[name="description"]').fill('نص يجب ألا يضيع');
