@@ -111,10 +111,10 @@ const labels = {
   SETTLEMENT_NOT_CLOSED: 'لا يمكن طلب إعادة فتح فترة لم تُقفل بعد.',
   CLOSED_PERIOD_MUTATION_FORBIDDEN: 'الفترة المالية مقفلة. اطلب إعادة فتح معتمدة قبل أي تعديل مؤثر.',
   S7_GENERIC_SHARED_EXPENSE_ALLOCATION_RULE_UNRESOLVED: 'المصروف المشترك محفوظ كسجل، لكن لا يمكن إقفال التسوية قبل اعتماد قاعدة توزيعه.',
-  SUBSCRIPTION_PAYER_MUST_BE_PERSON_2: 'تغيير الاشتراك متاح لخالد فقط.',
+  SUBSCRIPTION_PAYER_MUST_BE_PERSON_2: 'يسجل الاشتراك من الحساب الثاني بوصفه الدافع الفعلي.',
   TRANSFER_FORBIDDEN: 'تسجيل التحويل متاح لوليد فقط.',
-  TRANSFER_DIRECTION_INVALID: 'الاتجاه المعتمد للتحويل هو وليد إلى خالد فقط.',
-  TRANSFER_FEE_PAYER_INVALID: 'دافع رسوم التحويل المعتمد هو وليد.',
+  TRANSFER_DIRECTION_INVALID: 'يجب أن يكون طرفا التحويل مختلفين.',
+  TRANSFER_FEE_PAYER_INVALID: 'قاعدة هذه المرحلة تثبت أن دافع رسوم التحويل هو الشخص الأول.',
   S8_PERIOD_BASIS_REQUIRED: 'يلزم تحديد أساس الفترة قبل استخدام الشهر أو السنة.',
   S8_PERIOD_BASIS_INVALID: 'أساس الفترة غير مدعوم.',
   S8_MONTH_INVALID: 'الشهر غير صالح.',
@@ -365,7 +365,14 @@ function resolveConfirmation(value) {
   Promise.resolve().then(() => (invoker?.selector && document.querySelector(invoker.selector) || invoker?.element)?.focus?.());
   resolver?.(value);
 }
-function errorMessage(code) { return labels[code] || 'حدث خطأ تحقق. لم تعرض تفاصيل داخلية.'; }
+function errorMessage(code) {
+  if (isPhase6TargetIdentity()) {
+    if (code === 'SUBSCRIPTION_PAYER_MUST_BE_PERSON_2') return 'تغيير الاشتراك متاح لخالد فقط.';
+    if (code === 'TRANSFER_DIRECTION_INVALID') return 'الاتجاه المعتمد للتحويل هو وليد إلى خالد فقط.';
+    if (code === 'TRANSFER_FEE_PAYER_INVALID') return 'دافع رسوم التحويل المعتمد هو وليد.';
+  }
+  return labels[code] || 'حدث خطأ تحقق. لم تعرض تفاصيل داخلية.';
+}
 function queryString(values) {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== null && value !== '') params.set(key, value); });
@@ -642,7 +649,7 @@ function financialPage() {
     <article class="card"><h2>إعادة فتح استثنائية</h2><p class="hint">إعادة الفتح تحتاج طلبًا واعتماد الحساب الآخر.</p>${reopenForm}<h3>سجل طلبات إعادة الفتح</h3>${settlementRows(requests, request => { const pending = request.state === 'PENDING'; const self = request.requested_by === state.auth.uid; const pendingAction = periodState === 'OPEN' ? '<span class="badge unset">طلب معلّق محفوظ للمراجعة؛ لا يتطلب إجراء ما دامت الفترة مفتوحة.</span>' : self ? '<span class="badge warn">لا يمكنك اعتماد طلبك</span>' : `<button class="button secondary" data-action="approve-settlement-reopen" data-request-id="${escapeHtml(request.id)}" ${state.busy ? 'disabled' : ''}>اعتماد إعادة الفتح</button>`; return `<li><strong>${pending ? 'طلب معلق' : 'طلب معتمد'}</strong><span>السبب: ${escapeHtml(request.reason)} — الطالب: ${escapeHtml(roleLabel(request.requested_by))}</span><span>طُلب: ${dateTimeLabel(request.requested_at)}${request.approved_at ? ` — اعتُمد: ${dateTimeLabel(request.approved_at)}` : ''}</span>${pending ? pendingAction : `<span class="badge ok">اعتمده: ${escapeHtml(roleLabel(request.approved_by))}</span>`}</li>`; }, 'لا توجد طلبات إعادة فتح لهذه الفترة.')}</article>
   </section>
   <section class="grid grid-3" style="margin-top:1rem">
-    <article class="card"><h2>سجل التحويلات</h2>${settlementRows(financial.transfers || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))}: ${escapeHtml(partyLabel(item.from_party))} ← ${escapeHtml(partyLabel(item.to_party))}</strong><span>الرسوم: ${escapeHtml(moneyLabel(item.fee_halalas))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد تحويلات.')}</article>
+    <article class="card"><h2>سجل التحويلات</h2>${settlementRows(financial.transfers || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))}: ${escapeHtml(partyLabel(item.from_party))} → ${escapeHtml(partyLabel(item.to_party))}</strong><span>الرسوم: ${escapeHtml(moneyLabel(item.fee_halalas))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد تحويلات.')}</article>
     <article class="card"><h2>تاريخ الاشتراكات</h2>${settlementRows(financial.subscriptions || [], item => `<li><strong>${escapeHtml(item.state === 'CANCELLED' ? 'ملغى' : moneyLabel(item.aggregate_amount_halalas))}</strong><span>سُجل التغيير: ${dateTimeLabel(item.effective_at)} — يسري من تسوية ${escapeHtml(periodBucketLabel(nextSettlementMonth(item.effective_at)))} — الدافع الفعلي: ${escapeHtml(roleLabel(item.paid_by_uid))}</span></li>`, 'لا توجد تغييرات اشتراك.')}</article>
     <article class="card"><h2>سجل المصروفات</h2>${settlementRows(financial.expenses || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))} — ${escapeHtml(item.category)}</strong><span>الدافع: ${escapeHtml(roleLabel(item.paid_by_uid))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد مصروفات.')}</article>
   </section>
