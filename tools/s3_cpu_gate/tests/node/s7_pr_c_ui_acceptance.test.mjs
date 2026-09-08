@@ -94,7 +94,7 @@ test('S7 PR-C Work UI shows authoritative collection truth separately from execu
   setup({ work: workPayload(financials({ paid: 100000, collection: 'PARTIALLY_COLLECTED', payments: [payment] })) });
   state.selectedWork.reversalRequests = [{ id: 'rev-1', amount_halalas: 100000, state: 'PENDING', reason: 'تصحيح تجريبي', requested_by: 'uid-one' }];
   const html = ui.workPage();
-  assert.match(html, /إجمالي التحصيل المعتمد/);
+  assert.match(html, /إجمالي المدفوع/);
   assert.match(html, /1000 ريال/);
   assert.match(html, /700 ريال/);
   assert.match(html, /تحصيل جزئي/);
