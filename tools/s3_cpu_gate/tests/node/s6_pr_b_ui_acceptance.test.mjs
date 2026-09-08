@@ -88,13 +88,16 @@ test('S6 UI keeps pending price/ratio requests separate and blocks self approval
   setup({ uid: 'uid-one', selectedWork: { id: 'w1', version: 1, title: 'سعر غير محدد', financials: financials({ stateValue: 'PRICE_UNSET', priceRequests: [{ id: 'p1', state: 'PENDING', movement_type: 'BASE', amount_halalas: 150000, reason: 'Base', requested_by: 'uid-one', requested_at: '2026-08-12T12:00:00.000Z' }], ratioRequests: [{ id: 'r1', state: 'PENDING', person_1_bps: 5000, person_2_bps: 5000, reason: 'Ratio', requested_by: 'uid-one', requested_at: '2026-08-12T12:00:00.000Z' }] }) } });
   const html = testApp.workPage();
   assert.match(html, /السعر غير محدد/);
-  assert.match(html, /الطلبات المعلقة منفصلة/);
+  assert.match(html, /مركز الإجراءات/);
+  assert.equal((html.match(/data-financial-request="p1"/g) || []).length, 1);
+  assert.equal((html.match(/data-financial-request="r1"/g) || []).length, 1);
   assert.match(html, /لا يمكنك اعتماد طلبك/);
   assert.doesNotMatch(html, /data-action="approve-price-request" data-request-id="p1"/);
   assert.doesNotMatch(html, /data-action="approve-ratio-request" data-request-id="r1"/);
-  assert.match(html, /id="s6-price-form" class="form-grid" hidden/);
-  assert.match(html, /يوجد طلب سعر معلق؛ انتظر حسمه قبل إرسال طلب سعر جديد/);
-  assert.match(html, /id="s6-ratio-form"/);
+  assert.doesNotMatch(html, /id="s6-price-form"/);
+  assert.doesNotMatch(html, /id="s6-ratio-form"/);
+  assert.match(testApp.priceActionForm(state.selectedWork), /id="s6-price-form"/);
+  assert.match(testApp.ratioActionForm(state.selectedWork), /id="s6-ratio-form"/);
 });
 
 test('S6 UI renders superseded price requests as non-actionable', () => {
