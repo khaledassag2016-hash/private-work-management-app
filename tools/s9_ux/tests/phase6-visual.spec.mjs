@@ -15,6 +15,9 @@ async function expectTopLevelWorkDetailsClosed(page) {
   await expect(details).toHaveCount(5);
   for (let index = 0; index < 5; index += 1) await expect(details.nth(index)).not.toHaveAttribute('open', '');
 }
+function nav(page, id) {
+  return page.locator(`.nav-list [data-nav="${id}"]`);
+}
 
 test('Waleed Demo uses compact Arabic hierarchy and fixed Waleed to Khalid transfer', async ({ page }, testInfo) => {
   await installHarness(page, { ...waleed, dataMode: 'DEMO', visualPreview: true });
@@ -22,7 +25,7 @@ test('Waleed Demo uses compact Arabic hierarchy and fixed Waleed to Khalid trans
 
   await expect(page.locator('[data-preview-banner]')).toContainText('بيانات معاينة تجريبية');
   await expect(page.locator('.identity')).toContainText('وليد');
-  await expect(page.locator('[data-nav="audit"]')).toHaveCount(0);
+  await expect(nav(page, 'audit')).toHaveCount(0);
   for (const label of ['نظرة عامة','العملاء','الأعمال','التحصيل والتسويات','البحث والتحليلات','التصنيفات']) {
     await expect(page.locator('.nav-list')).toContainText(label);
   }
@@ -30,7 +33,7 @@ test('Waleed Demo uses compact Arabic hierarchy and fixed Waleed to Khalid trans
   await expect(page.locator('[data-dashboard-compact]')).not.toContainText('30%');
   await shot(page, testInfo, 'waleed-demo-dashboard');
 
-  await page.locator('[data-nav="works"]').click();
+  await nav(page, 'works').click();
   const worksTable = page.locator('.table-wrap table').first();
   for (const label of ['حالة التنفيذ','حالة الأرشفة','السعر','المدفوع','المتبقي']) await expect(worksTable).toContainText(label);
   await expect(worksTable).not.toContainText('النسبة');
@@ -65,7 +68,7 @@ test('Waleed Demo uses compact Arabic hierarchy and fixed Waleed to Khalid trans
   await expect(page.locator('.dialog #s7-payment-form')).toBeVisible();
   await page.locator('.dialog [data-action="close-modal"]').last().click();
 
-  await page.locator('[data-nav="financial"]').click();
+  await nav(page, 'financial').click();
   const settlement = page.locator('[data-settlement-summary]');
   for (const label of ['إجمالي الأسعار المسجلة للأعمال','إجمالي المقبوض فعليًا من العملاء','حصة خالد','حصة وليد','ما استلمه خالد فعليًا','ما استلمه وليد فعليًا','الاشتراكات','رسوم التحويل','الرصيد المرحل','التحويلات الفعلية','الرصيد النهائي الحالي']) {
     await expect(settlement).toContainText(label);
@@ -79,7 +82,7 @@ test('Waleed Demo uses compact Arabic hierarchy and fixed Waleed to Khalid trans
   await page.locator('.dialog [data-action="close-modal"]').last().click();
   await shot(page, testInfo, 'waleed-demo-settlements');
 
-  await page.locator('[data-nav="s8"]').click();
+  await nav(page, 's8').click();
   await expect(page.locator('[data-s8-results]')).toContainText('حالة التنفيذ');
   await expect(page.locator('[data-s8-results]')).toContainText('حالة الأرشفة');
   await shot(page, testInfo, 'waleed-demo-search');
@@ -89,9 +92,9 @@ test('Khalid Demo exposes account administration then human-readable audit', asy
   await installHarness(page, { ...khalid, dataMode: 'DEMO', visualPreview: true });
   await openApp(page);
   await expect(page.locator('.identity')).toContainText('خالد');
-  await expect(page.locator('[data-nav="audit"]')).toContainText('التدقيق وإدارة الحسابات');
+  await expect(nav(page, 'audit')).toContainText('التدقيق وإدارة الحسابات');
 
-  await page.locator('[data-nav="financial"]').click();
+  await nav(page, 'financial').click();
   await expect(page.locator('[data-action="open-transfer-action"]')).toHaveCount(0);
   await expect(page.locator('[data-transfer-readonly]')).toContainText('تسجيل التحويل متاح لوليد فقط');
   await page.locator('[data-action="open-subscription-action"]').click();
@@ -99,7 +102,7 @@ test('Khalid Demo exposes account administration then human-readable audit', asy
   await expect(page.locator('.dialog')).toContainText('خالد هو الدافع الفعلي');
   await page.locator('.dialog [data-action="close-modal"]').last().click();
 
-  await page.locator('[data-nav="audit"]').click();
+  await nav(page, 'audit').click();
   const order = await page.locator('[data-account-admin], [data-audit-log]').evaluateAll(elements => elements.map(element => element.hasAttribute('data-account-admin') ? 'admin' : 'audit'));
   expect(order).toEqual(['admin', 'audit']);
   await expect(page.locator('.account-admin-row[data-role="person_1"]')).toContainText('وليد');
@@ -118,18 +121,18 @@ for (const [name, identity] of [['Waleed', waleed], ['Khalid', khalid]]) {
     await openApp(page);
     await expect(page.locator('[data-preview-banner]')).toContainText('بداية نظيفة');
     await expect(page.locator('[data-preview-banner]')).toContainText('ليست عملية تصفير فعلية');
-    await page.locator('[data-nav="customers"]').click();
+    await nav(page, 'customers').click();
     await expect(page.getByText('لا يوجد عملاء بعد.')).toBeVisible();
-    await page.locator('[data-nav="works"]').click();
+    await nav(page, 'works').click();
     await expect(page.getByText(/لا توجد أعمال/)).toBeVisible();
-    await page.locator('[data-nav="financial"]').click();
+    await nav(page, 'financial').click();
     await expect(page.locator('[data-settlement-summary]')).toContainText('0 ريال');
     if (name === 'Khalid') {
-      await page.locator('[data-nav="audit"]').click();
+      await nav(page, 'audit').click();
       await expect(page.locator('[data-account-admin]')).toBeVisible();
       await expect(page.getByText('لا توجد سجلات تدقيق متاحة.')).toBeVisible();
     } else {
-      await expect(page.locator('[data-nav="audit"]')).toHaveCount(0);
+      await expect(nav(page, 'audit')).toHaveCount(0);
     }
     await shot(page, testInfo, `${name.toLowerCase()}-clean`);
   });
@@ -139,7 +142,7 @@ test('critical Phase 6 surfaces keep controls inside the viewport and Work Detai
   await installHarness(page, { ...khalid, dataMode: 'DEMO', visualPreview: true });
   await openApp(page);
   for (const route of ['dashboard','customers','works','financial','s8','catalogs','audit']) {
-    await page.locator(`[data-nav="${route}"]`).click();
+    await nav(page, route).click();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `${route} horizontal overflow`).toBeLessThanOrEqual(1);
     const escapes = await page.locator('button:visible, input:visible, select:visible, textarea:visible').evaluateAll(elements => elements.filter(element => {
@@ -149,7 +152,7 @@ test('critical Phase 6 surfaces keep controls inside the viewport and Work Detai
     }).length);
     expect(escapes, `${route} controls outside viewport`).toBe(0);
   }
-  await page.locator('[data-nav="works"]').click();
+  await nav(page, 'works').click();
   await page.locator(`[data-work="${work.id}"]`).click();
   await expectTopLevelWorkDetailsClosed(page);
 });
