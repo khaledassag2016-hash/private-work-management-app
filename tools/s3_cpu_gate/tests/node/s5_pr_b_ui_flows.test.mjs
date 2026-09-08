@@ -332,7 +332,7 @@ describe('S5 PR-B UI Flows', () => {
     };
 
     const html = testApp.workPage();
-    assert.match(html, /الأرشفة: ✅ مؤرشف/);
+    assert.match(html, /الأرشفة: مؤرشف/);
     assert.match(html, /أرشفة كاملة ومؤمنة للعمل/);
     assert.match(html, /السبب والمبرر: Fully completed/);
     assert.match(html, /Historic event/);
