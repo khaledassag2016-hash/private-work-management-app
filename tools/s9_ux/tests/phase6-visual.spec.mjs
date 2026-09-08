@@ -24,7 +24,7 @@ test('Phase 6 target Waleed view uses fixed transfer direction and hides supervi
   await expect(page.locator('#s7-transfer-form')).toBeVisible();
   await expect(page.locator('#s7-transfer-form select[name="from_party"]')).toHaveCount(0);
   await expect(page.locator('#s7-transfer-form select[name="to_party"]')).toHaveCount(0);
-  await expect(page.locator('#s7-transfer-form')).toContainText('وليد → خالد');
+  await expect(page.locator('#s7-transfer-form').locator('xpath=..')).toContainText('وليد → خالد');
   await expect(page.locator('[data-subscription-readonly]')).toBeVisible();
   await expect(page.locator('[data-settlement-summary]')).toContainText('المقبوض الفعلي المعتمد');
 
@@ -54,8 +54,8 @@ test('Phase 6 target Khalid view exposes supervisor audit/admin and keeps transf
   await expect(audit).toBeVisible();
   const order = await page.locator('[data-account-admin], [data-audit-log]').evaluateAll(elements => elements.map(element => element.getAttribute('data-account-admin') !== null ? 'admin' : 'audit'));
   expect(order).toEqual(['admin', 'audit']);
-  await expect(admin.locator('[data-role="person_1"]')).toContainText('وليد');
-  await expect(admin.locator('[data-role="person_2"]')).toContainText('خالد');
+  await expect(admin.locator('.account-admin-row[data-role="person_1"]')).toContainText('وليد');
+  await expect(admin.locator('.account-admin-row[data-role="person_2"]')).toContainText('خالد');
 
   const details = audit.locator('.audit-disclosure').first();
   await expect(details).not.toHaveAttribute('open', '');
