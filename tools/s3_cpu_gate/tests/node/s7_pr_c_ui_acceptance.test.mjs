@@ -144,7 +144,7 @@ test('S7 PR-C financial workspace keeps full details while Wave 2 summary and pe
   assert.match(closedHtml, /data-settlement-summary/);
   for (const label of ['الأسعار الحالية المسجلة للأعمال', 'المقبوض الفعلي المعتمد', 'حصة خالد', 'حصة وليد', 'الرصيد النهائي']) assert.match(closedHtml, new RegExp(label));
   assert.match(closedHtml, /عدد الأعمال/);
-  assert.match(closedHtml, /المتحصل من العميل/);
+  assert.match(closedHtml, /المقبوض الفعلي المعتمد من العملاء/);
   assert.match(closedHtml, /الرصيد السابق/);
   assert.match(closedHtml, /الرصيد النهائي/);
   assert.match(closedHtml, /التسوية تحتاج مراجعة قبل الإقفال/);
