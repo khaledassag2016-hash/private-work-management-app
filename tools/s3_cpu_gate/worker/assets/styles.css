@@ -182,3 +182,27 @@ tr:last-child td { border-bottom: 0; }
   .work-attention-actions .button { width: 100%; }
   .work-disclosure-body { padding: 0 .9rem .9rem; }
 }
+
+
+/* Phase 6 professional state hierarchy and on-demand audit details */
+.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.badge.attention { color: var(--warning); background: var(--warning-soft); }
+.badge.danger { color: var(--danger); background: var(--danger-soft); }
+.badge.archive { color: var(--brand); background: #e8f1f4; }
+.badge.neutral { color: var(--muted); background: #edf0f2; }
+.work-summary-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .8rem; margin-top: 1rem; }
+.work-summary-kpis .stat { min-height: 96px; }
+.work-summary-kpis .stat strong { font-size: 1rem; overflow-wrap: anywhere; }
+.audit-list { display: grid; gap: .7rem; }
+.audit-row { padding: .85rem; border: 1px solid var(--line); border-radius: 12px; background: #faf8f3; }
+.audit-summary { display: grid; gap: .6rem; }
+.audit-summary > div > strong, .audit-summary > div > span { display: block; }
+.audit-summary > div > span { margin-top: .2rem; color: var(--muted); font-size: .68rem; }
+.audit-disclosure { border-top: 1px solid var(--line); padding-top: .55rem; }
+.audit-disclosure > summary { min-height: 44px; display: inline-flex; align-items: center; color: var(--brand); cursor: pointer; font-size: .72rem; font-weight: 700; }
+.audit-change-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; margin-top: .55rem; }
+.audit-change-grid section { min-width: 0; padding: .7rem; border-radius: 10px; background: var(--paper); }
+.audit-change-grid h3 { margin: 0 0 .55rem; font-size: .72rem; }
+[data-account-admin] { margin: 0 0 1rem !important; border-color: #c8ddd7; }
+@media (max-width: 1000px) { .work-summary-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 820px) { .grid-4, .work-summary-kpis, .audit-change-grid { grid-template-columns: minmax(0, 1fr); } }
