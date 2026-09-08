@@ -690,13 +690,54 @@ function expenseActionForm() {
 
 function financialPage() {
   const financial = state.financial;
+  const period = financial.periodKey;
   const preview = financial.preview;
   const snapshots = financial.snapshots || [];
   const requests = financial.reopenRequests || [];
   const periodState = settlementPeriodState(snapshots, requests);
-  const transferAction = isPhase6TargetIdentity() ? (state.auth.role === 'person_1' ? '<button class="button" data-action="open-transfer-action" type="button">تسجيل تحويل إلى خالد</button>' : '<p class="hint" data-transfer-readonly>تسجيل التحويل متاح لوليد فقط. لا يوجد إجراء تحويل معاكس.</p>') : '<button class="button" data-action="open-transfer-action" type="button">تسجيل تحويل</button>';
-  const subscriptionAction = !isPhase6TargetIdentity() || isSupervisor() ? '<button class="button secondary" data-action="open-subscription-action" type="button">تسجيل تغيير اشتراك</button>' : '<p class="hint" data-subscription-readonly>تعديل الاشتراك متاح لخالد فقط، والسجل متاح للمراجعة.</p>';
-  return `<section class="card settlement-period-picker"><div class="toolbar"><div><h2>الفترة</h2><p>اختر الشهر أولًا؛ لا يعاد فتح شهر مقفل تلقائيًا.</p></div><span class="badge ${periodState === 'CLOSED' ? 'archive' : 'ok'}" data-settlement-period-state>${escapeHtml(settlementStateLabel(periodState))}</span></div><form id="s7-settlement-period-form" class="form-grid"><div class="field"><label>الشهر</label><input class="input" name="period_key" type="month" value="${escapeHtml(financial.periodKey)}" required/></div><div class="form-actions"><button class="button secondary" type="submit">عرض الفترة</button></div></form></section>${financialSummaryMarkup(preview)}<section class="financial-explainers"><article class="card"><h3>الاشتراكات</h3><p>${escapeHtml(roleLabel('person_2'))} يدفع الاشتراكات فعليًا، والتكلفة موزعة اقتصاديًا بالتساوي.</p>${subscriptionAction}</article><article class="card"><h3>رسوم التحويل</h3><p>${escapeHtml(roleLabel('person_1'))} يدفع رسوم التحويل فعليًا، وتوزع التكلفة اقتصاديًا بالتساوي.</p></article><article class="card"><h3>التحويل بين الطرفين</h3><p>${isPhase6TargetIdentity() ? 'الاتجاه المعتمد وليد → خالد فقط، والتسجيل بتاريخ حدوث التحويل الفعلي.' : 'راجع اتجاه التحويل قبل الحفظ.'}</p>${transferAction}</article><article class="card"><h3>مصروف مشترك</h3><button class="button secondary" data-action="open-expense-action" type="button">تسجيل مصروف</button></article></section><details class="financial-disclosure"><summary>تفاصيل حساب التسوية</summary><div class="financial-disclosure-body">${settlementPreviewMarkup(preview)}${periodState === 'OPEN' ? '<form id="s7-settlement-close-form" class="form-actions"><button class="button" type="submit">إغلاق التسوية</button></form>' : '<p class="notice info">الفترة مغلقة.</p>'}</div></details><details class="financial-disclosure"><summary>إعادة فتح فترة مقفلة</summary><div class="financial-disclosure-body">${periodState === 'CLOSED' ? '<form id="s7-reopen-form" class="form-grid"><div class="field full"><label>سبب إعادة الفتح</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button secondary" type="submit">طلب إعادة الفتح</button></div></form>' : ''}${settlementRows(requests, request => `<li><strong>${request.state === 'PENDING' ? 'طلب إعادة فتح معلق' : 'طلب إعادة فتح معتمد'}</strong><span>${escapeHtml(request.reason)}</span>${request.state === 'PENDING' && periodState === 'CLOSED' && request.requested_by !== state.auth.uid ? `<button class="button secondary" data-action="approve-settlement-reopen" data-request-id="${escapeHtml(request.id)}">اعتماد إعادة الفتح</button>` : ''}</li>`, 'لا توجد طلبات إعادة فتح لهذه الفترة.')}</div></details><details class="financial-disclosure"><summary>سجل التحويلات</summary><div class="financial-disclosure-body">${settlementRows(financial.transfers || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))}: ${escapeHtml(partyLabel(item.from_party))} → ${escapeHtml(partyLabel(item.to_party))}</strong><span>الرسوم: ${escapeHtml(moneyLabel(item.fee_halalas))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد تحويلات.')}</div></details><details class="financial-disclosure"><summary>تاريخ الاشتراكات</summary><div class="financial-disclosure-body">${settlementRows(financial.subscriptions || [], item => `<li><strong>${escapeHtml(item.state === 'CANCELLED' ? 'ملغى' : moneyLabel(item.aggregate_amount_halalas))}</strong><span>الدافع الفعلي: ${escapeHtml(participantLabel(item.paid_by_uid))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد تغييرات اشتراك.')}</div></details>`;
+
+  const closeAction = periodState === 'OPEN'
+    ? `<form id="s7-settlement-close-form" class="form-actions"><button class="button" type="submit" ${state.busy || !preview || preview.unresolved_code ? 'disabled' : ''}>إغلاق التسوية</button></form>`
+    : '<p class="notice info" data-settlement-closed-note>الفترة مغلقة. لا تعدّلها بصورة عادية؛ إعادة الفتح استثنائية وتحتاج موافقة الحساب الآخر.</p>';
+
+  const reopenForm = periodState === 'CLOSED'
+    ? `<form id="s7-reopen-form" class="form-grid"><div class="field full"><label>سبب إعادة الفتح</label><input class="input" name="reason" required/></div><div class="form-actions full"><button class="button secondary" type="submit" ${state.busy ? 'disabled' : ''}>طلب إعادة الفتح</button></div></form>`
+    : '';
+
+  const requestHistory = settlementRows(requests, request => {
+    const pending = request.state === 'PENDING';
+    const self = request.requested_by === state.auth.uid;
+    const pendingAction = periodState === 'OPEN'
+      ? '<span class="badge unset">طلب معلّق محفوظ للمراجعة؛ لا إجراء عليه ما دامت الفترة مفتوحة.</span>'
+      : self
+        ? '<span class="badge warn">لا يمكنك اعتماد طلبك</span>'
+        : `<button class="button secondary" data-action="approve-settlement-reopen" data-request-id="${escapeHtml(request.id)}" ${state.busy ? 'disabled' : ''}>اعتماد إعادة الفتح</button>`;
+    return `<li><strong>${pending ? 'طلب إعادة فتح معلق' : 'طلب إعادة فتح معتمد'}</strong><span>السبب: ${escapeHtml(request.reason)} — الطالب: ${escapeHtml(participantLabel(request.requested_by))}</span><span>${dateTimeLabel(request.requested_at)}${request.approved_at ? ` — اعتُمد: ${dateTimeLabel(request.approved_at)}` : ''}</span>${pending ? pendingAction : `<span class="badge ok">اعتمده: ${escapeHtml(participantLabel(request.approved_by))}</span>`}</li>`;
+  }, 'لا توجد طلبات إعادة فتح لهذه الفترة.');
+
+  const transferAction = isPhase6TargetIdentity()
+    ? (state.auth.role === 'person_1'
+      ? '<button class="button" data-action="open-transfer-action" type="button">تسجيل تحويل إلى خالد</button>'
+      : '<p class="hint" data-transfer-readonly>تسجيل التحويل متاح لوليد فقط. لا يوجد إجراء تحويل معاكس.</p>')
+    : '<button class="button" data-action="open-transfer-action" type="button">تسجيل تحويل</button>';
+
+  const subscriptionAction = !isPhase6TargetIdentity() || isSupervisor()
+    ? '<button class="button secondary" data-action="open-subscription-action" type="button">تسجيل تغيير اشتراك</button>'
+    : '<p class="hint" data-subscription-readonly>تعديل الاشتراك متاح لخالد فقط، والسجل متاح للمراجعة.</p>';
+
+  return `<section class="card settlement-period-picker"><div class="toolbar"><div><h2>الفترة</h2><p>اختر الشهر أولًا؛ لا يعاد فتح شهر مقفل تلقائيًا.</p></div><span class="badge ${periodState === 'CLOSED' ? 'archive' : 'ok'}" data-settlement-period-state>${escapeHtml(settlementStateLabel(periodState))}</span></div><form id="s7-settlement-period-form" class="form-grid"><div class="field"><label>الشهر</label><input class="input" name="period_key" type="month" value="${escapeHtml(period)}" required/></div><div class="form-actions"><button class="button secondary" type="submit" ${state.busy ? 'disabled' : ''}>عرض الفترة</button></div></form></section>
+    ${financialSummaryMarkup(preview)}
+    <section class="financial-explainers">
+      <article class="card"><h3>الاشتراكات</h3><p>${escapeHtml(roleLabel('person_2'))} يدفع الاشتراكات فعليًا، والتكلفة موزعة اقتصاديًا 50% / 50% بين خالد ووليد.</p>${subscriptionAction}</article>
+      <article class="card"><h3>رسوم التحويل</h3><p>${escapeHtml(roleLabel('person_1'))} يدفع رسوم التحويل فعليًا، وتوزع التكلفة اقتصاديًا بالتساوي دون خلطها بقيمة الأعمال.</p></article>
+      <article class="card"><h3>التحويل بين الطرفين</h3><p>${isPhase6TargetIdentity() ? 'الاتجاه المعتمد وليد → خالد فقط. يسجل التحويل بتاريخ حدوثه الفعلي، ولا يعاد كتابة فترة مقفلة.' : 'راجع اتجاه التحويل وسجله قبل الحفظ.'}</p>${transferAction}</article>
+      <article class="card"><h3>مصروف مشترك</h3><p>يبقى المصروف منفصلًا عن قيمة الأعمال، وإذا لم توجد قاعدة توزيع معتمدة يبقى الإقفال محجوبًا.</p><button class="button secondary" data-action="open-expense-action" type="button">تسجيل مصروف</button></article>
+    </section>
+    <details class="financial-disclosure"><summary>تفاصيل حساب التسوية</summary><div class="financial-disclosure-body">${settlementPreviewMarkup(preview)}${closeAction}</div></details>
+    <details class="financial-disclosure"><summary>إعادة فتح فترة مقفلة</summary><div class="financial-disclosure-body">${reopenForm}${requestHistory}</div></details>
+    <details class="financial-disclosure"><summary>سجل التحويلات</summary><div class="financial-disclosure-body">${settlementRows(financial.transfers || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))}: ${escapeHtml(partyLabel(item.from_party))} → ${escapeHtml(partyLabel(item.to_party))}</strong><span>الرسوم: ${escapeHtml(moneyLabel(item.fee_halalas))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد تحويلات.')}</div></details>
+    <details class="financial-disclosure"><summary>تاريخ الاشتراكات</summary><div class="financial-disclosure-body">${settlementRows(financial.subscriptions || [], item => `<li><strong>${escapeHtml(item.state === 'CANCELLED' ? 'ملغى' : moneyLabel(item.aggregate_amount_halalas))}</strong><span>الدافع الفعلي: ${escapeHtml(participantLabel(item.paid_by_uid))} — ${dateTimeLabel(item.effective_at)} — يسري من تسوية ${escapeHtml(periodBucketLabel(nextSettlementMonth(item.effective_at)))}</span></li>`, 'لا توجد تغييرات اشتراك.')}</div></details>
+    <details class="financial-disclosure"><summary>سجل المصروفات ونسخ الإقفال</summary><div class="financial-disclosure-body"><h3>المصروفات</h3>${settlementRows(financial.expenses || [], item => `<li><strong>${escapeHtml(moneyLabel(item.amount_halalas))} — ${escapeHtml(item.category)}</strong><span>الدافع: ${escapeHtml(participantLabel(item.paid_by_uid))} — ${dateTimeLabel(item.effective_at)}</span></li>`, 'لا توجد مصروفات.')}<h3>نسخ التسوية المغلقة</h3>${settlementRows(snapshots, item => `<li><strong>نسخة الإقفال — ${escapeHtml(settlementStateLabel(item.state))}</strong><span>الرصيد النهائي: ${escapeHtml(moneyLabel(item.final_balance_halalas))} — ${dateTimeLabel(item.created_at)}</span></li>`, 'لا توجد نسخة مغلقة لهذه الفترة.')}</div></details>`;
 }
   const S8_EXPORT_LABELS = Object.freeze({ WORK: 'تقرير عمل واحد', MONTH: 'تقرير شهر', FOLLOW_UP: 'سجل المتابعة', CUSTOMER: 'تقرير عميل', CLASSIFICATION: 'تحليل التصنيف' });
   const S8_COLLECTION_LABELS = Object.freeze({ PRICE_UNSET: 'السعر غير محدد', UNPAID: 'غير محصل', PARTIALLY_COLLECTED: 'تحصيل جزئي', FINANCIALLY_CLOSED: 'مغلق ماليًا', OVERPAYMENT_UNRESOLVED: 'تجاوز غير محسوم', CANCELLED_ZERO_BALANCE: 'ملغى قبل التنفيذ — لا مبلغ متبقٍ' });
@@ -831,6 +872,9 @@ function workHistoryEntries(work) {
   (work.statusHistory || []).forEach(item => entries.push({ at: item.changed_at, title: 'تغيير حالة التنفيذ', detail: `${workStatusLabel(item.old_status)} ← ${workStatusLabel(item.new_status)} — ${item.reason}`, actor: item.changed_by }));
   (work.archiveHistory || []).forEach(item => entries.push({ at: item.archived_at, title: 'أرشفة العمل', detail: item.reason || 'أرشفة موثقة', actor: item.archived_by }));
   (work.requests || []).filter(item => item.state !== 'PENDING').forEach(item => entries.push({ at: item.approved_at || item.requested_at, title: item.action === 'CANCEL' ? 'طلب إلغاء محسوم' : 'طلب أرشفة محسوم', detail: `${item.reason} — ${requestStateLabel(item.state)}`, actor: item.approved_by || item.requested_by }));
+  (work.financials?.price_requests || []).filter(item => item.state !== 'PENDING').forEach(item => entries.push({ at: item.approved_at || item.requested_at, title: 'طلب سعر محسوم', detail: `${item.reason} — ${requestStateLabel(item.state)}`, actor: item.approved_by || item.requested_by }));
+  (work.financials?.ratio_requests || []).filter(item => item.state !== 'PENDING').forEach(item => entries.push({ at: item.approved_at || item.requested_at, title: 'طلب نسبة محسوم', detail: `${item.reason} — ${requestStateLabel(item.state)}`, actor: item.approved_by || item.requested_by }));
+  (work.reversalRequests || []).filter(item => item.state !== 'PENDING').forEach(item => entries.push({ at: item.approved_at || item.requested_at, title: 'طلب تصحيح دفعة محسوم', detail: `${item.reason} — ${requestStateLabel(item.state)}`, actor: item.approved_by || item.requested_by }));
   return entries.sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
 }
 
