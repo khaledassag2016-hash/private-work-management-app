@@ -164,7 +164,7 @@ test('GET /api/audit is authenticated, read-only, bounded, deterministic, and JS
 test('audit UI and packaged Worker mirror expose only the required read-only surface', () => {
   const app = readFileSync(join(sourceWorkerRoot, 'assets/app.js'), 'utf8');
   const styles = readFileSync(join(sourceWorkerRoot, 'assets/styles.css'), 'utf8');
-  assert.match(app, /\['audit', 'سجل التدقيق'\]/);
+  assert.match(app, /\['audit', 'التدقيق وإدارة الحسابات'\]/);
   assert.match(app, /\/api\/audit\?limit=50/);
   assert.match(app, /data-audit-log/);
   assert.match(app, /actor_role/);
