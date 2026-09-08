@@ -172,6 +172,8 @@ test('sensitive actions cancel with zero requests and confirm exactly once', asy
 
   const reopenApprovePath = `/api/settlements/${settlementPeriod}/reopen-requests/reopen-1/approve`;
   const approveBefore = api.count('POST', reopenApprovePath);
+  const refreshedReopenDisclosure = page.locator('.financial-disclosure').filter({ hasText: 'إعادة فتح فترة مقفلة' });
+  if (!(await refreshedReopenDisclosure.evaluate(element => element.open))) await refreshedReopenDisclosure.locator(':scope > summary').click();
   await page.locator('[data-action="approve-settlement-reopen"][data-request-id="reopen-1"]').click();
   await expect(page.getByRole('dialog').getByRole('heading')).toHaveText('اعتماد إعادة فتح التسوية');
   await handleNextDialog(page, 'accept');
