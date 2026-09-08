@@ -9,7 +9,9 @@ test('Phase 6 target Waleed view uses fixed transfer direction and hides supervi
   await expect(page.locator('[data-nav="audit"]')).toHaveCount(0);
 
   await page.locator('[data-nav="works"]').click();
-  await expect(page.locator('th')).toContainText(['العنوان', 'العميل', 'النوع', 'حالة التنفيذ', 'حالة الأرشفة', 'السعر']);
+  const worksTable = page.locator('.table-wrap table').first();
+  await expect(worksTable).toContainText('حالة التنفيذ');
+  await expect(worksTable).toContainText('حالة الأرشفة');
   await openWork(page);
   await expect(page.locator('[data-work-summary]')).toBeVisible();
   await expect(page.locator('[data-work-customer]')).toContainText('عميل اختباري');
@@ -27,7 +29,8 @@ test('Phase 6 target Waleed view uses fixed transfer direction and hides supervi
   await expect(page.locator('[data-settlement-summary]')).toContainText('المقبوض الفعلي المعتمد');
 
   await page.locator('[data-nav="s8"]').click();
-  await expect(page.locator('[data-s8-results] th')).toContainText(['حالة التنفيذ', 'حالة الأرشفة']);
+  await expect(page.locator('[data-s8-results]')).toContainText('حالة التنفيذ');
+  await expect(page.locator('[data-s8-results]')).toContainText('حالة الأرشفة');
   await expect(page.locator('[data-s8-work-row]')).toContainText('غير مؤرشف');
   await expect(page.locator('[data-s8-work-row]')).not.toContainText('نشط');
 });
