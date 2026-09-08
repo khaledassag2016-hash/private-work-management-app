@@ -28,7 +28,7 @@ async function submitConfirmed(page, form, path) {
 
 async function openWorkDisclosure(page, name) {
   const disclosure = page.locator(`[data-work-disclosure="${name}"]`);
-  if (!(await disclosure.evaluate(element => element.open))) await disclosure.locator('summary').click();
+  if (!(await disclosure.evaluate(element => element.open))) await disclosure.locator(':scope > summary').click();
   await expect.poll(() => disclosure.evaluate(element => element.open)).toBe(true);
 }
 
