@@ -46,7 +46,8 @@ test('RTL, responsive containment, navigation reachability, and state clarity', 
   await expect(page.locator('[data-remaining]:visible')).toHaveText('700 ريال');
   await openWorkDisclosure(page, 'financial-details');
   await expect(page.locator('[data-action="open-price-action"]')).toBeVisible();
-  await expect(page.locator('[data-financial-request]').first()).toBeHidden();
+  await expect(page.locator('[data-financial-request]').first()).toBeVisible();
+  await expect(page.locator('[data-financial-request="price-request-1"]')).toHaveCount(1);
   const criticalClipping = await page.locator('[data-work-execution-state], [data-work-archive-state], [data-authoritative-price], [data-approved-payments], [data-remaining], [data-action="open-price-action"]').evaluateAll(elements => elements.filter(element => {
     const rect = element.getBoundingClientRect();
     return rect.left < -1 || rect.right > document.documentElement.clientWidth + 1 || element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
