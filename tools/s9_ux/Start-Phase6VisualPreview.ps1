@@ -41,7 +41,7 @@ $env:PHASE6_VISUAL_PREVIEW_ROLE = $Profile.ToLowerInvariant()
 $env:PHASE6_VISUAL_PREVIEW_DATA_MODE = $DataMode.ToLowerInvariant()
 $env:PHASE6_VISUAL_PREVIEW_PORT = [string]$Port
 $url = "http://127.0.0.1:$Port/"
-$healthUrl = "${url}__health"
+$healthUrl = "${url}__preview-health"
 $process = $null
 try {
   $process = Start-Process -FilePath $node.Source -ArgumentList @($server) -WorkingDirectory $repoRoot -PassThru
