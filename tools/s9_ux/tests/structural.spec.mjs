@@ -39,14 +39,15 @@ test('RTL, responsive containment, navigation reachability, and state clarity', 
   await expect(page.locator('[data-work-archive-state]')).toContainText('غير مؤرشف');
   await expect(page.locator('[data-work-attention]')).toBeVisible();
   await expect(page.locator('#s5-event-form')).toBeHidden();
-  await expect(page.locator('[data-execution-status]')).toBeVisible();
-  await expect(page.locator('[data-collection-status]')).toBeVisible();
+  await expect(page.locator('[data-work-execution-state]')).toBeVisible();
+  await expect(page.locator('[data-work-archive-state]')).toBeVisible();
   await expect(page.locator('[data-authoritative-price]:visible')).toHaveText('1700 ريال');
   await expect(page.locator('[data-approved-payments]:visible')).toHaveText('1000 ريال');
   await expect(page.locator('[data-remaining]:visible')).toHaveText('700 ريال');
   await openWorkDisclosure(page, 'financial-details');
-  await expect(page.locator('[data-financial-request]').first()).toBeVisible();
-  const criticalClipping = await page.locator('[data-execution-status], [data-collection-status], [data-authoritative-price], [data-approved-payments], [data-remaining], [data-financial-request]').evaluateAll(elements => elements.filter(element => {
+  await expect(page.locator('[data-action="open-price-action"]')).toBeVisible();
+  await expect(page.locator('[data-financial-request]').first()).toBeHidden();
+  const criticalClipping = await page.locator('[data-work-execution-state], [data-work-archive-state], [data-authoritative-price], [data-approved-payments], [data-remaining], [data-action="open-price-action"]').evaluateAll(elements => elements.filter(element => {
     const rect = element.getBoundingClientRect();
     return rect.left < -1 || rect.right > document.documentElement.clientWidth + 1 || element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
   }).map(element => element.outerHTML.slice(0, 180)));
