@@ -52,3 +52,22 @@ jobs:
       - name: Level B structural and cross-browser gate
         working-directory: tools/s9_ux
         run: npm run test:level-b
+      - name: Phase 6 preview runner Demo/Clean health
+        shell: pwsh
+        run: |
+          $head = (git rev-parse HEAD).Trim()
+          $port = 4190
+          foreach ($profile in @('Khalid','Waleed')) {
+            foreach ($mode in @('Demo','Clean')) {
+              & ./tools/s9_ux/Start-Phase6VisualPreview.ps1 -Profile $profile -DataMode $mode -ExpectedHead $head -Port $port -NoBrowser -HealthCheckOnly
+              $port++
+            }
+          }
+      - name: Upload Phase 6 visual review screenshots
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase6-visual-review-${{ github.event.pull_request.head.sha }}
+          path: tools/s9_ux/test-results/**/phase6-*.png
+          if-no-files-found: error
+          retention-days: 7

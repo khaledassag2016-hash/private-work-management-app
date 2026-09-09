@@ -76,6 +76,7 @@
     "tests/pester/StateMachine.Tests.ps1",
     "tests/pester/TestHelper.ps1",
     "tests/node/audit_worker.test.mjs",
+    "tests/node/phase6_target_contract.test.mjs",
     "tests/node/s4_gate1.test.mjs",
     "tests/node/s4_gate2_acceptance.test.mjs",
     "tests/node/s4_gate2_supervisory_repair.test.mjs",

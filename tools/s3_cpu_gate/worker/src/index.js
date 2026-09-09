@@ -875,12 +875,23 @@ export async function listActiveParticipants(env) {
   return rows.map(row => ({ uid: row.uid, role: row.role }));
 }
 
+const PHASE6_TARGET_IDENTITY_MODE = 'D028_TARGET';
+function phase6IdentityMode(env) { return env?.PHASE6_ROLE_MAPPING === PHASE6_TARGET_IDENTITY_MODE ? PHASE6_TARGET_IDENTITY_MODE : 'CURRENT'; }
+function isPhase6TargetIdentity(env) { return phase6IdentityMode(env) === PHASE6_TARGET_IDENTITY_MODE; }
+function phase6SupervisorRole(env) { return isPhase6TargetIdentity(env) ? 'person_2' : 'person_1'; }
+function phase6DefaultRatio(env) {
+  return isPhase6TargetIdentity(env)
+    ? { person_1_bps: 3000, person_2_bps: 7000, source: 'DEFAULT_D028_TARGET' }
+    : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT' };
+}
+
 async function requireAccountAdmin(env, actorUid) {
   const actor = await ensureActor(env, actorUid);
-  if (actor.role !== 'person_1') throw new DomainError('ACCOUNT_ADMIN_FORBIDDEN', 403);
+  if (actor.role !== phase6SupervisorRole(env)) throw new DomainError('ACCOUNT_ADMIN_FORBIDDEN', 403);
   return actor;
 }
-function accountDisplayName(role) {
+function accountDisplayName(env, role) {
+  if (isPhase6TargetIdentity(env)) return role === 'person_1' ? 'وليد' : role === 'person_2' ? 'خالد' : 'مستخدم';
   return role === 'person_1' ? 'خالد' : role === 'person_2' ? 'وليد' : 'مستخدم';
 }
 async function accountAdminTarget(env, role) {
@@ -956,7 +967,7 @@ export async function listAccountAdminAccounts(env, actorUid) {
   const targets = (await env.DB.prepare("SELECT uid,role,active FROM app_users WHERE active=1 AND role IN ('person_1','person_2') ORDER BY CASE role WHEN 'person_1' THEN 1 ELSE 2 END").all()).results || [];
   return Promise.all(targets.map(async target => {
     const provider = await firebaseAdminLookupUser(env, target.uid);
-    return { role: target.role, display_name: accountDisplayName(target.role), email: provider.email, active: Boolean(target.active), disabled: provider.disabled };
+    return { role: target.role, display_name: accountDisplayName(env, target.role), email: provider.email, active: Boolean(target.active), disabled: provider.disabled };
   }));
 }
 export async function changeAccountEmail(env, actorUid, requestId, role, input) {
@@ -968,13 +979,13 @@ export async function changeAccountEmail(env, actorUid, requestId, role, input) 
   if (providerBefore.email.toLowerCase() === email.toLowerCase()) throw new DomainError('ACCOUNT_EMAIL_UNCHANGED', 400);
   const validSince = Math.floor(Date.now() / 1000);
   await firebaseAdminIdentityRequest(env, 'accounts:update', { localId: target.uid, email, emailVerified: false, validSince: String(validSince) });
-  const before = { role: target.role, display_name: accountDisplayName(target.role), email: providerBefore.email, active: true, disabled: providerBefore.disabled };
-  const after = { role: target.role, display_name: accountDisplayName(target.role), email, active: true, disabled: providerBefore.disabled, sessions_revoked: true };
+  const before = { role: target.role, display_name: accountDisplayName(env, target.role), email: providerBefore.email, active: true, disabled: providerBefore.disabled };
+  const after = { role: target.role, display_name: accountDisplayName(env, target.role), email, active: true, disabled: providerBefore.disabled, sessions_revoked: true };
   const audit = accountAdminAuditStatement(env, actorUid, target.uid, 'CHANGE_EMAIL', before, after, requestId);
   const updateSessionCutoff = env.DB.prepare('UPDATE app_users SET auth_valid_since=?1 WHERE uid=?2 AND role=?3 AND active=1').bind(validSince, target.uid, target.role);
   const results = await executeBatch(env, [updateSessionCutoff, audit.statement]);
   if (Number(results[0]?.meta?.changes) !== 1 || Number(results[1]?.meta?.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
-  return { role: target.role, display_name: accountDisplayName(target.role), email, sessions_revoked: true, audit: audit.record };
+  return { role: target.role, display_name: accountDisplayName(env, target.role), email, sessions_revoked: true, audit: audit.record };
 }
 export async function sendAccountPasswordReset(env, actorUid, requestId, role) {
   await requireAccountAdmin(env, actorUid);
@@ -982,12 +993,12 @@ export async function sendAccountPasswordReset(env, actorUid, requestId, role) {
   const provider = await firebaseAdminLookupUser(env, target.uid);
   if (!provider.email) throw new DomainError('ACCOUNT_EMAIL_REQUIRED', 409);
   await firebaseAdminIdentityRequest(env, 'accounts:sendOobCode', { requestType: 'PASSWORD_RESET', email: provider.email });
-  const before = { role: target.role, display_name: accountDisplayName(target.role), email: provider.email, active: true, disabled: provider.disabled };
+  const before = { role: target.role, display_name: accountDisplayName(env, target.role), email: provider.email, active: true, disabled: provider.disabled };
   const after = { ...before, password_reset_sent: true };
   const audit = accountAdminAuditStatement(env, actorUid, target.uid, 'SEND_PASSWORD_RESET', before, after, requestId);
   const results = await executeBatch(env, [audit.statement]);
   if (Number(results[0]?.meta?.changes) !== 1) throw new DomainError('TRANSACTION_FAILED', 409);
-  return { role: target.role, display_name: accountDisplayName(target.role), email: provider.email, password_reset_sent: true, audit: audit.record };
+  return { role: target.role, display_name: accountDisplayName(env, target.role), email: provider.email, password_reset_sent: true, audit: audit.record };
 }
 export function uatResetPolicy(env) {
   return { allowed: env?.APP_ENVIRONMENT === 'uat' && env?.ALLOW_UAT_RESET === 'true' && typeof env?.UAT_RESET_NONCE === 'string' && env.UAT_RESET_NONCE.length >= 16, destructive: false };
@@ -1002,7 +1013,12 @@ function auditReadLimit(url) {
   return Math.min(limit, 100);
 }
 
-export async function listAuditLog(env, url) {
+export async function listAuditLog(env, actorUidOrUrl, maybeUrl) {
+  const url = maybeUrl || actorUidOrUrl;
+  if (maybeUrl && isPhase6TargetIdentity(env)) {
+    const actor = await ensureActor(env, actorUidOrUrl);
+    if (actor.role !== phase6SupervisorRole(env)) throw new DomainError('AUDIT_FORBIDDEN', 403);
+  }
   const limit = auditReadLimit(url);
   const rows = (await env.DB.prepare(`
     SELECT a.id, a.entity_type, a.entity_id, a.action, a.actor_uid, u.role AS actor_role,
@@ -1035,7 +1051,7 @@ export async function handleApi(request, env, requestId, scenario, user) {
   }
   if (parts[1] === 'audit' && parts.length === 2) {
     if (method !== 'GET') throw new DomainError('METHOD_NOT_ALLOWED', 405);
-    return Response.json({ ok: true, data: await listAuditLog(env, url), requestId });
+    return Response.json({ ok: true, data: await listAuditLog(env, user.uid, url), requestId });
   }
   if (parts[1] === 'participants' && parts.length === 2 && method === 'GET') return Response.json({ ok: true, data: await listActiveParticipants(env), requestId });
   if (parts[1] === 'search' && parts[2] === 'works' && parts.length === 3 && method === 'GET') return Response.json({ ok: true, data: await searchWorksS8(env, Object.fromEntries(url.searchParams.entries())), requestId });
@@ -1411,7 +1427,7 @@ export default {
     }
     try {
       const auth = await readAuthorized(request, env, requestId, scenario);
-      if (url.pathname === '/private/ping') return Response.json({ ok: true, data: { role: auth.user.role, uid: auth.user.uid }, requestId });
+      if (url.pathname === '/private/ping') return Response.json({ ok: true, data: { role: auth.user.role, uid: auth.user.uid, identity_mode: phase6IdentityMode(env) }, requestId });
       if (isAuditMutation) {
         const body = await parseRequestJson(request);
         const audit = await applyAuditMutation(env, auth.user.uid, requestId, body.value);
@@ -1518,7 +1534,7 @@ function sumApprovedPriceMovements(movements) {
 
 async function currentRatio(env, workId) {
   const row = await env.DB.prepare(`SELECT new_person_1_bps, new_person_2_bps FROM ratio_history WHERE work_id=?1 ORDER BY approved_at DESC, id DESC LIMIT 1`).bind(workId).first();
-  return row ? { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps), source: 'APPROVED_HISTORY' } : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT' };
+  return row ? { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps), source: 'APPROVED_HISTORY' } : phase6DefaultRatio(env);
 }
 
 const PAYMENT_METHOD_MAX_LENGTH = 64;
@@ -1986,14 +2002,15 @@ async function prbPriceAt(env, workId, approvedAt) {
   const row = await env.DB.prepare('SELECT COUNT(*) AS count,COALESCE(SUM(amount_halalas),0) AS total FROM price_movements WHERE work_id=?1 AND approved_at<=?2').bind(workId, approvedAt).first();
   return Number(row?.count || 0) ? Number(row.total || 0) : 0;
 }
-function prbDefaultRatioAt(approvedAt) {
+function prbDefaultRatioAt(env, approvedAt) {
+  if (isPhase6TargetIdentity(env)) return phase6DefaultRatio(env);
   return approvedAt < '2026-09-03T00:00:00.000Z'
     ? { person_1_bps: 3000, person_2_bps: 7000, source: 'HISTORICAL_DEFAULT_PRE_D023' }
     : { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS, source: 'DEFAULT_D023' };
 }
 async function prbRatioAt(env, workId, approvedAt) {
   const row = await env.DB.prepare('SELECT new_person_1_bps,new_person_2_bps FROM ratio_history WHERE work_id=?1 AND approved_at<=?2 ORDER BY approved_at DESC,id DESC LIMIT 1').bind(workId, approvedAt).first();
-  return row ? { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps), source: 'APPROVED_HISTORY' } : prbDefaultRatioAt(approvedAt);
+  return row ? { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps), source: 'APPROVED_HISTORY' } : prbDefaultRatioAt(env, approvedAt);
 }
 async function prbNetApprovedReceiptsForWork(env, workId) {
   return paymentTotals(await listPaymentRowsRaw(env, workId)).approvedPaid;
@@ -2054,15 +2071,23 @@ function prbAudit(env, type, id, actorUid, after, requestId, createdAt) {
 }
 
 export async function createInterPartyTransfer(env, actorUid, requestId, input) {
-  await ensureActor(env, actorUid);
+  const actor = await ensureActor(env, actorUid);
   const amount = prbPositiveMoney(input.amount_riyals, 'TRANSFER_AMOUNT_INVALID');
   const fee = input.fee_riyals === undefined ? 0 : parseMoneyHalalas(input.fee_riyals);
   if (fee < 0) throw new DomainError('TRANSFER_FEE_INVALID', 400);
   const effectiveAt = canonicalEventTimestamp(input.effective_at);
   await prbEnsurePeriodOpen(env, effectiveAt);
-  const fromParty = prbParty(input.from_party, 'TRANSFER_FROM_REQUIRED');
-  const toParty = prbParty(input.to_party, 'TRANSFER_TO_REQUIRED');
-  if (fromParty === toParty) throw new DomainError('TRANSFER_DIRECTION_INVALID', 400);
+  let fromParty; let toParty;
+  if (isPhase6TargetIdentity(env)) {
+    if (actor.role !== 'person_1') throw new DomainError('TRANSFER_FORBIDDEN', 403);
+    fromParty = input.from_party === undefined ? 'person_1' : prbParty(input.from_party, 'TRANSFER_FROM_REQUIRED');
+    toParty = input.to_party === undefined ? 'person_2' : prbParty(input.to_party, 'TRANSFER_TO_REQUIRED');
+    if (fromParty !== 'person_1' || toParty !== 'person_2') throw new DomainError('TRANSFER_DIRECTION_INVALID', 400);
+  } else {
+    fromParty = prbParty(input.from_party, 'TRANSFER_FROM_REQUIRED');
+    toParty = prbParty(input.to_party, 'TRANSFER_TO_REQUIRED');
+    if (fromParty === toParty) throw new DomainError('TRANSFER_DIRECTION_INVALID', 400);
+  }
   const feePayer = prbParty(input.fee_payer === undefined ? 'person_1' : input.fee_payer, 'TRANSFER_FEE_PAYER_INVALID');
   if (feePayer !== 'person_1') throw new DomainError('TRANSFER_FEE_PAYER_INVALID', 400);
   const note = optionalString(input.note, 'TRANSFER_NOTE_INVALID');
@@ -2188,13 +2213,19 @@ async function prbBuildSettlementPreview(env, periodKey, input = {}) {
   for (const row of components.ratios || []) ratios.set(row.work_id, { person_1_bps: Number(row.new_person_1_bps), person_2_bps: Number(row.new_person_2_bps) });
   const receipts = new Map();
   for (const row of components.receipts || []) receipts.set(row.work_id, { person_1: Number(row.approved_paid_person_1), person_2: Number(row.approved_paid_person_2) });
-  let totalWork = 0; let person1 = 0; let person2 = 0; let receiptsPerson1 = 0; let receiptsPerson2 = 0;
+  let totalWork = 0; let shareBasisTotal = 0; let cancelledShareBasis = 0; let cancelledRecordedPrice = 0; let person1 = 0; let person2 = 0; let receiptsPerson1 = 0; let receiptsPerson2 = 0;
   for (const work of components.works) {
     const price = prices.get(work.id) ?? 0;
-    const ratio = ratios.get(work.id) || { person_1_bps: DEFAULT_PERSON_1_BPS, person_2_bps: DEFAULT_PERSON_2_BPS };
+    const ratio = ratios.get(work.id) || phase6DefaultRatio(env);
     const receipt = receipts.get(work.id) || { person_1: 0, person_2: 0 };
-    const shareBasis = isCancelledWorkStatus(work.status) ? safeFinancialAdd(receipt.person_1, receipt.person_2) : price;
+    const cancelledWork = isCancelledWorkStatus(work.status);
+    const shareBasis = cancelledWork ? safeFinancialAdd(receipt.person_1, receipt.person_2) : price;
     totalWork = safeFinancialAdd(totalWork, price);
+    shareBasisTotal = safeFinancialAdd(shareBasisTotal, shareBasis);
+    if (cancelledWork) {
+      cancelledShareBasis = safeFinancialAdd(cancelledShareBasis, shareBasis);
+      cancelledRecordedPrice = safeFinancialAdd(cancelledRecordedPrice, price);
+    }
     person1 = safeFinancialAdd(person1, calculateShareHalalas(shareBasis, ratio.person_1_bps));
     person2 = safeFinancialAdd(person2, calculateShareHalalas(shareBasis, ratio.person_2_bps));
     receiptsPerson1 = safeFinancialAdd(receiptsPerson1, receipt.person_1);
@@ -2230,6 +2261,9 @@ async function prbBuildSettlementPreview(env, periodKey, input = {}) {
     work_count: components.works.length,
     cumulative_work_count: components.cumulativeWorkCount,
     total_work_value_halalas: totalWork,
+    share_basis_total_halalas: shareBasisTotal,
+    cancelled_share_basis_halalas: cancelledShareBasis,
+    cancelled_recorded_price_halalas: cancelledRecordedPrice,
     person_1_work_share_halalas: person1,
     person_2_work_share_halalas: person2,
     approved_receipts_halalas: approvedReceipts,

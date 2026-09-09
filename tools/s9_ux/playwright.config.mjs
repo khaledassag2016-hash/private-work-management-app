@@ -3,7 +3,7 @@ import { defineConfig } from '@playwright/test';
 const project = (name, browserName, width, height, level) => ({
   name,
   metadata: { level, width, height },
-  testMatch: level === 'A' ? /full-flows\.spec\.mjs/ : /structural\.spec\.mjs/,
+  testMatch: level === 'A' ? /full-flows\.spec\.mjs/ : /(structural|phase6-visual)\.spec\.mjs/,
   use: { browserName, viewport: { width, height }, isMobile: width < 600, hasTouch: width < 600 },
 });
 

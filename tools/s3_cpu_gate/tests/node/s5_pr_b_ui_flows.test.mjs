@@ -135,11 +135,10 @@ describe('S5 PR-B UI Flows', () => {
       ]
     };
     const html = testApp.workPage();
-    assert.match(html, /العنوان القديم: Title A/);
-    assert.match(html, /الجديد: Title B/);
-    assert.match(html, /سبب التغيير: Initial change/);
-    assert.match(html, /العنوان القديم: Title B/);
-    assert.match(html, /الجديد: Title C/);
+    assert.match(html, /تغيير عنوان/);
+    assert.match(html, /Title A ← Title B — Initial change/);
+    assert.match(html, /Title B ← Title C — Second change/);
+    assert.match(html, /عرض السجل الكامل/);
   });
 
   it('4. Event list/add/reload/order acceptance', () => {
@@ -154,12 +153,12 @@ describe('S5 PR-B UI Flows', () => {
     };
 
     const html = testApp.workPage();
-    // Should sort e2 -> e3 -> e1
-    const parts = html.split('<strong>Comment');
-    // Index 1 should be Comment 2, Index 2 should be Comment 3, Index 3 should be Comment 1
-    assert.match(parts[1], /^ 2/);
-    assert.match(parts[2], /^ 3/);
-    assert.match(parts[3], /^ 1/);
+    // Effective time is authoritative; ties preserve deterministic source order.
+    const first = html.indexOf('نشاط: Comment 1');
+    const second = html.indexOf('نشاط: Comment 2');
+    const third = html.indexOf('نشاط: Comment 3');
+    assert.ok(first >= 0 && second > first && third > second);
+    assert.match(html, /عرض السجل الكامل/);
   });
 
   it('5. CANCEL User1->User2 approval flow', async () => {
@@ -332,10 +331,11 @@ describe('S5 PR-B UI Flows', () => {
     };
 
     const html = testApp.workPage();
-    assert.match(html, /الأرشفة: ✅ مؤرشف/);
-    assert.match(html, /أرشفة كاملة ومؤمنة للعمل/);
-    assert.match(html, /السبب والمبرر: Fully completed/);
+    assert.match(html, /الأرشفة: مؤرشف/);
+    assert.match(html, /أرشفة العمل/);
+    assert.match(html, /Fully completed/);
     assert.match(html, /Historic event/);
+    assert.match(html, /عرض السجل الكامل/);
   });
 
   it('12. stale/version conflict behavior', async () => {
@@ -490,13 +490,12 @@ describe('S5 PR-B UI Flows', () => {
     setupTestEnv();
     state.selectedWork = { id: 'w1', version: 1, status: 'IN_PROGRESS', price_state: 'PRICE_UNSET', is_archived: false };
     const html = testApp.workPage();
-    assert.match(html, /data-execution-status/);
-    assert.match(html, /حالة التنفيذ/);
-    assert.match(html, /data-collection-status/);
-    assert.match(html, /ملخص التحصيل/);
-    const collectionCard = html.split('data-collection-status')[1].split('</article>')[0];
-    assert.match(collectionCard, /مشتق من السعر والدفعات المعتمدة، ومستقل عن حالة التنفيذ/);
-    assert.doesNotMatch(collectionCard, /PRICE_UNSET|سعر غير محدد|سعر صفري/);
+    assert.match(html, /data-work-execution-state/);
+    assert.match(html, /الدفعات والتحصيل/);
+    assert.match(html, /data-collection-descriptor/);
+    const primarySummary = html.split('data-work-disclosure="work-data"')[0];
+    assert.doesNotMatch(primarySummary, /حالة التحصيل|PRICE_UNSET|سعر صفري/);
+    assert.match(html, /حالة التحصيل/);
   });
 
   it('19b. Wave 3 uses one primary summary and does not duplicate soft warnings', () => {
@@ -545,7 +544,8 @@ describe('S5 PR-B UI Flows', () => {
     assert.match(html, /data-work-archive-state/);
     assert.equal(html.split('الجامعة غير متوفرة.').length - 1, 1);
     assert.match(html, /data-work-attention/);
-    assert.match(html, /طلبات سعر أو نسبة معلقة \(1\)/);
+    assert.match(html, /مركز الإجراءات/);
+    assert.equal((html.match(/data-financial-request="price-pending"/g) || []).length, 1);
   });
 
   it('20. authorized SPA session reads uid and role from ping data envelope', async () => {
@@ -589,7 +589,7 @@ describe('S5 PR-B UI Flows', () => {
 
   it('23. Wave 1 presentation guard keeps closed UI behavior while removing targeted implementation copy', () => {
     const srcContent = readFileSync(fileURLToPath(new URL('../../src/worker/assets/app.js', import.meta.url)), 'utf8');
-    assert.match(srcContent, /\['s8', 'البحث والتحليلات'\]/);
+    assert.match(srcContent, /\['s8','البحث والتحليلات'\]|\['s8', 'البحث والتحليلات'\]/);
     assert.match(srcContent, /function pageSubtitle\(/);
     assert.match(srcContent, /name="confirmed_at" type="text"/);
     assert.match(srcContent, /function auditValueMarkup\(/);
