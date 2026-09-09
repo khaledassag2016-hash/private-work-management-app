@@ -103,6 +103,8 @@ test('Khalid Demo exposes account administration then human-readable audit', asy
   await page.locator('.dialog [data-action="close-modal"]').last().click();
 
   await nav(page, 'audit').click();
+  await expect(page.locator('[data-account-admin]')).toBeVisible();
+  await expect(page.locator('[data-audit-log]')).toBeVisible();
   const order = await page.locator('[data-account-admin], [data-audit-log]').evaluateAll(elements => elements.map(element => element.hasAttribute('data-account-admin') ? 'admin' : 'audit'));
   expect(order).toEqual(['admin', 'audit']);
   await expect(page.locator('.account-admin-row[data-role="person_1"]')).toContainText('وليد');
