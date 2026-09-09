@@ -124,7 +124,7 @@ for (const [name, identity] of [['Waleed', waleed], ['Khalid', khalid]]) {
     await nav(page, 'customers').click();
     await expect(page.getByText('لا يوجد عملاء بعد.')).toBeVisible();
     await nav(page, 'works').click();
-    await expect(page.getByText(/لا توجد أعمال/)).toBeVisible();
+    await expect(page.getByText('لا توجد أعمال بعد.')).toBeVisible();
     await nav(page, 'financial').click();
     await expect(page.locator('[data-settlement-summary]')).toContainText('0 ريال');
     if (name === 'Khalid') {
